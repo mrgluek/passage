@@ -254,7 +254,7 @@ class PassageService : Service() {
             this, 1, Intent(this, PassageService::class.java).setAction(ACTION_STOP), flags,
         )
         @Suppress("DEPRECATION")
-        return b.setSmallIcon(R.drawable.ic_passage)
+        return b.setSmallIcon(R.drawable.ic_notification)
             .setContentTitle(title)
             .setContentText(text)
             .setOngoing(true)

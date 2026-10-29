@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- A gate with a path through it. Kept inside the 66 dp safe zone. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <path
+        android:pathData="M38,76V54a16,16 0,0 1,32 0v22"
+        android:strokeColor="@color/icon_gate"
+        android:strokeWidth="7"
+        android:strokeLineCap="round" />
+    <path
+        android:pathData="M54,58v5M54,68v5M54,78v5"
+        android:strokeColor="@color/icon_path"
+        android:strokeWidth="5"
+        android:strokeLineCap="round" />
+</vector>
