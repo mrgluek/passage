@@ -209,7 +209,7 @@ func Start(cfg Config) (*Tunnel, error) {
 	t.useProbeTargets()
 	t.setRouteLocked(initialRoute(cfg.Mode), "start")
 	t.log.add("started: mode=%s resolvers=%d (network %d, operator %s +%d) soar=%s", cfg.Mode, len(resolvers),
-		len(cfg.SystemResolvers), cfg.Operator, len(OperatorResolvers[cfg.Operator]), soarVersion())
+		len(cfg.SystemResolvers), cfg.Operator, len(OperatorResolvers[cfg.Operator]), SoarVersion())
 	if skipped6 > 0 {
 		t.log.add("no IPv6 route: skipped %d IPv6 resolvers", skipped6)
 	}
@@ -899,7 +899,7 @@ func (t *Tunnel) Status(n int) Status {
 		LastResult:     t.lastResult,
 		Active:         map[string]int{"direct": 0, "tunnel": 0},
 		Stats:          map[string]routeStats{"direct": t.routeStatsLocked(RouteDirect), "tunnel": t.routeStatsLocked(RouteTunnel)},
-		Soar:           soarVersion(),
+		Soar:           SoarVersion(),
 	}
 	for h := range t.relays {
 		s.Relays = append(s.Relays, h)
@@ -928,7 +928,8 @@ func (t *Tunnel) routeStatsLocked(r Route) routeStats {
 	return s
 }
 
-func soarVersion() string {
+// SoarVersion is the soar module version this binary was built with.
+func SoarVersion() string {
 	if bi, ok := debug.ReadBuildInfo(); ok {
 		for _, d := range bi.Deps {
 			if d.Path == "github.com/getlantern/soar" {

@@ -144,4 +144,11 @@ func Java_info_gluek_passage_Native_networkChanged(env *C.JNIEnv, cls C.jclass) 
 	}
 }
 
+// versions returns {"soar": "<module version>"} for the About screen.
+//
+//export Java_info_gluek_passage_Native_versions
+func Java_info_gluek_passage_Native_versions(env *C.JNIEnv, cls C.jclass) C.jbyteArray {
+	return result(env, map[string]string{"soar": tunnel.SoarVersion()})
+}
+
 func main() {}

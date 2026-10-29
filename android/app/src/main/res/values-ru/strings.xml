@@ -24,9 +24,10 @@
     <string name="mode_off">Без туннеля</string>
 
     <string name="stop">Стоп</string>
-    <string name="copy_report">Скопировать отчёт</string>
+    <string name="share_report">Отправить отчёт</string>
+    <string name="check_now">Проверить сейчас</string>
+    <string name="checking">Проверяю сеть…</string>
     <string name="battery">Разрешить работу в фоне</string>
-    <string name="report_copied">Отчёт скопирован (без зоны туннеля)</string>
 
     <string name="notification_channel">Прокси</string>
     <string name="notification_starting">Запуск…</string>
@@ -88,4 +89,8 @@
     <string name="new_access_done">Новый порт и пароль заданы</string>
     <string name="startup_label">Запуск</string>
     <string name="start_on_boot">Запускать после перезагрузки телефона, если прокси работал</string>
+    <string name="about_label">О приложении</string>
+    <string name="about_version">Passage %1$s (сборка %2$d), soar %3$s</string>
+    <string name="about_cert">Сертификат подписи, SHA-256:</string>
+    <string name="about_source">Исходный код: github.com/mrgluek/passage</string>
 </resources>

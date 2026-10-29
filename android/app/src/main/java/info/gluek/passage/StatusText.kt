@@ -99,10 +99,11 @@ object StatusText {
      * The status for a bug report, without the tunnel zone (private, like
      * everything the link carries).
      */
-    fun report(s: JSONObject, net: NetInfo.Snapshot, settings: Settings): String {
+    fun report(s: JSONObject, net: NetInfo.Snapshot, settings: Settings, version: String): String {
         val r = JSONObject(s.toString())
         r.remove("zone")
         r.put("app", JSONObject()
+            .put("version", version)
             .put("listen", settings.listen)
             .put("auth", settings.auth)
             .put("start_on_boot", settings.startOnBoot)

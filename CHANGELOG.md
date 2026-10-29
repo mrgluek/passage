@@ -11,6 +11,7 @@ First public version.
   tunnel, Never tunnel.
 - Set up with a `passage://` link: paste it, or tap it to open the app.
 - Optional start after the phone restarts.
-- Status screen and a report you can copy.
+- Status screen, **Check now**, and a report you can send from the app.
+- About shows the version and the signing certificate fingerprint.
 - English and Russian.
 - Android 7.0 and newer, 64-bit and 32-bit ARM phones.

@@ -18,6 +18,7 @@ object Native {
     @JvmStatic external fun status(events: Int): ByteArray
     @JvmStatic external fun setMode(mode: ByteArray): ByteArray
     @JvmStatic external fun networkChanged()
+    @JvmStatic external fun versions(): ByteArray
 
     fun json(out: ByteArray): JSONObject = JSONObject(String(out, Charsets.UTF_8))
 

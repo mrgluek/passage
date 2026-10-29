@@ -83,7 +83,8 @@ class MainActivity : Activity() {
                 PassageService.stop(this)
                 main.postDelayed({ refresh() }, 300)
             }
-            R.id.action_report -> copyReport()
+            R.id.action_report -> shareReport()
+            R.id.action_check -> checkNow()
             R.id.action_settings -> startActivity(Intent(this, SettingsActivity::class.java))
             else -> return super.onOptionsItemSelected(item)
         }
@@ -195,14 +196,43 @@ class MainActivity : Activity() {
         }
     }
 
-    private fun copyReport() {
+    /** The report goes through the share sheet, so a tester can send it straight from here. */
+    private fun shareReport() {
         worker.execute {
             val report = try {
-                StatusText.report(Native.status(), NetInfo.snapshot(this), settings)
+                StatusText.report(Native.status(), NetInfo.snapshot(this), settings, appVersion())
             } catch (e: Throwable) {
                 "error: ${e.message ?: e}"
             }
-            runOnUiThread { Ui.copy(this, "Passage report", report, getString(R.string.report_copied)) }
+            runOnUiThread {
+                val send = Intent(Intent.ACTION_SEND)
+                    .setType("text/plain")
+                    .putExtra(Intent.EXTRA_SUBJECT, "Passage report")
+                    .putExtra(Intent.EXTRA_TEXT, report)
+                startActivity(Intent.createChooser(send, getString(R.string.share_report)))
+            }
         }
+    }
+
+    private fun appVersion(): String = try {
+        packageManager.getPackageInfo(packageName, 0).versionName ?: "?"
+    } catch (_: Exception) {
+        "?"
+    }
+
+    /** Probes the network now instead of at the next scheduled check (auto mode only). */
+    private fun checkNow() {
+        if (!PassageService.active) {
+            Toast.makeText(this, getString(R.string.proxy_stopped), Toast.LENGTH_SHORT).show()
+            return
+        }
+        worker.execute {
+            try {
+                Native.networkChanged()
+            } catch (_: Throwable) {
+            }
+        }
+        Toast.makeText(this, getString(R.string.checking), Toast.LENGTH_SHORT).show()
+        main.postDelayed({ refresh() }, 3_000)
     }
 }

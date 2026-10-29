@@ -1,7 +1,10 @@
 package info.gluek.passage
 
+import android.annotation.SuppressLint
 import android.app.Activity
 import android.content.Intent
+import android.content.pm.PackageManager
+import android.os.Build
 import android.os.Bundle
 import android.text.InputType
 import android.view.MenuItem
@@ -14,6 +17,7 @@ import android.widget.RadioButton
 import android.widget.RadioGroup
 import android.widget.TextView
 import android.widget.Toast
+import java.security.MessageDigest
 import java.util.concurrent.Executors
 
 /**
@@ -31,6 +35,7 @@ class SettingsActivity : Activity() {
     private lateinit var linkEdit: EditText
     private lateinit var probeEdit: EditText
     private lateinit var batteryButton: Button
+    private lateinit var aboutView: TextView
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -165,6 +170,14 @@ class SettingsActivity : Activity() {
         }
         col.addView(batteryButton)
 
+        col.addView(Ui.heading(this, getString(R.string.about_label)))
+        aboutView = Ui.hint(this, "").apply { setTextIsSelectable(true) }
+        col.addView(aboutView)
+        worker.execute {
+            val text = about()
+            runOnUiThread { aboutView.text = text }
+        }
+
         return Ui.scroll(this, col)
     }
 
@@ -236,6 +249,43 @@ class SettingsActivity : Activity() {
                 if (!ok) setLinkOpen(true)
             }
         }
+    }
+
+    /**
+     * Version, soar version and the signing certificate's SHA-256, so a
+     * tester can say what they run and anyone can check the APK's origin.
+     */
+    private fun about(): String {
+        val soar = try {
+            Native.json(Native.versions()).optString("soar", "?")
+        } catch (_: Throwable) {
+            "?"
+        }
+        val info = packageManager.getPackageInfo(packageName, 0)
+        val code = if (Build.VERSION.SDK_INT >= 28) info.longVersionCode else {
+            @Suppress("DEPRECATION")
+            info.versionCode.toLong()
+        }
+        return getString(R.string.about_version, info.versionName, code, soar) + "\n\n" +
+            getString(R.string.about_cert) + "\n" + certFingerprint() + "\n\n" +
+            getString(R.string.about_source)
+    }
+
+    private fun certFingerprint(): String = try {
+        val sig = if (Build.VERSION.SDK_INT >= 28) {
+            packageManager.getPackageInfo(packageName, PackageManager.GET_SIGNING_CERTIFICATES)
+                .signingInfo?.apkContentsSigners?.firstOrNull()
+        } else {
+            // Our own package: the single signer is the one Android verified at install.
+            @Suppress("DEPRECATION")
+            @SuppressLint("PackageManagerGetSignatures")
+            val sigs = packageManager.getPackageInfo(packageName, PackageManager.GET_SIGNATURES).signatures
+            sigs?.firstOrNull()
+        }
+        val d = MessageDigest.getInstance("SHA-256").digest(sig!!.toByteArray())
+        d.joinToString(":") { "%02X".format(it) }
+    } catch (_: Exception) {
+        "?"
     }
 
     private fun setLinkOpen(open: Boolean) {
