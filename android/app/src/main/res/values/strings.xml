@@ -1,0 +1,75 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name" translatable="false">Passage</string>
+
+    <string name="intro">Apps on this phone can use the SOCKS5 proxy %1$s (no username or password). Connections go direct while the network is open, and through the tunnel when it is restricted. A direct connection that fails also retries through the tunnel.</string>
+
+    <string name="setup_open">▾ Link and probe hosts</string>
+    <string name="setup_closed">▸ %1$s\n   probe hosts: %2$s</string>
+    <string name="link_label">Link</string>
+    <string name="link_hint" translatable="false">passage://tunnel?v=1&amp;zone=…&amp;key=…</string>
+    <string name="link_empty">Paste the passage://tunnel link you received.</string>
+    <string name="link_ok">Link OK</string>
+    <string name="link_ok_zone">Link OK: zone %1$s</string>
+    <plurals name="link_extra_resolvers">
+        <item quantity="one">, %d extra resolver</item>
+        <item quantity="other">, %d extra resolvers</item>
+    </plurals>
+    <string name="link_invalid">Invalid link: %1$s</string>
+    <string name="link_error_toast">Link: %1$s</string>
+    <string name="native_broken">Native library missing or broken: %1$s</string>
+
+    <string name="probe_label">Probe hosts</string>
+    <string name="probe_help">Hosts that stop answering when the network is restricted, e.g. your relay (host or host:port, comma-separated). Empty = learn them from traffic, which only works if nothing but a mail app uses the proxy.</string>
+    <string name="probe_hint" translatable="false">relay.example.org</string>
+    <string name="probe_learned">learned from traffic</string>
+    <string name="short_names">Short names first (start at 101 chars, grow to 253)</string>
+    <string name="save">Save</string>
+
+    <string name="route_label">Route</string>
+    <string name="mode_auto">Auto</string>
+    <string name="mode_always">Always tunnel</string>
+    <string name="mode_off">Never tunnel</string>
+
+    <string name="start">Start</string>
+    <string name="stop">Stop</string>
+    <string name="copy_report">Copy report</string>
+    <string name="battery">Allow running in background</string>
+    <string name="report_copied">Report copied (without the tunnel zone)</string>
+
+    <string name="notification_channel">Proxy</string>
+    <string name="notification_starting">Starting…</string>
+
+    <string name="not_running">not running</string>
+    <string name="proxy_not_running">Proxy is not running.</string>
+    <string name="one_line">route: %1$s · %2$s · tunnel: %3$s</string>
+    <string name="route_direct">direct</string>
+    <string name="route_tunnel">tunnel</string>
+    <string name="session_up">up</string>
+    <string name="session_down">down</string>
+
+    <string name="state_direct">open (probe hosts answer directly)</string>
+    <string name="state_blocked">restricted (probe hosts fail, other sites answer)</string>
+    <string name="state_relays_down">probe hosts down (they fail through the tunnel too)</string>
+    <string name="state_offline">offline (nothing answers)</string>
+    <string name="state_unknown">not checked yet</string>
+
+    <string name="status_route">Route: %1$s since %2$s (mode %3$s)</string>
+    <string name="status_network">Network: %1$s</string>
+    <string name="status_last_check">Last check %1$s: probe hosts %2$d/%3$d OK%4$s</string>
+    <string name="status_canary_ok">, other sites answer</string>
+    <string name="status_canary_silent">, other sites silent</string>
+    <string name="status_probe_hosts">Probe hosts: %1$s</string>
+    <string name="none_yet">none yet</string>
+    <string name="none">none</string>
+    <string name="status_session">Tunnel session: %1$s, resolvers: %2$d, operator %3$s</string>
+    <string name="status_network_resolvers">Network resolvers: %1$s</string>
+    <string name="status_intercepted">This network intercepts DNS</string>
+    <string name="status_intercepted_via">This network intercepts DNS (answered via %1$s)</string>
+    <string name="status_open_conns">Open connections: direct %1$d, tunnel %2$d</string>
+    <string name="status_route_stats">%1$s: %2$d conns, %3$d failed, up %4$s, down %5$s</string>
+    <string name="status_direct">Direct</string>
+    <string name="status_tunnel">Tunnel</string>
+    <string name="status_paths">Resolver paths (working first):</string>
+    <string name="status_events">Events (newest last):</string>
+</resources>

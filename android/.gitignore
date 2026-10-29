@@ -1,0 +1,5 @@
+.gradle/
+build/
+local.properties
+# libpassage.so, built from core/cmd/libpassage
+app/src/main/nativeLibs/

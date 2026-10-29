@@ -3,12 +3,13 @@
 Passage is an Android app that runs a local SOCKS5 proxy on `127.0.0.1` for
 other apps on the phone. It has two parts:
 
-- a Go library (the router), built as a shared library for Android;
-- a Kotlin Android app: a foreground service around that library, plus the
-  settings and status screens.
-
-> Draft. The source tree is not in the repo yet; update the paths below when
-> it lands.
+- `core/`: the Go router (module `github.com/mrgluek/passage/core`).
+  `tunnel/` is the router and SOCKS5 server, `cmd/libpassage` exports it as
+  JNI methods of `info.gluek.passage.Native`, and `cmd/passage-cli` runs it
+  standalone on Linux or macOS.
+- `android/`: the Kotlin app (`info.gluek.passage`), a foreground service
+  around that library plus one settings and status screen. UI strings live
+  in `res/values/strings.xml` with a Russian translation in `values-ru/`.
 
 ## Rules
 
@@ -29,30 +30,34 @@ other apps on the phone. It has two parts:
 
 ## Build and test
 
-Go library (from the Go module directory):
+Go router (from `core/`; `cmd/libpassage` builds for Android only):
 
 ```bash
-go vet ./...
-go test ./...
+go vet ./tunnel ./cmd/passage-cli
+go test -race ./...
 ```
 
-Shared library for arm64 Android:
+Shared library for arm64 Android, into `android/app/src/main/nativeLibs/`:
 
 ```bash
-NDK="$ANDROID_HOME/ndk/27.2.12479018/toolchains/llvm/prebuilt/<host>"
-CGO_ENABLED=1 GOOS=android GOARCH=arm64 \
-  CC="$NDK/bin/aarch64-linux-android24-clang" \
-  go build -trimpath -buildmode=c-shared \
-  -ldflags="-s -w -extldflags=-Wl,-z,max-page-size=16384" \
-  -o <app>/src/main/jniLibs/arm64-v8a/<lib>.so ./cmd/<lib>
+scripts/build-native.sh
 ```
 
-The 16 KB page alignment is required for native libraries on Android 15+.
-
-Android app (from the Gradle project directory):
+Android app (from `android/`):
 
 ```bash
 ./gradlew --no-daemon assembleRelease
 ```
 
-CI runs the same steps in GitHub Actions.
+Without signing variables the release APK is signed with the debug key.
+`release.yml` signs tagged builds with `PASSAGE_KEYSTORE` (PKCS12),
+`PASSAGE_KEYSTORE_PASS` and `PASSAGE_KEY_ALIAS`.
+
+CI (`ci.yml`) runs the same steps on every push and pull request.
+
+## Release
+
+1. Bump `versionCode` and `versionName` in `android/app/build.gradle.kts`.
+2. Add a `## <version>` section to `CHANGELOG.md`: short, user-facing.
+3. Tag `v<version>` on `main` and push the tag; `release.yml` builds, signs
+   and publishes the APK with `SHA256SUMS`.

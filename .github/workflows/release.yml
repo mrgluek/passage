@@ -1,0 +1,74 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    # Signing secrets live in this environment only, never in PR builds.
+    environment: release
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Check the Gradle wrapper
+        run: |
+          version=$(sed -n 's#.*gradle-\(.*\)-bin.zip#\1#p' android/gradle/wrapper/gradle-wrapper.properties)
+          want=$(curl -fsSL "https://services.gradle.org/distributions/gradle-${version}-wrapper.jar.sha256")
+          echo "$want  android/gradle/wrapper/gradle-wrapper.jar" | sha256sum -c -
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - name: Set up Android SDK / NDK
+        uses: android-actions/setup-android@be39fa834029ff78f1a44aa3bb0819b8fc2bd8fd # v4
+        with:
+          cmdline-tools-version: 11076708
+          packages: "ndk;27.2.12479018 platforms;android-36 build-tools;35.0.0"
+
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: core/go.mod
+          cache-dependency-path: core/go.sum
+
+      - name: Go test
+        working-directory: ./core
+        run: go test ./...
+
+      - name: Build libpassage.so
+        run: scripts/build-native.sh
+
+      - name: Build signed APK
+        working-directory: ./android
+        env:
+          KEYSTORE_B64: ${{ secrets.PASSAGE_KEYSTORE_B64 }}
+          PASSAGE_KEYSTORE_PASS: ${{ secrets.PASSAGE_KEYSTORE_PASS }}
+          PASSAGE_KEY_ALIAS: ${{ secrets.PASSAGE_KEY_ALIAS }}
+        run: |
+          test -n "$KEYSTORE_B64" || { echo "signing secrets missing" >&2; exit 1; }
+          export PASSAGE_KEYSTORE="$RUNNER_TEMP/release.p12"
+          echo "$KEYSTORE_B64" | base64 -d > "$PASSAGE_KEYSTORE"
+          ./gradlew --no-daemon assembleRelease
+          rm -f "$PASSAGE_KEYSTORE"
+
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          mkdir dist
+          cp android/app/build/outputs/apk/release/app-release.apk "dist/passage-${TAG#v}-arm64.apk"
+          (cd dist && sha256sum *.apk > SHA256SUMS)
+          # This version's section of CHANGELOG.md.
+          awk -v v="## ${TAG#v}" '$0 == v {on=1; next} /^## / {on=0} on' CHANGELOG.md > "$RUNNER_TEMP/notes.md"
+          test -s "$RUNNER_TEMP/notes.md" || { echo "no CHANGELOG.md section for ${TAG#v}" >&2; exit 1; }
+          gh release create "$TAG" dist/* --title "Passage ${TAG#v}" --notes-file "$RUNNER_TEMP/notes.md" --verify-tag

@@ -1,0 +1,73 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="intro">Приложения на этом телефоне могут пользоваться SOCKS5-прокси %1$s (без логина и пароля). Пока сеть открыта, соединения идут напрямую, а когда она ограничена — через туннель. Неудачное прямое соединение тоже повторяется через туннель.</string>
+
+    <string name="setup_open">▾ Ссылка и проверочные хосты</string>
+    <string name="setup_closed">▸ %1$s\n   проверочные хосты: %2$s</string>
+    <string name="link_label">Ссылка</string>
+    <string name="link_empty">Вставьте полученную ссылку passage://tunnel.</string>
+    <string name="link_ok">Ссылка в порядке</string>
+    <string name="link_ok_zone">Ссылка в порядке: зона %1$s</string>
+    <plurals name="link_extra_resolvers">
+        <item quantity="one">, %d дополнительный резолвер</item>
+        <item quantity="few">, %d дополнительных резолвера</item>
+        <item quantity="many">, %d дополнительных резолверов</item>
+        <item quantity="other">, %d дополнительного резолвера</item>
+    </plurals>
+    <string name="link_invalid">Неверная ссылка: %1$s</string>
+    <string name="link_error_toast">Ссылка: %1$s</string>
+    <string name="native_broken">Нативная библиотека не найдена или повреждена: %1$s</string>
+
+    <string name="probe_label">Проверочные хосты</string>
+    <string name="probe_help">Хосты, которые перестают отвечать, когда сеть ограничена, например ваш релей (host или host:port через запятую). Пусто — узнавать их из трафика; это работает, только если прокси пользуется одно почтовое приложение.</string>
+    <string name="probe_learned">из трафика</string>
+    <string name="short_names">Сначала короткие имена (начать со 101 символа, расти до 253)</string>
+    <string name="save">Сохранить</string>
+
+    <string name="route_label">Маршрут</string>
+    <string name="mode_auto">Авто</string>
+    <string name="mode_always">Всегда туннель</string>
+    <string name="mode_off">Без туннеля</string>
+
+    <string name="start">Старт</string>
+    <string name="stop">Стоп</string>
+    <string name="copy_report">Скопировать отчёт</string>
+    <string name="battery">Разрешить работу в фоне</string>
+    <string name="report_copied">Отчёт скопирован (без зоны туннеля)</string>
+
+    <string name="notification_channel">Прокси</string>
+    <string name="notification_starting">Запуск…</string>
+
+    <string name="not_running">не запущен</string>
+    <string name="proxy_not_running">Прокси не запущен.</string>
+    <string name="one_line">маршрут: %1$s · %2$s · туннель: %3$s</string>
+    <string name="route_direct">напрямую</string>
+    <string name="route_tunnel">туннель</string>
+    <string name="session_up">есть</string>
+    <string name="session_down">нет</string>
+
+    <string name="state_direct">открыта (проверочные хосты отвечают напрямую)</string>
+    <string name="state_blocked">ограничена (проверочные хосты не отвечают, другие сайты отвечают)</string>
+    <string name="state_relays_down">проверочные хосты недоступны (и через туннель тоже)</string>
+    <string name="state_offline">нет сети (ничего не отвечает)</string>
+    <string name="state_unknown">ещё не проверялась</string>
+
+    <string name="status_route">Маршрут: %1$s с %2$s (режим %3$s)</string>
+    <string name="status_network">Сеть: %1$s</string>
+    <string name="status_last_check">Проверка %1$s: проверочные хосты %2$d/%3$d OK%4$s</string>
+    <string name="status_canary_ok">, другие сайты отвечают</string>
+    <string name="status_canary_silent">, другие сайты молчат</string>
+    <string name="status_probe_hosts">Проверочные хосты: %1$s</string>
+    <string name="none_yet">пока нет</string>
+    <string name="none">нет</string>
+    <string name="status_session">Сессия туннеля: %1$s, резолверов: %2$d, оператор %3$s</string>
+    <string name="status_network_resolvers">Резолверы сети: %1$s</string>
+    <string name="status_intercepted">Эта сеть перехватывает DNS</string>
+    <string name="status_intercepted_via">Эта сеть перехватывает DNS (отвечает %1$s)</string>
+    <string name="status_open_conns">Открытые соединения: напрямую %1$d, через туннель %2$d</string>
+    <string name="status_route_stats">%1$s: соединений %2$d, ошибок %3$d, отправлено %4$s, получено %5$s</string>
+    <string name="status_direct">Напрямую</string>
+    <string name="status_tunnel">Туннель</string>
+    <string name="status_paths">Пути через резолверы (рабочие сверху):</string>
+    <string name="status_events">События (новые внизу):</string>
+</resources>
