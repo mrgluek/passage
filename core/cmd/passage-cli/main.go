@@ -4,7 +4,7 @@
 //	passage-cli -link-file link.txt        # link kept out of argv/history
 //	passage-cli -link 'passage://tunnel?v=1&zone=…&key=…' -listen 127.0.0.1:18000
 //
-// Point Delta Chat at socks5://127.0.0.1:18000 (no auth unless -user is set).
+// Point a SOCKS5 client at 127.0.0.1:18000 (no auth unless -user is set).
 // Like the app, it puts this machine's own DNS servers (from resolv.conf)
 // first among the tunnel's resolver paths; -system-dns=false turns that off.
 package main

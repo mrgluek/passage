@@ -68,7 +68,7 @@ class Settings(context: Context) {
 
     val listen: String get() = "$HOST:$port"
 
-    /** The proxy as a link other apps accept (Delta Chat: Settings → Advanced → Proxy). */
+    /** The proxy as a socks5:// link that other apps accept in their proxy settings. */
     fun proxyLink(): String =
         if (auth) "socks5://$user:$pass@$HOST:$port" else "socks5://$HOST:$port"
 

@@ -2,8 +2,8 @@
 
 **You shall pass.**
 
-A local SOCKS5 proxy for Android. Other apps on the phone (Delta Chat,
-ArcaneChat, etc.) connect to it on `127.0.0.1`, and Passage picks the best
+A local SOCKS5 proxy for Android. Messaging apps on the phone that support a
+SOCKS5 proxy connect to it on `127.0.0.1`, and Passage picks the best
 available connection for them automatically.
 
 ## Use
@@ -14,8 +14,8 @@ available connection for them automatically.
    against `SHA256SUMS`.
 2. Open the `passage://` link you received, or paste it in Settings, and tap
    the start button. Allow notifications and running in the background.
-3. Tap **Copy proxy link** and paste it into the other app. In Delta Chat:
-   Settings → Advanced → Proxy → Add proxy.
+3. Tap **Copy proxy link** and paste it into the proxy settings of the other
+   app (SOCKS5).
 
 ### Updates with Obtainium
 
