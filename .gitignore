@@ -1,0 +1,16 @@
+# Android / Gradle
+.gradle/
+build/
+local.properties
+*.apk
+*.aab
+*.keystore
+*.jks
+
+# Native libraries built from Go
+*.so
+
+# IDE / OS
+.idea/
+*.iml
+.DS_Store
