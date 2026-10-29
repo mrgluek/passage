@@ -8,15 +8,35 @@ available connection for them automatically.
 
 ## Use
 
-1. Install the APK from [Releases](https://github.com/mrgluek/passage/releases)
-   and check it against `SHA256SUMS`.
-2. Open the `passage://` link you received, or paste it into the app, and
-   tap **Start**. Allow notifications and running in the background.
-3. In the other app, set the proxy to SOCKS5 `127.0.0.1`, port `42000`, no
-   username or password. In Delta Chat: Settings → Advanced → Proxy →
-   `socks5://127.0.0.1:42000`.
+1. Install the APK for your phone from
+   [Releases](https://github.com/mrgluek/passage/releases) (`arm64` for most
+   phones, `armv7` for older 32-bit ones, `universal` if unsure) and check it
+   against `SHA256SUMS`.
+2. Open the `passage://` link you received, or paste it in Settings, and tap
+   the start button. Allow notifications and running in the background.
+3. Tap **Copy proxy link** and paste it into the other app. In Delta Chat:
+   Settings → Advanced → Proxy → Add proxy.
 
-Any app on the phone can use the proxy port.
+### Updates with Obtainium
+
+[Obtainium](https://github.com/ImranR98/Obtainium) installs Passage from
+the GitHub releases and keeps it up to date:
+
+1. In Obtainium, tap **Add app** and enter
+   `https://github.com/mrgluek/passage`, or open
+   `obtainium://add/https://github.com/mrgluek/passage` on the phone.
+2. Under **Filter APKs by regular expression**, enter `arm64` (or `armv7`
+   for a 32-bit phone), so it always picks the APK for your phone.
+3. Tap **Add**, then **Install**.
+
+Android only installs an update signed with the same key as the installed
+app, so a tampered APK can't replace Passage.
+
+### Proxy access
+
+The proxy listens on `127.0.0.1` with a random port, username and password
+made on the phone. Settings can turn the password off for apps that can't
+send one, or make a new port and password.
 
 ## Build
 

@@ -17,7 +17,16 @@ android {
         targetSdk = 36
         versionCode = 1
         versionName = "0.1.0"
-        ndk { abiFilters += listOf("arm64-v8a") }
+    }
+
+    // One APK per ABI plus a universal one.
+    splits {
+        abi {
+            isEnable = true
+            reset()
+            include("arm64-v8a", "armeabi-v7a")
+            isUniversalApk = true
+        }
     }
 
     signingConfigs {
@@ -46,6 +55,20 @@ android {
 
     // libpassage.so, built from core/cmd/libpassage.
     sourceSets.getByName("main").jniLibs.srcDir("src/main/nativeLibs")
+}
+
+// versionCode * 10 + ABI digit, so a phone always gets the APK for its ABI
+// as the newer one: universal 0, armeabi-v7a 1, arm64-v8a 2.
+val abiDigit = mapOf("armeabi-v7a" to 1, "arm64-v8a" to 2)
+androidComponents {
+    onVariants { variant ->
+        variant.outputs.forEach { output ->
+            val abi = output.filters.find {
+                it.filterType == com.android.build.api.variant.FilterConfiguration.FilterType.ABI
+            }?.identifier
+            output.versionCode.set((output.versionCode.orNull ?: 1) * 10 + (abiDigit[abi] ?: 0))
+        }
+    }
 }
 
 kotlin {

@@ -1,12 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="intro">Приложения на этом телефоне могут пользоваться SOCKS5-прокси %1$s (без логина и пароля). Пока сеть открыта, соединения идут напрямую, а когда она ограничена — через туннель. Неудачное прямое соединение тоже повторяется через туннель.</string>
-
-    <string name="setup_open">▾ Ссылка и проверочные хосты</string>
-    <string name="setup_closed">▸ %1$s\n   проверочные хосты: %2$s</string>
     <string name="link_label">Ссылка</string>
     <string name="link_empty">Вставьте полученную ссылку passage://tunnel.</string>
-    <string name="link_ok">Ссылка в порядке</string>
     <string name="link_ok_zone">Ссылка в порядке: зона %1$s</string>
     <plurals name="link_extra_resolvers">
         <item quantity="one">, %d дополнительный резолвер</item>
@@ -20,7 +15,6 @@
 
     <string name="probe_label">Проверочные хосты</string>
     <string name="probe_help">Хосты, которые перестают отвечать, когда сеть ограничена, например ваш релей (host или host:port через запятую). Пусто — узнавать их из трафика; это работает, только если прокси пользуется одно почтовое приложение.</string>
-    <string name="probe_learned">из трафика</string>
     <string name="short_names">Сначала короткие имена (начать со 101 символа, расти до 253)</string>
     <string name="save">Сохранить</string>
 
@@ -29,7 +23,6 @@
     <string name="mode_always">Всегда туннель</string>
     <string name="mode_off">Без туннеля</string>
 
-    <string name="start">Старт</string>
     <string name="stop">Стоп</string>
     <string name="copy_report">Скопировать отчёт</string>
     <string name="battery">Разрешить работу в фоне</string>
@@ -70,4 +63,29 @@
     <string name="status_tunnel">Туннель</string>
     <string name="status_paths">Пути через резолверы (рабочие сверху):</string>
     <string name="status_events">События (новые внизу):</string>
+    <string name="settings">Настройки</string>
+    <string name="action_start">Запустить прокси</string>
+    <string name="action_stop">Остановить прокси</string>
+    <string name="proxy_running">Прокси работает</string>
+    <string name="proxy_stopped">Прокси остановлен</string>
+    <string name="no_link">Добавьте полученную ссылку passage:// в настройках.</string>
+    <string name="open_settings">Открыть настройки</string>
+    <string name="need_link_first">Сначала добавьте ссылку в настройках</string>
+    <string name="connect_label">Подключить приложение</string>
+    <string name="connect_help">В Delta Chat или ArcaneChat: Настройки → Дополнительно → Прокси → Добавить прокси, затем вставьте ссылку на прокси.</string>
+    <string name="copy_proxy_link">Скопировать ссылку на прокси</string>
+    <string name="proxy_link_copied">Ссылка на прокси скопирована</string>
+    <string name="proxy_details">Хост %1$s, порт %2$d\nЛогин %3$s\nПароль %4$s</string>
+    <string name="proxy_details_open">Хост %1$s, порт %2$d, без пароля</string>
+    <string name="status_label">Состояние</string>
+    <string name="change_link">Изменить ссылку</string>
+    <string name="saved">Сохранено</string>
+    <string name="access_label">Доступ к прокси</string>
+    <string name="auth_switch">Требовать логин и пароль</string>
+    <string name="auth_help">Если выключено, прокси может пользоваться любое приложение на телефоне. Выключайте, только если приложение не умеет передавать пароль.</string>
+    <string name="new_access">Новый порт и пароль</string>
+    <string name="new_access_help">Приложения со старой ссылкой на прокси перестанут подключаться, пока вы не вставите новую.</string>
+    <string name="new_access_done">Новый порт и пароль заданы</string>
+    <string name="startup_label">Запуск</string>
+    <string name="start_on_boot">Запускать после перезагрузки телефона, если прокси работал</string>
 </resources>

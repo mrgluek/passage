@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="utf-8"?>
+<menu xmlns:android="http://schemas.android.com/apk/res/android">
+    <item
+        android:id="@+id/action_start"
+        android:icon="@drawable/ic_action_start"
+        android:showAsAction="always"
+        android:title="@string/action_start" />
+    <item
+        android:id="@+id/action_stop"
+        android:icon="@drawable/ic_action_stop"
+        android:showAsAction="always"
+        android:title="@string/action_stop" />
+    <item
+        android:id="@+id/action_report"
+        android:icon="@drawable/ic_action_report"
+        android:showAsAction="ifRoom"
+        android:title="@string/copy_report" />
+    <item
+        android:id="@+id/action_settings"
+        android:icon="@drawable/ic_action_settings"
+        android:showAsAction="always"
+        android:title="@string/settings" />
+</menu>

@@ -1,15 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name" translatable="false">Passage</string>
-
-    <string name="intro">Apps on this phone can use the SOCKS5 proxy %1$s (no username or password). Connections go direct while the network is open, and through the tunnel when it is restricted. A direct connection that fails also retries through the tunnel.</string>
-
-    <string name="setup_open">▾ Link and probe hosts</string>
-    <string name="setup_closed">▸ %1$s\n   probe hosts: %2$s</string>
     <string name="link_label">Link</string>
     <string name="link_hint" translatable="false">passage://tunnel?v=1&amp;zone=…&amp;key=…</string>
     <string name="link_empty">Paste the passage://tunnel link you received.</string>
-    <string name="link_ok">Link OK</string>
     <string name="link_ok_zone">Link OK: zone %1$s</string>
     <plurals name="link_extra_resolvers">
         <item quantity="one">, %d extra resolver</item>
@@ -22,7 +16,6 @@
     <string name="probe_label">Probe hosts</string>
     <string name="probe_help">Hosts that stop answering when the network is restricted, e.g. your relay (host or host:port, comma-separated). Empty = learn them from traffic, which only works if nothing but a mail app uses the proxy.</string>
     <string name="probe_hint" translatable="false">relay.example.org</string>
-    <string name="probe_learned">learned from traffic</string>
     <string name="short_names">Short names first (start at 101 chars, grow to 253)</string>
     <string name="save">Save</string>
 
@@ -31,7 +24,6 @@
     <string name="mode_always">Always tunnel</string>
     <string name="mode_off">Never tunnel</string>
 
-    <string name="start">Start</string>
     <string name="stop">Stop</string>
     <string name="copy_report">Copy report</string>
     <string name="battery">Allow running in background</string>
@@ -72,4 +64,29 @@
     <string name="status_tunnel">Tunnel</string>
     <string name="status_paths">Resolver paths (working first):</string>
     <string name="status_events">Events (newest last):</string>
+    <string name="settings">Settings</string>
+    <string name="action_start">Start proxy</string>
+    <string name="action_stop">Stop proxy</string>
+    <string name="proxy_running">Proxy is running</string>
+    <string name="proxy_stopped">Proxy is stopped</string>
+    <string name="no_link">Add the passage:// link you received in settings.</string>
+    <string name="open_settings">Open settings</string>
+    <string name="need_link_first">Add a link in settings first</string>
+    <string name="connect_label">Connect an app</string>
+    <string name="connect_help">In Delta Chat or ArcaneChat: Settings → Advanced → Proxy → Add proxy, then paste the proxy link.</string>
+    <string name="copy_proxy_link">Copy proxy link</string>
+    <string name="proxy_link_copied">Proxy link copied</string>
+    <string name="proxy_details">Host %1$s, port %2$d\nUsername %3$s\nPassword %4$s</string>
+    <string name="proxy_details_open">Host %1$s, port %2$d, no password</string>
+    <string name="status_label">Status</string>
+    <string name="change_link">Change link</string>
+    <string name="saved">Saved</string>
+    <string name="access_label">Proxy access</string>
+    <string name="auth_switch">Require username and password</string>
+    <string name="auth_help">When off, any app on this phone can use the proxy. Turn it off only for an app that can\'t send a password.</string>
+    <string name="new_access">New port and password</string>
+    <string name="new_access_help">Apps set up with the old proxy link stop connecting until you paste the new one.</string>
+    <string name="new_access_done">New port and password set</string>
+    <string name="startup_label">Startup</string>
+    <string name="start_on_boot">Start after the phone restarts, if the proxy was running</string>
 </resources>

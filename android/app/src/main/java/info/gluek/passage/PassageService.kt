@@ -20,14 +20,13 @@ import org.json.JSONArray
 import java.util.concurrent.Executors
 
 /**
- * Keeps the SOCKS5 proxy on 127.0.0.1:42000 alive in the background: a
+ * Keeps the SOCKS5 proxy on loopback alive in the background: a
  * foreground service with a partial wake lock that restarts the tunnel when
  * the network's resolvers or the SIM operator change, and retries a start
  * that failed (port busy, bad network).
  */
 class PassageService : Service() {
     companion object {
-        const val LISTEN = "127.0.0.1:42000"
         private const val ACTION_START = "info.gluek.passage.START"
         private const val ACTION_STOP = "info.gluek.passage.STOP"
         private const val CHANNEL = "proxy"
@@ -179,7 +178,11 @@ class PassageService : Service() {
             val cfg = Native.parse(s.link)
             cfg.optString("error").takeIf { it.isNotEmpty() }?.let { throw IllegalArgumentException("link: $it") }
             val net = NetInfo.snapshot(this)
-            cfg.put("listen", LISTEN)
+            cfg.put("listen", s.listen)
+            if (s.auth) {
+                cfg.put("user", s.user)
+                cfg.put("pass", s.pass)
+            }
             cfg.put("mode", s.mode)
             cfg.put("probe_targets", JSONArray(s.probeTargets()))
             if (s.shortNames) cfg.put("safe_qname", SHORT_QNAME)
@@ -234,7 +237,7 @@ class PassageService : Service() {
             e.message ?: e.toString()
         }
         val nm = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-        nm.notify(NOTIFICATION_ID, buildNotification("SOCKS5 $LISTEN", text))
+        nm.notify(NOTIFICATION_ID, buildNotification("SOCKS5 ${Settings(this).listen}", text))
     }
 
     private fun buildNotification(title: String, text: String): Notification {

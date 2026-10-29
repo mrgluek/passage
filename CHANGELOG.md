@@ -4,10 +4,13 @@
 
 First public version.
 
-- Local SOCKS5 proxy on `127.0.0.1:42000` for other apps on the phone.
+- Local SOCKS5 proxy on `127.0.0.1` for other apps on the phone, with a
+  random port, username and password; **Copy proxy link** sets up Delta
+  Chat and ArcaneChat in one paste.
 - Picks the connection automatically, or set it by hand: Auto, Always
   tunnel, Never tunnel.
 - Set up with a `passage://` link: paste it, or tap it to open the app.
+- Optional start after the phone restarts.
 - Status screen and a report you can copy.
 - English and Russian.
-- Android 7.0 and newer, 64-bit ARM phones.
+- Android 7.0 and newer, 64-bit and 32-bit ARM phones.

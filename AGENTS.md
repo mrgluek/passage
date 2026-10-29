@@ -8,8 +8,10 @@ other apps on the phone. It has two parts:
   JNI methods of `info.gluek.passage.Native`, and `cmd/passage-cli` runs it
   standalone on Linux or macOS.
 - `android/`: the Kotlin app (`info.gluek.passage`), a foreground service
-  around that library plus one settings and status screen. UI strings live
-  in `res/values/strings.xml` with a Russian translation in `values-ru/`.
+  around that library, a home screen (state, proxy link, status) with
+  start/stop, report and settings in the title bar, and a settings screen.
+  UI strings live in `res/values/strings.xml` with a Russian translation in
+  `values-ru/`.
 
 ## Rules
 
@@ -37,7 +39,8 @@ go vet ./tunnel ./cmd/passage-cli
 go test -race ./...
 ```
 
-Shared library for arm64 Android, into `android/app/src/main/nativeLibs/`:
+Shared libraries for `arm64-v8a` and `armeabi-v7a`, into
+`android/app/src/main/nativeLibs/`:
 
 ```bash
 scripts/build-native.sh
@@ -49,7 +52,9 @@ Android app (from `android/`):
 ./gradlew --no-daemon assembleRelease
 ```
 
-Without signing variables the release APK is signed with the debug key.
+This builds one APK per ABI plus a universal one; `versionCode` becomes
+`versionCode * 10 + ABI digit` (universal 0, armeabi-v7a 1, arm64-v8a 2).
+Without signing variables the release APKs are signed with the debug key.
 `release.yml` signs tagged builds with `PASSAGE_KEYSTORE` (PKCS12),
 `PASSAGE_KEYSTORE_PASS` and `PASSAGE_KEY_ALIAS`.
 
