@@ -61,5 +61,14 @@
                 android:value="Local SOCKS5 proxy on 127.0.0.1 that other apps on this device connect through" />
         </service>
 
+
+        <!-- Sent only to this app, after it is updated. -->
+        <receiver
+            android:name=".UpdateReceiver"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+            </intent-filter>
+        </receiver>
     </application>
 </manifest>
