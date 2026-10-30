@@ -6,6 +6,8 @@ A local SOCKS5 proxy for Android. Messaging apps on the phone that support a
 SOCKS5 proxy connect to it on `127.0.0.1`, and Passage picks the best
 available connection for them automatically.
 
+Website: <https://passage.gluek.info>
+
 ## Use
 
 1. Install the APK for your phone from
@@ -35,6 +37,13 @@ C3:C9:73:50:37:FF:A5:00:6D:D9:88:AB:29:D6:11:D6:A4:41:31:E5:3F:D8:1D:FA:CF:06:49
   `gh release verify-asset v<version> passage-<version>-arm64.apk -R mrgluek/passage`.
 
 Passage shows the same fingerprint in Settings → About.
+
+### Updates with F-Droid
+
+Passage has its own F-Droid repository. Open
+<https://passage.gluek.info> on the phone and tap **Add repository**, or
+scan the QR code there with F-Droid, Droid-ify or Neo Store. The page also
+shows the repository address and fingerprint for adding it by hand.
 
 ### Updates with Obtainium
 

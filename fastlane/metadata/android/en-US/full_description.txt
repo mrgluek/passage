@@ -1,0 +1,6 @@
+Passage runs a local SOCKS5 proxy on 127.0.0.1. Messaging apps on the phone that support a SOCKS5 proxy connect to it, and Passage picks the best available connection for them automatically.
+
+* Set up with a passage:// link: paste it, or tap it to open the app.
+* Copy proxy link sets up another app in one paste.
+* The proxy uses a random port, username and password made on the phone.
+* Status screen, Check now, and a report you can send from the app.
