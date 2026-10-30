@@ -4,7 +4,8 @@ plugins {
 }
 
 // Release signing comes from the environment (CI secrets). Without it,
-// release builds are signed with the debug key.
+// release APKs stay unsigned: a debug-signed "release" could not be updated
+// by real releases, which use another key.
 val releaseKeystore: String? = System.getenv("PASSAGE_KEYSTORE")
 
 android {
@@ -44,7 +45,7 @@ android {
     buildTypes {
         release {
             isMinifyEnabled = false
-            signingConfig = signingConfigs.findByName("release") ?: signingConfigs.getByName("debug")
+            signingConfig = signingConfigs.findByName("release")
         }
     }
 
