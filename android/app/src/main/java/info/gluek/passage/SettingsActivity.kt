@@ -6,7 +6,9 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
+import android.graphics.Typeface
 import android.text.InputType
+import android.text.util.Linkify
 import android.view.MenuItem
 import android.view.View
 import android.widget.Button
@@ -166,8 +168,25 @@ class SettingsActivity : Activity() {
         col.addView(batteryButton)
 
         col.addView(Ui.heading(this, getString(R.string.about_label)))
-        aboutView = Ui.hint(this, "").apply { setTextIsSelectable(true) }
+        aboutView = Ui.hint(this, "")
         col.addView(aboutView)
+        col.addView(Ui.hint(this, getString(R.string.about_cert)).apply {
+            setPadding(0, Ui.dp(this@SettingsActivity, 12), 0, 0)
+        })
+        val certView = Ui.hint(this, certFingerprint()).apply {
+            typeface = Typeface.MONOSPACE
+            setTextColor(linkTextColors)
+            setOnClickListener {
+                Ui.copy(this@SettingsActivity, "Passage verification info",
+                    "$packageName\n${certFingerprint()}", getString(R.string.about_cert_copied))
+            }
+        }
+        col.addView(certView)
+        col.addView(Ui.hint(this, getString(R.string.about_cert_help)))
+        col.addView(Ui.hint(this, getString(R.string.about_source, SOURCE_URL)).apply {
+            setPadding(0, Ui.dp(this@SettingsActivity, 12), 0, 0)
+            Linkify.addLinks(this, Linkify.WEB_URLS)
+        })
         worker.execute {
             val text = about()
             runOnUiThread { aboutView.text = text }
@@ -246,10 +265,7 @@ class SettingsActivity : Activity() {
         }
     }
 
-    /**
-     * Version, soar version and the signing certificate's SHA-256, so a
-     * tester can say what they run and anyone can check the APK's origin.
-     */
+    /** Version and soar version, so a tester can say what they run. */
     private fun about(): String {
         val soar = try {
             Native.json(Native.versions()).optString("soar", "?")
@@ -261,11 +277,10 @@ class SettingsActivity : Activity() {
             @Suppress("DEPRECATION")
             info.versionCode.toLong()
         }
-        return getString(R.string.about_version, info.versionName, code, soar) + "\n\n" +
-            getString(R.string.about_cert) + "\n" + certFingerprint() + "\n\n" +
-            getString(R.string.about_source)
+        return getString(R.string.about_version, info.versionName, code, soar)
     }
 
+    /** SHA-256 of the signing certificate; tapping it copies the AppVerifier format. */
     private fun certFingerprint(): String = try {
         val sig = if (Build.VERSION.SDK_INT >= 28) {
             packageManager.getPackageInfo(packageName, PackageManager.GET_SIGNING_CERTIFICATES)
@@ -289,6 +304,7 @@ class SettingsActivity : Activity() {
     }
 
     companion object {
+        private const val SOURCE_URL = "https://github.com/mrgluek/passage"
         private val MODES = listOf("auto", "always", "off")
         private val MODE_LABELS = listOf(R.string.mode_auto, R.string.mode_always, R.string.mode_off)
     }

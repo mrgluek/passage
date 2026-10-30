@@ -91,8 +91,10 @@
     <string name="background_label">Background</string>
     <string name="about_label">About</string>
     <string name="about_version">Passage %1$s (build %2$d), soar %3$s</string>
-    <string name="about_cert">Signing certificate, SHA-256:</string>
-    <string name="about_source">Source code: github.com/mrgluek/passage</string>
+    <string name="about_cert">Signing certificate, SHA-256 (tap to copy for AppVerifier):</string>
+    <string name="about_source">Source code: %1$s</string>
     <string name="open_proxy_link">Open proxy link</string>
     <string name="no_app_for_link">No app on this phone opens proxy links. Copy the link instead.</string>
+    <string name="about_cert_copied">Package name and certificate copied</string>
+    <string name="about_cert_help">To check this APK, compare it with the fingerprint on the project page, not with this copy: a modified app would show its own.</string>
 </resources>
