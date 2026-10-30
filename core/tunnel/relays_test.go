@@ -2,10 +2,13 @@ package tunnel
 
 import (
 	"context"
+	"crypto/x509"
 	"errors"
 	"fmt"
 	"io"
 	"net"
+	"net/http"
+	"net/http/httptest"
 	"slices"
 	"sync/atomic"
 	"testing"
@@ -106,5 +109,45 @@ func TestRelayGroupsAreCapped(t *testing.T) {
 	}
 	if tt.relays["r0.example.org"] != nil || tt.relays[fmt.Sprintf("r%d.example.org", maxRelayGroups+2)] == nil {
 		t.Error("the least recently used relay goes first, the newest stays")
+	}
+}
+
+func TestDiagnoseChecksEveryWay(t *testing.T) {
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+	defer srv.Close()
+	pool := x509.NewCertPool()
+	pool.AddCert(srv.Certificate())
+	probeRoots = pool
+	defer func() { probeRoots = nil }()
+	// httptest's certificate is for example.com; route that name to the server.
+	addr := srv.Listener.Addr().String()
+	var d net.Dialer
+	toServer := func(ctx context.Context, n, _ string) (net.Conn, error) { return d.DialContext(ctx, n, addr) }
+	down := func(context.Context, string, string) (net.Conn, error) { return nil, errors.New("blocked") }
+
+	saved := diagTelegramDCs
+	diagTelegramDCs = []string{fakeDC(t, resPQ)}
+	defer func() { diagTelegramDCs = saved }()
+
+	tt := newTestTunnel(t, ModeAuto, down, toServer)
+	tt.cfg.Canaries = nil
+	tt.strategies = []strategy{{"bad", down}, {"good", toServer}}
+	tt.testGroup("example.com:443")
+	tt.probeMT = probeMTProto
+
+	r := tt.Diagnose(context.Background())
+	if !slices.Equal(r.Ways, []string{"direct", "bad", "good", "tunnel"}) {
+		t.Fatalf("ways %v", r.Ways)
+	}
+	if len(r.Rows) != 2 || r.Rows[0].Target != "example.com:443" || r.Rows[1].Kind != "telegram" {
+		t.Fatalf("rows %+v", r.Rows)
+	}
+	relay := r.Rows[0].Results
+	if relay[0].OK || relay[1].OK || !relay[2].OK || !relay[3].OK {
+		t.Fatalf("relay results %+v", relay)
+	}
+	tg := r.Rows[1].Results
+	if !tg[0].OK || !tg[1].Skip || !tg[2].Skip {
+		t.Fatalf("telegram: direct must answer, strategies skipped: %+v", tg)
 	}
 }

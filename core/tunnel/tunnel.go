@@ -159,6 +159,7 @@ type Tunnel struct {
 	telegram    *group
 	other       *group
 	routeGen    atomic.Int64 // bumped on every route change, for the shell to nudge the core
+	urgent      atomic.Bool  // the next probe skips minProbeGap (Recheck)
 	intercepted bool         // this network redirects port-53 traffic (see intercept.go)
 	dnsEgress   string       // who actually resolves for the interceptor, if learned
 	conns       map[*tracked]struct{}
@@ -490,6 +491,13 @@ func (t *Tunnel) SetMode(mode string) error {
 	return nil
 }
 
+// Recheck probes at once, without the usual minimum gap between probes:
+// the user asked for it ("Check now").
+func (t *Tunnel) Recheck() {
+	t.urgent.Store(true)
+	t.kickProbe()
+}
+
 // NetworkChanged asks for an immediate re-check. The streaks are kept: some
 // platforms report spurious changes, and a real network switch restarts the
 // tunnel anyway.
@@ -754,7 +762,7 @@ func (t *Tunnel) monitor() {
 		if mode != ModeAuto {
 			continue
 		}
-		if since < minProbeGap {
+		if since < minProbeGap && !t.urgent.Swap(false) {
 			select {
 			case <-t.ctx.Done():
 				return

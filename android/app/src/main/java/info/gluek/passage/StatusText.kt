@@ -54,6 +54,33 @@ object StatusText {
             .sortedBy { it.first }
             .toList()
 
+    /** The network test (tunnel.Diagnosis) as a table: one row per target. */
+    fun diagnosis(c: Context, d: JSONObject): String {
+        d.optString("error").takeIf { it.isNotEmpty() }?.let { return it }
+        val ways = d.optJSONArray("ways") ?: JSONArray()
+        val head = listOf(c.getString(R.string.test_target)) + (0 until ways.length()).map { ways.optString(it) }
+        val rows = mutableListOf(head)
+        val list = d.optJSONArray("rows") ?: JSONArray()
+        for (i in 0 until list.length()) {
+            val r = list.getJSONObject(i)
+            val res = r.optJSONArray("results") ?: JSONArray()
+            rows += listOf(r.optString("target").take(32)) + (0 until res.length()).map { j ->
+                val x = res.getJSONObject(j)
+                when {
+                    x.optBoolean("skip") -> "-"
+                    x.optBoolean("ok") -> "ok ${x.optLong("ms")}ms"
+                    else -> x.optString("error", "fail")
+                }
+            }
+        }
+        val widths = head.indices.map { col -> rows.maxOf { it.getOrElse(col) { "" }.length } }
+        val sb = StringBuilder(c.getString(R.string.test_time, clock(d.optString("time")))).append("\n\n")
+        for (row in rows) {
+            sb.append(row.mapIndexed { col, cell -> cell.padEnd(widths[col]) }.joinToString("  ").trimEnd()).append('\n')
+        }
+        return sb.toString()
+    }
+
     /** up / down, or "no link" when the router runs without a tunnel. */
     private fun tunnelState(c: Context, s: JSONObject): String = c.getString(when {
         s.optString("zone").isEmpty() -> R.string.tunnel_no_link

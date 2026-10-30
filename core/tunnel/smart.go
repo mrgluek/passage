@@ -2,7 +2,11 @@ package tunnel
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"net"
+	"os"
 	"strings"
 	"sync"
 	"syscall"
@@ -13,24 +17,102 @@ import (
 	"golang.getoutline.org/sdk/transport/tlsfrag"
 )
 
-// knownStrategies remembers, per network, the strategy that worked last. It
-// lives as long as the process: the router restarts on network changes.
+// knownStrategies remembers, per network, the strategy that worked last, in
+// memory and, when Config.StateFile is set, in that file, so it survives the
+// app being stopped. Networks are kept as hashes; at most maxKnownNetworks.
 var knownStrategies = struct {
 	sync.Mutex
-	m map[string]string
-}{m: map[string]string{}}
+	m      map[string]knownStrategy
+	loaded map[string]bool // state files already read
+}{m: map[string]knownStrategy{}, loaded: map[string]bool{}}
+
+type knownStrategy struct {
+	Name string    `json:"name"`
+	At   time.Time `json:"at"`
+}
+
+const maxKnownNetworks = 32
 
 // networkKey identifies the network by what the app passes in at start.
 func networkKey(c Config) string {
-	return strings.Join(c.SystemResolvers, ",") + "|" + c.Operator
+	sum := sha256.Sum256([]byte(strings.Join(c.SystemResolvers, ",") + "|" + c.Operator))
+	return hex.EncodeToString(sum[:12])
+}
+
+// knownStrategyName returns the strategy remembered for c's network.
+func knownStrategyName(c Config) string {
+	knownStrategies.Lock()
+	defer knownStrategies.Unlock()
+	loadKnownLocked(c.StateFile)
+	return knownStrategies.m[networkKey(c)].Name
+}
+
+// rememberStrategy records name for c's network ("" forgets it) and saves.
+func rememberStrategy(c Config, name string) {
+	knownStrategies.Lock()
+	defer knownStrategies.Unlock()
+	loadKnownLocked(c.StateFile)
+	k := networkKey(c)
+	if old, ok := knownStrategies.m[k]; ok && old.Name == name && time.Since(old.At) < time.Hour {
+		return // unchanged and recent: no write
+	}
+	if name == "" {
+		delete(knownStrategies.m, k)
+	} else {
+		knownStrategies.m[k] = knownStrategy{name, time.Now().UTC()}
+	}
+	for len(knownStrategies.m) > maxKnownNetworks {
+		oldest := ""
+		for key, v := range knownStrategies.m {
+			if oldest == "" || v.At.Before(knownStrategies.m[oldest].At) {
+				oldest = key
+			}
+		}
+		delete(knownStrategies.m, oldest)
+	}
+	saveKnownLocked(c.StateFile)
+}
+
+func loadKnownLocked(path string) {
+	if path == "" || knownStrategies.loaded[path] {
+		return
+	}
+	knownStrategies.loaded[path] = true
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return
+	}
+	var f struct {
+		Strategies map[string]knownStrategy `json:"strategies"`
+	}
+	if json.Unmarshal(b, &f) != nil {
+		return
+	}
+	for k, v := range f.Strategies {
+		if cur, ok := knownStrategies.m[k]; !ok || v.At.After(cur.At) {
+			knownStrategies.m[k] = v
+		}
+	}
+}
+
+func saveKnownLocked(path string) {
+	if path == "" {
+		return
+	}
+	b, err := json.Marshal(map[string]any{"strategies": knownStrategies.m})
+	if err != nil {
+		return
+	}
+	tmp := path + ".tmp"
+	if os.WriteFile(tmp, b, 0o600) == nil {
+		os.Rename(tmp, path)
+	}
 }
 
 // useKnownStrategy sets up the smart route with the strategy that worked on
 // this network before, if any. Called at start, before the monitor runs.
 func (t *Tunnel) useKnownStrategy() {
-	knownStrategies.Lock()
-	name := knownStrategies.m[networkKey(t.cfg)]
-	knownStrategies.Unlock()
+	name := knownStrategyName(t.cfg)
 	for _, s := range t.strategies {
 		if s.name == name {
 			t.strategy = &s
@@ -178,9 +260,7 @@ func (t *Tunnel) smartCheck(hosts []string) bool {
 	cur := t.strategy
 	t.mu.Unlock()
 	if cur != nil && t.findStrategy([]strategy{*cur}, hosts) != nil {
-		knownStrategies.Lock()
-		knownStrategies.m[networkKey(t.cfg)] = cur.name
-		knownStrategies.Unlock()
+		rememberStrategy(t.cfg, cur.name)
 		return true
 	}
 	start := time.Now()
@@ -188,9 +268,7 @@ func (t *Tunnel) smartCheck(hosts []string) bool {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	if found == nil {
-		knownStrategies.Lock()
-		delete(knownStrategies.m, networkKey(t.cfg))
-		knownStrategies.Unlock()
+		rememberStrategy(t.cfg, "")
 		if t.strategy != nil {
 			t.log.add("smart route: %s stopped working, none found", t.strategy.name)
 		}
@@ -203,8 +281,6 @@ func (t *Tunnel) smartCheck(hosts []string) bool {
 	}
 	t.strategy = found
 	t.ways[RouteSmart] = way{found.dial, directDialTimeout}
-	knownStrategies.Lock()
-	knownStrategies.m[networkKey(t.cfg)] = found.name
-	knownStrategies.Unlock()
+	rememberStrategy(t.cfg, found.name)
 	return true
 }

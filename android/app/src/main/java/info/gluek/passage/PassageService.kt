@@ -200,6 +200,7 @@ class PassageService : Service() {
             if (s.shortNames) cfg.put("safe_qname", SHORT_QNAME)
             cfg.put("system_resolvers", JSONArray(net.dns))
             cfg.put("operator", net.operator)
+            cfg.put("state_file", java.io.File(filesDir, "router-state.json").path)
             val out = Native.json(Native.start(cfg.toString().toByteArray(Charsets.UTF_8)))
             out.optString("error").takeIf { it.isNotEmpty() }?.let { throw IllegalStateException(it) }
             lastNet = net.key

@@ -73,6 +73,9 @@ type Config struct {
 	// SafeQName is the query-name length every resolver path starts at; soar
 	// grows it to the 253 maximum. 0 = soarSafeQName; 101 = soar's default.
 	SafeQName int `json:"safe_qname,omitempty"`
+	// StateFile keeps what the router learned across restarts (the smart
+	// route's strategy per network), in the app's private storage.
+	StateFile string `json:"state_file,omitempty"`
 }
 
 // LinkHost and LinkPath give the web form of links:

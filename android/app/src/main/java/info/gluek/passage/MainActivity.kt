@@ -16,7 +16,9 @@ import android.view.Menu
 import android.view.MenuItem
 import android.view.View
 import android.widget.Button
+import android.widget.HorizontalScrollView
 import android.widget.LinearLayout
+import android.widget.ScrollView
 import android.widget.TextView
 import android.widget.Toast
 import java.util.concurrent.Executors
@@ -93,6 +95,7 @@ class MainActivity : Activity() {
             }
             R.id.action_report -> shareReport()
             R.id.action_check -> checkNow()
+            R.id.action_test -> testNetwork()
             R.id.action_settings -> startActivity(Intent(this, SettingsActivity::class.java))
             else -> return super.onOptionsItemSelected(item)
         }
@@ -259,6 +262,53 @@ class MainActivity : Activity() {
         "?"
     }
 
+    /**
+     * The network test: every relay, canary and two Telegram data centers,
+     * each checked directly, with each strategy and through the tunnel. The
+     * result can be shared, e.g. with whoever gave the link.
+     */
+    private fun testNetwork() {
+        if (!PassageService.active) {
+            Toast.makeText(this, getString(R.string.proxy_stopped), Toast.LENGTH_SHORT).show()
+            return
+        }
+        val wait = AlertDialog.Builder(this)
+            .setTitle(R.string.test_network)
+            .setMessage(R.string.testing_network)
+            .setCancelable(false)
+            .show()
+        worker.execute {
+            val text = try {
+                StatusText.diagnosis(this, Native.json(Native.diagnose()))
+            } catch (e: Throwable) {
+                e.message ?: e.toString()
+            }
+            runOnUiThread {
+                wait.dismiss()
+                if (isFinishing) return@runOnUiThread
+                val view = TextView(this).apply {
+                    this.text = text
+                    typeface = Typeface.MONOSPACE
+                    textSize = 11f
+                    setTextIsSelectable(true)
+                    val pad = Ui.dp(this@MainActivity, 16)
+                    setPadding(pad, pad, pad, pad)
+                }
+                AlertDialog.Builder(this)
+                    .setTitle(R.string.test_network)
+                    .setView(ScrollView(this).apply { addView(HorizontalScrollView(this@MainActivity).apply { addView(view) }) })
+                    .setPositiveButton(R.string.share) { _, _ ->
+                        val send = Intent(Intent.ACTION_SEND).setType("text/plain")
+                            .putExtra(Intent.EXTRA_SUBJECT, "Passage network test")
+                            .putExtra(Intent.EXTRA_TEXT, text)
+                        startActivity(Intent.createChooser(send, getString(R.string.share)))
+                    }
+                    .setNegativeButton(android.R.string.ok, null)
+                    .show()
+            }
+        }
+    }
+
     /** Probes the network now instead of at the next scheduled check (auto mode only). */
     private fun checkNow() {
         if (!PassageService.active) {
@@ -267,7 +317,7 @@ class MainActivity : Activity() {
         }
         worker.execute {
             try {
-                Native.networkChanged()
+                Native.recheck()
             } catch (_: Throwable) {
             }
         }

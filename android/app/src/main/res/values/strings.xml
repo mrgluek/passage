@@ -114,4 +114,9 @@
     <string name="notifications_not_now">Not now</string>
     <string name="status_relays">Relays:</string>
     <string name="status_relay">"  %1$s: %2$s, %3$s"</string>
+    <string name="test_network">Test network</string>
+    <string name="testing_network">Checking every relay and way, up to 20 seconds…</string>
+    <string name="test_target">target</string>
+    <string name="test_time">Network test at %1$s</string>
+    <string name="share">Share</string>
 </resources>

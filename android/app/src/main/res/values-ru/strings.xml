@@ -113,4 +113,9 @@
     <string name="notifications_not_now">Не сейчас</string>
     <string name="status_relays">Релеи:</string>
     <string name="status_relay">"  %1$s: %2$s, %3$s"</string>
+    <string name="test_network">Проверить сеть</string>
+    <string name="testing_network">Проверяю каждый релей и способ, до 20 секунд…</string>
+    <string name="test_target">цель</string>
+    <string name="test_time">Проверка сети в %1$s</string>
+    <string name="share">Отправить</string>
 </resources>

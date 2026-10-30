@@ -11,6 +11,8 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"sync"
@@ -844,17 +846,13 @@ func TestStrategyIsRememberedPerNetwork(t *testing.T) {
 		tt.strategies = []strategy{{"a", down}, {"b", d.DialContext}}
 		return tt
 	}
-	knownStrategies.Lock()
-	knownStrategies.m = map[string]string{}
-	knownStrategies.Unlock()
+	resetKnownStrategies()
 
 	first := mk("192.0.2.53:53")
 	first.mu.Lock()
 	first.strategy, first.ways[RouteSmart] = &first.strategies[1], way{d.DialContext, time.Second}
 	first.mu.Unlock()
-	knownStrategies.Lock()
-	knownStrategies.m[networkKey(first.cfg)] = "b"
-	knownStrategies.Unlock()
+	rememberStrategy(first.cfg, "b")
 	first.Close()
 
 	again := mk("192.0.2.53:53")
@@ -944,4 +942,37 @@ func (t *Tunnel) testGroup(addr string) *group {
 	t.mu.Unlock()
 	t.learn(g, addr)
 	return g
+}
+
+// resetKnownStrategies forgets every strategy, as a new process would.
+func resetKnownStrategies() {
+	knownStrategies.Lock()
+	knownStrategies.m = map[string]knownStrategy{}
+	knownStrategies.loaded = map[string]bool{}
+	knownStrategies.Unlock()
+}
+
+func TestStrategySurvivesARestart(t *testing.T) {
+	resetKnownStrategies()
+	defer resetKnownStrategies()
+	file := filepath.Join(t.TempDir(), "state.json")
+	cfg := Config{SystemResolvers: []string{"192.0.2.53:53"}, Operator: "25001", StateFile: file}
+	rememberStrategy(cfg, "split:2")
+
+	b, err := os.ReadFile(file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(b), "192.0.2.53") || strings.Contains(string(b), "25001") {
+		t.Fatalf("the state file must not name the network: %s", b)
+	}
+	resetKnownStrategies() // the app was stopped
+	if got := knownStrategyName(cfg); got != "split:2" {
+		t.Fatalf("after a restart: %q, want split:2", got)
+	}
+	rememberStrategy(cfg, "")
+	resetKnownStrategies()
+	if got := knownStrategyName(cfg); got != "" {
+		t.Fatalf("a forgotten strategy came back: %q", got)
+	}
 }
