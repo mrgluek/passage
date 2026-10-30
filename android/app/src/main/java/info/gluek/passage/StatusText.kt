@@ -11,14 +11,22 @@ import java.util.Locale
 object StatusText {
     fun oneLine(c: Context, s: JSONObject): String {
         if (!s.optBoolean("running")) return c.getString(R.string.not_running)
-        return c.getString(R.string.one_line, routeName(c, s.optString("route")), stateName(c, s.optString("state")), tunnelState(c, s))
+        return c.getString(R.string.one_line, groups(c, s), tunnelState(c, s))
     }
 
-    /** Notification title and text: the route, then the network and the tunnel. */
+    /** Notification title and text: the route, then each group's route and the tunnel. */
     fun notification(c: Context, s: JSONObject): Pair<String, String> {
         if (!s.optBoolean("running")) return c.getString(R.string.app_name) to c.getString(R.string.not_running)
         return c.getString(R.string.notification_route, routeName(c, s.optString("route"))) to
-            c.getString(R.string.notification_state, stateName(c, s.optString("state")), tunnelState(c, s))
+            c.getString(R.string.notification_state, groups(c, s), tunnelState(c, s))
+    }
+
+    /** "Mail: direct · Telegram: tunnel"; the top-level route is mail's. */
+    private fun groups(c: Context, s: JSONObject): String {
+        val g = s.optJSONObject("groups")
+        val mail = c.getString(R.string.group_mail, routeName(c, s.optString("route")))
+        val telegram = g?.optJSONObject("telegram") ?: return mail
+        return mail + " · " + c.getString(R.string.group_telegram, routeName(c, telegram.optString("route")))
     }
 
     /** up / down, or "no link" when the router runs without a tunnel. */

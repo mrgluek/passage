@@ -34,7 +34,9 @@
 
     <string name="not_running">не запущен</string>
     <string name="proxy_not_running">Прокси не запущен.</string>
-    <string name="one_line">маршрут: %1$s · %2$s · туннель: %3$s</string>
+    <string name="one_line">%1$s · туннель: %2$s</string>
+    <string name="group_mail">Почта: %1$s</string>
+    <string name="group_telegram">Telegram: %1$s</string>
     <string name="route_direct">напрямую</string>
     <string name="route_tunnel">туннель</string>
     <string name="session_up">есть</string>

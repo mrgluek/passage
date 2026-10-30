@@ -96,7 +96,11 @@ func main() {
 					printed = e.Time
 				}
 			}
-			line, _ := json.Marshal(map[string]any{"route": s.Route, "state": s.State, "active": s.Active, "stats": s.Stats})
+			groups := map[string]any{}
+			for name, g := range s.Groups {
+				groups[name] = map[string]any{"route": g.Route, "state": g.State, "targets": g.Targets}
+			}
+			line, _ := json.Marshal(map[string]any{"route": s.Route, "state": s.State, "groups": groups, "active": s.Active, "stats": s.Stats})
 			fmt.Fprintf(os.Stderr, "%s status %s session=%v\n", time.Now().Format("15:04:05"), line, s.Session)
 			if *paths {
 				for _, p := range s.Paths {
