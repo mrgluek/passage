@@ -44,7 +44,7 @@ a { color: var(--accent); }
 .top {
   display: flex;
   flex-wrap: wrap;
-  gap: 12px;
+  gap: 8px 14px;
   align-items: center;
   justify-content: space-between;
   padding-top: 20px;
@@ -61,16 +61,16 @@ a { color: var(--accent); }
   text-decoration: none;
 }
 
-.side {
-  display: flex;
-  align-items: center;
-  gap: 14px;
-  margin-left: auto;
-}
-
 .langs { display: flex; gap: 6px; }
 
-.meta { font-size: 0.85rem; white-space: nowrap; }
+.meta { font-size: 0.85rem; white-space: nowrap; margin-left: auto; }
+
+/* Small screens: the language switch stays top right, the source link
+   moves to its own line under the brand. */
+@media (max-width: 480px) {
+  .langs { order: 2; margin-left: auto; }
+  .meta { order: 3; flex-basis: 100%; margin-left: 0; }
+}
 
 .langs button {
   border: 1px solid var(--line);
