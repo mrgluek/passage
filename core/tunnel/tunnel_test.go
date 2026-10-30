@@ -3,11 +3,16 @@ package tunnel
 import (
 	"bytes"
 	"context"
+	"crypto/x509"
 	"encoding/base64"
 	"errors"
 	"fmt"
 	"io"
 	"net"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"sync"
@@ -110,16 +115,18 @@ func newTestTunnel(t *testing.T, mode string, direct, tun dialFunc) *Tunnel {
 		t.Fatal(err)
 	}
 	tt := &Tunnel{cfg: cfg, log: newEventLog(100), kick: make(chan struct{}, 1), mode: mode,
-		conns: map[*tracked]struct{}{}, relays: map[string]time.Time{}, relayPorts: map[string]string{}, state: "unknown",
-		dialDirect: direct, dialTunnel: tun,
-		probeTLS: func(context.Context, string, string) error { return errors.New("no probes in tests") }}
+		conns: map[*tracked]struct{}{}, relays: map[string]*group{},
+		telegram: newGroup("telegram", kindTelegram, initialRoute(mode)),
+		other:    newGroup("other", kindOther, initialRoute(mode)),
+		ways:     [numRoutes]way{RouteDirect: {direct, time.Second}, RouteTunnel: {tun, time.Second}},
+		probeTLS: func(context.Context, string, string) error { return errors.New("no probes in tests") },
+		probeMT:  func(context.Context, string) error { return errors.New("no probes in tests") }}
 	tt.ctx, tt.cancel = context.WithCancel(context.Background())
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
 	tt.ln = ln
-	tt.setRouteLocked(initialRoute(mode), "start")
 	tt.wg.Add(1)
 	go tt.serve()
 	t.Cleanup(tt.Close)
@@ -261,7 +268,7 @@ func TestRouteSwitchClosesOldConnections(t *testing.T) {
 	if err := tt.SetMode(ModeAlways); err != nil {
 		t.Fatal(err)
 	}
-	if tt.RouteGen() != gen+1 {
+	if tt.RouteGen() <= gen {
 		t.Fatalf("a route change must bump the generation the shell watches")
 	}
 	if _, err := c.Read(make([]byte, 1)); err == nil {
@@ -289,9 +296,7 @@ func TestEventLogRing(t *testing.T) {
 func TestAnyCanaryMeansBlocked(t *testing.T) {
 	var n atomic.Int32
 	tt := newTestTunnel(t, ModeAuto, echoDialer("D:", &n), echoDialer("T:", &n))
-	tt.mu.Lock()
-	tt.relays["relay.example.org"] = time.Now()
-	tt.mu.Unlock()
+	mail := tt.testGroup("relay.example.org:443")
 	// Relays fail, only the last default canary answers.
 	last := DefaultCanaries[len(DefaultCanaries)-1]
 	tt.probeTLS = func(_ context.Context, hostport, _ string) error {
@@ -300,11 +305,11 @@ func TestAnyCanaryMeansBlocked(t *testing.T) {
 		}
 		return errors.New("refused")
 	}
-	if res := tt.probe(); res.Relays != 1 || res.RelayOK != 0 || !res.CanaryOK {
+	if res := tt.probe()[mail]; res.Relays != 1 || res.RelayOK != 0 || !res.CanaryOK {
 		t.Fatalf("one canary answering must count: %+v", res)
 	}
 	tt.probeTLS = func(context.Context, string, string) error { return errors.New("refused") }
-	if res := tt.probe(); res.CanaryOK {
+	if res := tt.probe()[mail]; res.CanaryOK {
 		t.Fatalf("no canary answering must read as offline: %+v", res)
 	}
 }
@@ -363,7 +368,12 @@ func TestBytesCountedWhileOpen(t *testing.T) {
 	defer c.Close()
 	c.Write([]byte("hello"))
 	io.ReadFull(c, make([]byte, 5))
+	// The proxy counts after it writes, so the echo can arrive first.
 	st := tt.Status(0).Stats["tunnel"]
+	for i := 0; i < 100 && st.Down != 5; i++ {
+		time.Sleep(10 * time.Millisecond)
+		st = tt.Status(0).Stats["tunnel"]
+	}
 	if st.Up != 5 || st.Down != 5 || st.Conns != 1 {
 		t.Fatalf("live counters on an open connection: %+v", st)
 	}
@@ -401,25 +411,31 @@ func TestFixedProbeTargets(t *testing.T) {
 	}
 	tt.cfg.ProbeTargets = cfg.ProbeTargets
 	tt.useProbeTargets()
-	// With fixed probe targets, other hosts opened through the proxy must
-	// not become probe targets.
+	// Each fixed target is a pinned relay group of its own. A host opened
+	// through the proxy gets its own group and leaves theirs alone.
 	c, _ := socksConnect(t, tt.Addr(), "u", "p", "allowed.example.net:443")
 	c.Close()
 	var probed sync.Map
 	tt.probeTLS = func(_ context.Context, hostport, _ string) error {
 		probed.Store(hostport, true)
-		return nil
+		if hostport == "allowed.example.net:443" {
+			return nil
+		}
+		return errors.New("refused")
 	}
-	if res := tt.probe(); res.Relays != 2 {
-		t.Errorf("probed %d hosts, want the 2 fixed ones", res.Relays)
-	}
+	res := tt.probe()
 	for _, want := range []string{"relay.example.org:443", "mx.example.org:993"} {
+		host, _, _ := net.SplitHostPort(want)
+		g := tt.relays[host]
+		if g == nil || !g.pinned || res[g].Relays != 1 || res[g].RelayOK != 0 {
+			t.Errorf("%s: group %+v result %+v", want, g, res[g])
+		}
 		if _, ok := probed.Load(want); !ok {
 			t.Errorf("expected a TLS probe of %s", want)
 		}
 	}
-	if _, ok := probed.Load("allowed.example.net:443"); ok {
-		t.Error("a host seen in traffic was probed although targets are fixed")
+	if g := tt.relays["allowed.example.net"]; g == nil || res[g].RelayOK != 1 {
+		t.Error("a host seen in traffic gets its own group and probe")
 	}
 	nine := make([]string, 9)
 	for i := range nine {
@@ -480,14 +496,14 @@ func TestTunnelFailuresMarkItUnhealthy(t *testing.T) {
 	c, _ := socksConnect(t, tt.Addr(), "u", "p", "relay.example.org:993")
 	c.Close()
 	tt.mu.Lock()
-	fails := tt.tunnelFails
+	fails := tt.relays["relay.example.org"].tunnelFails
 	tt.mu.Unlock()
 	if fails != 1 {
 		t.Fatalf("tunnel failures since the switch: %d", fails)
 	}
 	tt.SetMode(ModeAuto) // route change resets the count
 	tt.mu.Lock()
-	fails = tt.tunnelFails
+	fails = tt.relays["relay.example.org"].tunnelFails
 	tt.mu.Unlock()
 	if fails != 0 {
 		t.Fatalf("count must reset on a route change: %d", fails)
@@ -511,10 +527,9 @@ func TestRelaysDownThroughTheTunnelKeepTheRoute(t *testing.T) {
 func relayDownTunnel(t *testing.T, viaTunnel error, session bool) (*Tunnel, *atomic.Int32) {
 	var n atomic.Int32
 	tt := newTestTunnel(t, ModeAuto, echoDialer("D:", &n), echoDialer("T:", &n))
+	mail := tt.testGroup("relay.example.org:993")
 	tt.mu.Lock()
-	tt.relays["relay.example.org"] = time.Now()
-	tt.relayPorts["relay.example.org"] = "993"
-	tt.failStreak = blockedAfter - 1
+	mail.failStreak = blockedAfter - 1
 	tt.mu.Unlock()
 	tt.probeTLS = func(_ context.Context, hostport, _ string) error {
 		if hostport == DefaultCanaries[0] {
@@ -536,7 +551,7 @@ func relayDownTunnel(t *testing.T, viaTunnel error, session bool) (*Tunnel, *ato
 
 func TestSingleRelayDownStaysDirect(t *testing.T) {
 	tt, probes := relayDownTunnel(t, errors.New("connection refused"), true)
-	tt.applyProbe(tt.confirmViaTunnel(tt.probe()))
+	tt.check()
 	s := tt.Status(10)
 	if s.Route != "direct" || s.State != stateRelaysDown || probes.Load() != 1 {
 		t.Fatalf("a relay down through a live tunnel must not switch: route %s state %s probes %d", s.Route, s.State, probes.Load())
@@ -548,7 +563,7 @@ func TestSingleRelayDownStaysDirect(t *testing.T) {
 
 func TestRelayReachableThroughTheTunnelSwitches(t *testing.T) {
 	tt, _ := relayDownTunnel(t, nil, true)
-	tt.applyProbe(tt.confirmViaTunnel(tt.probe()))
+	tt.check()
 	if s := tt.Status(0); s.Route != "tunnel" || s.State != "blocked" {
 		t.Fatalf("relay blocked directly but reachable through the tunnel: route %s state %s", s.Route, s.State)
 	}
@@ -556,7 +571,7 @@ func TestRelayReachableThroughTheTunnelSwitches(t *testing.T) {
 
 func TestNoTunnelSessionSwitchesAnyway(t *testing.T) {
 	tt, _ := relayDownTunnel(t, errors.New("timeout"), false)
-	tt.applyProbe(tt.confirmViaTunnel(tt.probe()))
+	tt.check()
 	if s := tt.Status(0); s.Route != "tunnel" || s.LastResult.TunnelChecked {
 		t.Fatalf("a failure without a live session proves nothing: route %s %+v", s.Route, s.LastResult)
 	}
@@ -565,9 +580,9 @@ func TestNoTunnelSessionSwitchesAnyway(t *testing.T) {
 func TestTunnelCheckedOnlyBeforeASwitch(t *testing.T) {
 	tt, probes := relayDownTunnel(t, nil, true)
 	tt.mu.Lock()
-	tt.failStreak = 0
+	tt.relays["relay.example.org"].failStreak = 0
 	tt.mu.Unlock()
-	tt.applyProbe(tt.confirmViaTunnel(tt.probe()))
+	tt.check()
 	if probes.Load() != 0 {
 		t.Fatalf("the first blocked probe must not touch the tunnel (%d probes)", probes.Load())
 	}
@@ -595,12 +610,10 @@ func probeLog(ok ...string) (func(context.Context, string, string) error, func()
 func TestCanariesSkippedWhenARelayAnswers(t *testing.T) {
 	var n atomic.Int32
 	tt := newTestTunnel(t, ModeAuto, echoDialer("D:", &n), echoDialer("T:", &n))
-	tt.mu.Lock()
-	tt.relays["relay.example.org"] = time.Now()
-	tt.mu.Unlock()
+	mail := tt.testGroup("relay.example.org:443")
 	probe, seen := probeLog("relay.example.org:443")
 	tt.probeTLS = probe
-	res := tt.probe()
+	res := tt.probe()[mail]
 	if res.RelayOK != 1 || res.CanaryChecked || res.CanaryOK {
 		t.Fatalf("relay answered, canaries must be left alone: %+v", res)
 	}
@@ -614,22 +627,25 @@ func TestCanariesSkippedWithoutRelays(t *testing.T) {
 	tt := newTestTunnel(t, ModeAuto, echoDialer("D:", &n), echoDialer("T:", &n))
 	probe, seen := probeLog(DefaultCanaries...)
 	tt.probeTLS = probe
-	if res := tt.probe(); res.CanaryChecked || len(seen()) != 0 {
-		t.Fatalf("nothing to compare the canaries with: %+v, probed %v", res, seen())
+	for g, res := range tt.probe() {
+		if res.CanaryChecked {
+			t.Fatalf("%s: nothing to compare the canaries with: %+v", g.name, res)
+		}
+	}
+	if len(seen()) != 0 {
+		t.Fatalf("probed %v", seen())
 	}
 }
 
 func TestCanariesOneAtATimeLastGoodFirst(t *testing.T) {
 	var n atomic.Int32
 	tt := newTestTunnel(t, ModeAuto, echoDialer("D:", &n), echoDialer("T:", &n))
-	tt.mu.Lock()
-	tt.relays["relay.example.org"] = time.Now()
-	tt.mu.Unlock()
+	mail := tt.testGroup("relay.example.org:443")
 
 	// Every canary answers: the first one is enough.
 	probe, seen := probeLog(DefaultCanaries...)
 	tt.probeTLS = probe
-	if res := tt.probe(); !res.CanaryChecked || !res.CanaryOK {
+	if res := tt.probe()[mail]; !res.CanaryChecked || !res.CanaryOK {
 		t.Fatalf("canary must answer: %+v", res)
 	}
 	if got := seen(); !slices.Equal(got, []string{"relay.example.org:443", DefaultCanaries[0]}) {
@@ -639,7 +655,7 @@ func TestCanariesOneAtATimeLastGoodFirst(t *testing.T) {
 	// The first fails at once, the second answers and becomes the first next time.
 	probe, seen = probeLog(DefaultCanaries[1])
 	tt.probeTLS = probe
-	if res := tt.probe(); !res.CanaryOK {
+	if res := tt.probe()[mail]; !res.CanaryOK {
 		t.Fatalf("second canary must count: %+v", res)
 	}
 	if got := seen(); !slices.Equal(got, []string{"relay.example.org:443", DefaultCanaries[0], DefaultCanaries[1]}) {
@@ -656,9 +672,7 @@ func TestCanariesOneAtATimeLastGoodFirst(t *testing.T) {
 func TestSilentCanaryDoesNotHoldUpTheNext(t *testing.T) {
 	var n atomic.Int32
 	tt := newTestTunnel(t, ModeAuto, echoDialer("D:", &n), echoDialer("T:", &n))
-	tt.mu.Lock()
-	tt.relays["relay.example.org"] = time.Now()
-	tt.mu.Unlock()
+	mail := tt.testGroup("relay.example.org:443")
 	// The first canary hangs until cancelled (a dropped SYN), the second answers.
 	var cancelled atomic.Bool
 	tt.probeTLS = func(ctx context.Context, hostport, _ string) error {
@@ -673,7 +687,7 @@ func TestSilentCanaryDoesNotHoldUpTheNext(t *testing.T) {
 		return errors.New("refused")
 	}
 	start := time.Now()
-	if res := tt.probe(); !res.CanaryOK {
+	if res := tt.probe()[mail]; !res.CanaryOK {
 		t.Fatalf("second canary must count: %+v", res)
 	}
 	if d := time.Since(start); d >= probeTimeout {
@@ -685,5 +699,285 @@ func TestSilentCanaryDoesNotHoldUpTheNext(t *testing.T) {
 	}
 	if !cancelled.Load() {
 		t.Fatal("the silent canary's probe must be cancelled once another answers")
+	}
+}
+
+func TestDialFallsThroughRoutesInOrder(t *testing.T) {
+	var tried []string
+	fail := func(name string) dialFunc {
+		return func(context.Context, string, string) (net.Conn, error) {
+			tried = append(tried, name)
+			return nil, errors.New(name + " down")
+		}
+	}
+	tt := newTestTunnel(t, ModeAuto, fail("direct"), fail("tunnel"))
+	defer tt.Close()
+
+	_, r, err := tt.dial(tt.testGroup("relay.example.org:993"), "relay.example.org:993")
+	if err == nil || r != RouteTunnel || strings.Join(tried, ",") != "direct,tunnel" {
+		t.Fatalf("auto: route %v err %v tried %v", r, err, tried)
+	}
+	if got := tt.Status(0).Stats["direct"].Fails; got != 1 {
+		t.Errorf("the direct failure before falling through counts once, got %d", got)
+	}
+
+	tried = nil
+	tt.SetMode(ModeOff)
+	if _, r, _ := tt.dial(tt.testGroup("relay.example.org:993"), "relay.example.org:993"); r != RouteDirect || strings.Join(tried, ",") != "direct" {
+		t.Fatalf("off: never falls through to the tunnel, route %v tried %v", r, tried)
+	}
+}
+
+func TestRouteWithoutDialerIsSkipped(t *testing.T) {
+	down := func(context.Context, string, string) (net.Conn, error) { return nil, errors.New("down") }
+	tt := newTestTunnel(t, ModeAuto, down, nil)
+	defer tt.Close()
+	if _, r, err := tt.dial(tt.testGroup("relay.example.org:993"), "relay.example.org:993"); err == nil || r != RouteDirect {
+		t.Fatalf("with no tunnel set up the direct error comes back: route %v err %v", r, err)
+	}
+	s := tt.Status(0)
+	if strings.Join(s.Routes, ",") != "direct" {
+		t.Errorf("routes %v, want only direct", s.Routes)
+	}
+	if _, ok := s.Stats["tunnel"]; !ok {
+		t.Errorf("stats keep every route's key for the app: %v", s.Stats)
+	}
+}
+
+func TestDecideUsesTheSmartRoute(t *testing.T) {
+	smart := probeResult{Relays: 1, CanaryOK: true, CanaryChecked: true, SmartChecked: true, SmartOK: true}
+	noSmart := probeResult{Relays: 1, CanaryOK: true, CanaryChecked: true, SmartChecked: true}
+
+	if r, _, _, _ := decide(RouteDirect, smart, 0, 0, true); r != RouteDirect {
+		t.Fatalf("one blocked probe must not switch yet, got %v", r)
+	}
+	if r, _, _, s := decide(RouteDirect, smart, blockedAfter-1, 0, true); r != RouteSmart || s != "blocked" {
+		t.Fatalf("blocked with a working strategy goes smart, got %v %s", r, s)
+	}
+	if r, _, _, _ := decide(RouteTunnel, smart, 5, 0, true); r != RouteSmart {
+		t.Fatalf("from the tunnel a working strategy is preferred, got %v", r)
+	}
+	if r, _, _, _ := decide(RouteSmart, noSmart, 5, 0, true); r != RouteTunnel {
+		t.Fatalf("a strategy that stopped working falls back to the tunnel, got %v", r)
+	}
+	ok := probeResult{Relays: 1, RelayOK: 1}
+	r := RouteSmart
+	for i := 0; i < recoveredAfter; i++ {
+		r, _, _, _ = decide(r, ok, 0, i, true)
+	}
+	if r != RouteDirect {
+		t.Fatalf("direct answering again for recoveredAfter probes leaves smart, got %v", r)
+	}
+}
+
+func TestSmartCheckFindsAndKeepsAStrategy(t *testing.T) {
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+	defer srv.Close()
+	pool := x509.NewCertPool()
+	pool.AddCert(srv.Certificate())
+	probeRoots = pool
+	defer func() { probeRoots = nil }()
+
+	down := func(context.Context, string, string) (net.Conn, error) { return nil, errors.New("blocked") }
+	tt := newTestTunnel(t, ModeAuto, down, down)
+	defer tt.Close()
+	var d net.Dialer
+	tt.strategies = []strategy{{"broken", down}, {"works", d.DialContext}}
+
+	// httptest's certificate is for example.com and 127.0.0.1.
+	host := net.JoinHostPort("example.com", srv.Listener.Addr().(*net.TCPAddr).AddrPort().String()[len("127.0.0.1:"):])
+	tt.strategies[1].dial = func(ctx context.Context, n, _ string) (net.Conn, error) {
+		return d.DialContext(ctx, n, srv.Listener.Addr().String())
+	}
+	if !tt.smartCheck([]string{host}) {
+		t.Fatal("no strategy found")
+	}
+	if s := tt.Status(0); s.Strategy != "works" || strings.Join(s.Routes, ",") != "direct,smart,tunnel" {
+		t.Fatalf("strategy %q routes %v", s.Strategy, s.Routes)
+	}
+	tt.strategies = []strategy{{"broken", down}}
+	if !tt.smartCheck([]string{host}) {
+		t.Fatal("the working strategy must be kept while it still works")
+	}
+	tt.mu.Lock()
+	tt.strategy.dial = down
+	tt.mu.Unlock()
+	if tt.smartCheck([]string{host}) {
+		t.Fatal("with nothing working the smart route must go away")
+	}
+	if s := tt.Status(0); s.Strategy != "" || strings.Join(s.Routes, ",") != "direct,tunnel" {
+		t.Fatalf("after failure: strategy %q routes %v", s.Strategy, s.Routes)
+	}
+}
+
+func TestSilentConnectionTriggersAProbe(t *testing.T) {
+	saved := firstResponseTimeout
+	firstResponseTimeout = 100 * time.Millisecond
+	defer func() { firstResponseTimeout = saved }()
+
+	silent := func(context.Context, string, string) (net.Conn, error) {
+		a, b := net.Pipe()
+		go io.Copy(io.Discard, b) // reads everything, answers nothing
+		return a, nil
+	}
+	tt := newTestTunnel(t, ModeAuto, silent, nil)
+	defer tt.Close()
+	c, code := socksConnect(t, tt.Addr(), "u", "p", "relay.example.org:993")
+	if code != repSucceeded {
+		t.Fatalf("socks reply %d", code)
+	}
+	defer c.Close()
+	c.Write([]byte("hello"))
+	select {
+	case <-tt.kick:
+	case <-time.After(2 * time.Second):
+		t.Fatal("a connection with no answer must kick a probe")
+	}
+}
+
+func TestKnownStrategySwitchesOnFirstBlockedProbe(t *testing.T) {
+	known := probeResult{Relays: 1, CanaryOK: true, SmartChecked: true, SmartOK: true, SmartKnown: true}
+	if r, _, _, _ := decide(RouteDirect, known, 0, 0, true); r != RouteSmart {
+		t.Fatalf("a strategy known on this network switches at once, got %v", r)
+	}
+}
+
+func TestStrategyIsRememberedPerNetwork(t *testing.T) {
+	down := func(context.Context, string, string) (net.Conn, error) { return nil, errors.New("down") }
+	var d net.Dialer
+	mk := func(resolvers ...string) *Tunnel {
+		tt := newTestTunnel(t, ModeAuto, down, down)
+		tt.cfg.SystemResolvers = resolvers
+		tt.strategies = []strategy{{"a", down}, {"b", d.DialContext}}
+		return tt
+	}
+	resetKnownStrategies()
+
+	first := mk("192.0.2.53:53")
+	first.mu.Lock()
+	first.strategy, first.ways[RouteSmart] = &first.strategies[1], way{d.DialContext, time.Second}
+	first.mu.Unlock()
+	rememberStrategy(first.cfg, "b")
+	first.Close()
+
+	again := mk("192.0.2.53:53")
+	defer again.Close()
+	again.useKnownStrategy()
+	if s := again.Status(0); s.Strategy != "b" {
+		t.Fatalf("same network: strategy %q, want b", s.Strategy)
+	}
+	other := mk("198.51.100.53:53")
+	defer other.Close()
+	other.useKnownStrategy()
+	if s := other.Status(0); s.Strategy != "" {
+		t.Fatalf("another network starts without one, got %q", s.Strategy)
+	}
+}
+
+func TestParseWebLink(t *testing.T) {
+	// A key with '+' and '/' in standard base64, unescaped as people paste it.
+	key := base64.StdEncoding.EncodeToString(bytes.Repeat([]byte{0xfb, 0xef}, 16))
+	if !strings.ContainsAny(key, "+/") {
+		t.Fatal("test key must contain + or /")
+	}
+	want := base64.StdEncoding.EncodeToString(bytes.Repeat([]byte{0xfb, 0xef}, 16))
+	for _, link := range []string{
+		"https://passage.gluek.info/link#v=1&zone=t.example.org&key=" + key + "&r=192.0.2.1,192.0.2.2",
+		"https://passage.gluek.info/link/#v=1&zone=t.example.org&key=" + key + "&r=192.0.2.1,192.0.2.2",
+		"passage://tunnel?v=1&zone=t.example.org&key=" + key + "&r=192.0.2.1,192.0.2.2",
+	} {
+		cfg, err := ParseLink(link)
+		if err != nil {
+			t.Fatalf("%s: %v", link, err)
+		}
+		if cfg.Zone != "t.example.org" || cfg.Key != want || strings.Join(cfg.Resolvers, ",") != "192.0.2.1:53,192.0.2.2:53" {
+			t.Errorf("%s: %+v", link, cfg)
+		}
+	}
+	for _, bad := range []string{
+		"https://example.org/link#v=1&zone=t.example.org&key=" + key,
+		"https://passage.gluek.info/#v=1&zone=t.example.org&key=" + key,
+		"https://passage.gluek.info/other#v=1&zone=t.example.org&key=" + key,
+		"http://passage.gluek.info/link#v=1&zone=t.example.org&key=" + key,
+	} {
+		if _, err := ParseLink(bad); err == nil {
+			t.Errorf("accepted %q", bad)
+		}
+	}
+}
+
+func TestStartWithoutLink(t *testing.T) {
+	tt, err := Start(Config{Mode: ModeAlways, Listen: "127.0.0.1:0"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tt.Close()
+	s := tt.Status(0)
+	if strings.Join(s.Routes, ",") != "direct" || s.Mode != ModeAuto || s.Route != "direct" || s.Zone != "" {
+		t.Fatalf("without a link: routes %v mode %s route %s zone %q", s.Routes, s.Mode, s.Route, s.Zone)
+	}
+	if err := tt.SetMode(ModeAlways); err != nil || tt.Status(0).Mode != ModeAuto {
+		t.Fatalf("always without a tunnel must fall back to auto: %v %s", err, tt.Status(0).Mode)
+	}
+	if _, err := (Config{Zone: "t.example.org"}).Normalize(); err == nil {
+		t.Error("a zone without a key is still an error")
+	}
+	if _, err := (Config{Key: testKey}).Normalize(); err == nil {
+		t.Error("a key without a zone is still an error")
+	}
+}
+
+func TestBlockedWithoutTunnelStaysDirect(t *testing.T) {
+	down := func(context.Context, string, string) (net.Conn, error) { return nil, errors.New("down") }
+	tt := newTestTunnel(t, ModeAuto, down, nil)
+	defer tt.Close()
+	blocked := probeResult{Relays: 1, CanaryOK: true, CanaryChecked: true}
+	mail := tt.testGroup("relay.example.org:993")
+	tt.applyProbe(mail, blocked)
+	tt.applyProbe(mail, blocked)
+	if s := tt.Status(0); s.Route != "direct" || s.State != "blocked" {
+		t.Fatalf("with no tunnel the route stays direct: %s %s", s.Route, s.State)
+	}
+}
+
+// testGroup returns addr's group the way a CONNECT to addr makes and marks it.
+func (t *Tunnel) testGroup(addr string) *group {
+	t.mu.Lock()
+	g := t.groupForLocked(addr)
+	t.mu.Unlock()
+	t.learn(g, addr)
+	return g
+}
+
+// resetKnownStrategies forgets every strategy, as a new process would.
+func resetKnownStrategies() {
+	knownStrategies.Lock()
+	knownStrategies.m = map[string]knownStrategy{}
+	knownStrategies.loaded = map[string]bool{}
+	knownStrategies.Unlock()
+}
+
+func TestStrategySurvivesARestart(t *testing.T) {
+	resetKnownStrategies()
+	defer resetKnownStrategies()
+	file := filepath.Join(t.TempDir(), "state.json")
+	cfg := Config{SystemResolvers: []string{"192.0.2.53:53"}, Operator: "25001", StateFile: file}
+	rememberStrategy(cfg, "split:2")
+
+	b, err := os.ReadFile(file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(b), "192.0.2.53") || strings.Contains(string(b), "25001") {
+		t.Fatalf("the state file must not name the network: %s", b)
+	}
+	resetKnownStrategies() // the app was stopped
+	if got := knownStrategyName(cfg); got != "split:2" {
+		t.Fatalf("after a restart: %q, want split:2", got)
+	}
+	rememberStrategy(cfg, "")
+	resetKnownStrategies()
+	if got := knownStrategyName(cfg); got != "" {
+		t.Fatalf("a forgotten strategy came back: %q", got)
 	}
 }

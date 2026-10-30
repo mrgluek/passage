@@ -23,9 +23,11 @@ static void bytesCopy(JNIEnv *env, jbyteArray a, jsize n, void *dst) {
 import "C"
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"sync"
+	"time"
 	"unsafe"
 
 	"github.com/mrgluek/passage/core/tunnel"
@@ -142,6 +144,31 @@ func Java_info_gluek_passage_Native_networkChanged(env *C.JNIEnv, cls C.jclass) 
 	if cur != nil {
 		cur.NetworkChanged()
 	}
+}
+
+//export Java_info_gluek_passage_Native_recheck
+func Java_info_gluek_passage_Native_recheck(env *C.JNIEnv, cls C.jclass) {
+	mu.Lock()
+	defer mu.Unlock()
+	if cur != nil {
+		cur.Recheck()
+	}
+}
+
+// diagnose runs the network test (Tunnel.Diagnose) and returns it as JSON.
+// It blocks for up to about 20 seconds; the app calls it off the UI thread.
+//
+//export Java_info_gluek_passage_Native_diagnose
+func Java_info_gluek_passage_Native_diagnose(env *C.JNIEnv, cls C.jclass) C.jbyteArray {
+	mu.Lock()
+	t := cur
+	mu.Unlock()
+	if t == nil {
+		return fail(env, errors.New("proxy is not running"))
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	return result(env, t.Diagnose(ctx))
 }
 
 // versions returns {"soar": "<module version>"} for the About screen.

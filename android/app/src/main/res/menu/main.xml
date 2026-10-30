@@ -20,6 +20,10 @@
         android:showAsAction="never"
         android:title="@string/check_now" />
     <item
+        android:id="@+id/action_test"
+        android:showAsAction="never"
+        android:title="@string/test_network" />
+    <item
         android:id="@+id/action_settings"
         android:icon="@drawable/ic_action_settings"
         android:showAsAction="always"

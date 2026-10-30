@@ -2,6 +2,7 @@ package info.gluek.passage
 
 import android.Manifest
 import android.app.Activity
+import android.app.AlertDialog
 import android.content.ActivityNotFoundException
 import android.content.Intent
 import android.content.pm.PackageManager
@@ -15,7 +16,9 @@ import android.view.Menu
 import android.view.MenuItem
 import android.view.View
 import android.widget.Button
+import android.widget.HorizontalScrollView
 import android.widget.LinearLayout
+import android.widget.ScrollView
 import android.widget.TextView
 import android.widget.Toast
 import java.util.concurrent.Executors
@@ -49,6 +52,11 @@ class MainActivity : Activity() {
         super.onCreate(savedInstanceState)
         settings = Settings(this)
         setContentView(buildUi())
+        // The proxy was on and is not now: an app update or the system
+        // stopped it. Opening the app turns it back on.
+        if (settings.running && !PassageService.active) {
+            PassageService.start(this)
+        }
     }
 
     override fun onResume() {
@@ -87,6 +95,7 @@ class MainActivity : Activity() {
             }
             R.id.action_report -> shareReport()
             R.id.action_check -> checkNow()
+            R.id.action_test -> testNetwork()
             R.id.action_settings -> startActivity(Intent(this, SettingsActivity::class.java))
             else -> return super.onOptionsItemSelected(item)
         }
@@ -162,18 +171,37 @@ class MainActivity : Activity() {
     }
 
     private fun onStartClicked() {
-        if (settings.link.isEmpty()) {
-            Toast.makeText(this, getString(R.string.need_link_first), Toast.LENGTH_SHORT).show()
-            startActivity(Intent(this, SettingsActivity::class.java))
-            return
-        }
-        if (Build.VERSION.SDK_INT >= 33 &&
-            checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
-        ) {
-            requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), 1)
-        }
         PassageService.start(this)
         main.postDelayed({ refresh() }, 500)
+        askNotifications()
+    }
+
+    override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        if (grantResults.firstOrNull() == PackageManager.PERMISSION_GRANTED) PassageService.refreshNotification(this)
+    }
+
+    /**
+     * Android 13+ asks before an app may show notifications. The proxy runs
+     * without it, but its notification (route, Stop button) stays hidden, so
+     * say why first; once, since Android stops asking after two refusals.
+     */
+    private fun askNotifications() {
+        if (Build.VERSION.SDK_INT < 33 ||
+            checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED ||
+            settings.askedNotifications
+        ) {
+            return
+        }
+        settings.askedNotifications = true
+        AlertDialog.Builder(this)
+            .setTitle(R.string.notifications_title)
+            .setMessage(R.string.notifications_why)
+            .setPositiveButton(R.string.notifications_continue) { _, _ ->
+                requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), 1)
+            }
+            .setNegativeButton(R.string.notifications_not_now, null)
+            .show()
     }
 
     private fun refresh() {
@@ -184,7 +212,6 @@ class MainActivity : Activity() {
         }
         val hasLink = settings.link.isNotEmpty()
         noLinkBox.visibility = if (hasLink) View.GONE else View.VISIBLE
-        connectBox.visibility = if (hasLink) View.VISIBLE else View.GONE
         detailsView.text = if (settings.auth) {
             getString(R.string.proxy_details, Settings.HOST, settings.port, settings.user, settings.pass)
         } else {
@@ -235,6 +262,53 @@ class MainActivity : Activity() {
         "?"
     }
 
+    /**
+     * The network test: every relay, canary and two Telegram data centers,
+     * each checked directly, with each strategy and through the tunnel. The
+     * result can be shared, e.g. with whoever gave the link.
+     */
+    private fun testNetwork() {
+        if (!PassageService.active) {
+            Toast.makeText(this, getString(R.string.proxy_stopped), Toast.LENGTH_SHORT).show()
+            return
+        }
+        val wait = AlertDialog.Builder(this)
+            .setTitle(R.string.test_network)
+            .setMessage(R.string.testing_network)
+            .setCancelable(false)
+            .show()
+        worker.execute {
+            val text = try {
+                StatusText.diagnosis(this, Native.json(Native.diagnose()))
+            } catch (e: Throwable) {
+                e.message ?: e.toString()
+            }
+            runOnUiThread {
+                wait.dismiss()
+                if (isFinishing) return@runOnUiThread
+                val view = TextView(this).apply {
+                    this.text = text
+                    typeface = Typeface.MONOSPACE
+                    textSize = 11f
+                    setTextIsSelectable(true)
+                    val pad = Ui.dp(this@MainActivity, 16)
+                    setPadding(pad, pad, pad, pad)
+                }
+                AlertDialog.Builder(this)
+                    .setTitle(R.string.test_network)
+                    .setView(ScrollView(this).apply { addView(HorizontalScrollView(this@MainActivity).apply { addView(view) }) })
+                    .setPositiveButton(R.string.share) { _, _ ->
+                        val send = Intent(Intent.ACTION_SEND).setType("text/plain")
+                            .putExtra(Intent.EXTRA_SUBJECT, "Passage network test")
+                            .putExtra(Intent.EXTRA_TEXT, text)
+                        startActivity(Intent.createChooser(send, getString(R.string.share)))
+                    }
+                    .setNegativeButton(android.R.string.ok, null)
+                    .show()
+            }
+        }
+    }
+
     /** Probes the network now instead of at the next scheduled check (auto mode only). */
     private fun checkNow() {
         if (!PassageService.active) {
@@ -243,7 +317,7 @@ class MainActivity : Activity() {
         }
         worker.execute {
             try {
-                Native.networkChanged()
+                Native.recheck()
             } catch (_: Throwable) {
             }
         }

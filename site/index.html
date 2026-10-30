@@ -21,6 +21,7 @@
 <body>
 <header class="wrap top">
   <a class="brand" href="./"><img src="icon.svg" alt="" width="36" height="36"> Passage</a>
+  <span class="muted meta"><a href="https://github.com/mrgluek/passage"><span class="en">Source code</span><span class="ru">Исходный код</span></a> · MIT</span>
   <nav class="langs" aria-label="Language">
     <button type="button" data-set="en">EN</button>
     <button type="button" data-set="ru">RU</button>
@@ -32,6 +33,16 @@
     <h1>You shall pass.</h1>
     <p class="en">A local SOCKS5 proxy for messaging apps on Android. Apps on the phone connect to it on <code>127.0.0.1</code>, and Passage picks the best available connection for them automatically.</p>
     <p class="ru">Локальный SOCKS5-прокси для мессенджеров на Android. Приложения на телефоне подключаются к нему на <code>127.0.0.1</code>, а Passage сам выбирает для них лучшее доступное соединение.</p>
+  </section>
+
+  <section id="connect" hidden>
+    <h2><span class="en">Your connection link</span><span class="ru">Ваша ссылка для подключения</span></h2>
+    <p class="en">If Passage is installed, open the link in it. If not, install Passage below, then open this link again.</p>
+    <p class="ru">Если Passage уже установлен, откройте ссылку в нём. Если нет, установите Passage ниже и откройте эту ссылку ещё раз.</p>
+    <div class="buttons">
+      <a class="button primary" id="open-link" href="#"><span class="en">Open in Passage</span><span class="ru">Открыть в Passage</span></a>
+    </div>
+    <p class="muted"><span class="en">Everything after # in the address stays in your browser: it is never sent to this site.</span><span class="ru">Всё, что в адресе после #, остаётся в браузере и на этот сайт не отправляется.</span></p>
   </section>
 
   <section id="download">
@@ -88,11 +99,16 @@ C3:C9:73:50:37:FF:A5:00:6D:D9:88:AB:29:D6:11:D6:A4:41:31:E5:3F:D8:1D:FA:CF:06:49
   </section>
 </main>
 
-<footer class="wrap muted">
-  <a href="https://github.com/mrgluek/passage"><span class="en">Source code</span><span class="ru">Исходный код</span></a> · MIT
-</footer>
 
 <script>
+  // A connection link: https://passage.gluek.info/link#v=1&zone=…. The fields
+  // after # never leave the browser; the button hands them to the app.
+  (function () {
+    var f = location.hash.slice(1);
+    if (!/(^|&)zone=/.test(f)) return;
+    document.getElementById("open-link").href = "passage://tunnel?" + f;
+    document.getElementById("connect").hidden = false;
+  })();
   document.querySelectorAll("[data-set]").forEach(function (b) {
     b.addEventListener("click", function () {
       var l = b.dataset.set;

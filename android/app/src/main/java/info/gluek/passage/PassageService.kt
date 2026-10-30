@@ -17,6 +17,7 @@ import android.os.IBinder
 import android.os.Looper
 import android.os.PowerManager
 import org.json.JSONArray
+import org.json.JSONObject
 import java.util.concurrent.Executors
 
 /**
@@ -29,6 +30,7 @@ class PassageService : Service() {
     companion object {
         private const val ACTION_START = "info.gluek.passage.START"
         private const val ACTION_STOP = "info.gluek.passage.STOP"
+        private const val ACTION_NOTIFY = "info.gluek.passage.NOTIFY"
         private const val CHANNEL = "proxy"
         private const val NOTIFICATION_ID = 1
         private const val TICK_MS = 15_000L
@@ -49,6 +51,11 @@ class PassageService : Service() {
         fun start(context: Context) {
             val i = Intent(context, PassageService::class.java).setAction(ACTION_START)
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) context.startForegroundService(i) else context.startService(i)
+        }
+
+        /** Redraws the notification now, e.g. once notifications are allowed. */
+        fun refreshNotification(context: Context) {
+            if (active) context.startService(Intent(context, PassageService::class.java).setAction(ACTION_NOTIFY))
         }
 
         fun stop(context: Context) {
@@ -75,6 +82,10 @@ class PassageService : Service() {
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        if (intent?.action == ACTION_NOTIFY) {
+            if (active) bg { updateNotification() }
+            return START_STICKY
+        }
         if (intent?.action == ACTION_STOP) {
             shutdown()
             return START_NOT_STICKY
@@ -175,7 +186,8 @@ class PassageService : Service() {
         if (!active) return
         val s = Settings(this)
         try {
-            val cfg = Native.parse(s.link)
+            // Without a link the router runs direct and smart routes only.
+            val cfg = if (s.link.isEmpty()) JSONObject() else Native.parse(s.link)
             cfg.optString("error").takeIf { it.isNotEmpty() }?.let { throw IllegalArgumentException("link: $it") }
             val net = NetInfo.snapshot(this)
             cfg.put("listen", s.listen)
@@ -188,6 +200,7 @@ class PassageService : Service() {
             if (s.shortNames) cfg.put("safe_qname", SHORT_QNAME)
             cfg.put("system_resolvers", JSONArray(net.dns))
             cfg.put("operator", net.operator)
+            cfg.put("state_file", java.io.File(filesDir, "router-state.json").path)
             val out = Native.json(Native.start(cfg.toString().toByteArray(Charsets.UTF_8)))
             out.optString("error").takeIf { it.isNotEmpty() }?.let { throw IllegalStateException(it) }
             lastNet = net.key
@@ -231,13 +244,13 @@ class PassageService : Service() {
 
     private fun updateNotification() {
         if (!active) return
-        val text = lastError ?: try {
-            StatusText.oneLine(this, Native.status())
+        val (title, text) = lastError?.let { getString(R.string.app_name) to it } ?: try {
+            StatusText.notification(this, Native.status())
         } catch (e: Throwable) {
-            e.message ?: e.toString()
+            getString(R.string.app_name) to (e.message ?: e.toString())
         }
         val nm = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-        nm.notify(NOTIFICATION_ID, buildNotification("SOCKS5 ${Settings(this).listen}", text))
+        nm.notify(NOTIFICATION_ID, buildNotification(title, text))
     }
 
     private fun buildNotification(title: String, text: String): Notification {

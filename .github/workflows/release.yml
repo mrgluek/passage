@@ -52,7 +52,7 @@ jobs:
         env:
           KEYSTORE_B64: ${{ secrets.PASSAGE_KEYSTORE_B64 }}
           PASSAGE_KEYSTORE_PASS: ${{ secrets.PASSAGE_KEYSTORE_PASS }}
-          PASSAGE_KEY_ALIAS: ${{ secrets.PASSAGE_KEY_ALIAS }}
+          PASSAGE_KEY_ALIAS: passage # not secret; as a secret it was masked in every log
         run: |
           test -n "$KEYSTORE_B64" || { echo "signing secrets missing" >&2; exit 1; }
           export PASSAGE_KEYSTORE="$RUNNER_TEMP/release.p12"

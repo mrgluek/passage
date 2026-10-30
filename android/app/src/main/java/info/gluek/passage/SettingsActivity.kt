@@ -2,11 +2,13 @@ package info.gluek.passage
 
 import android.annotation.SuppressLint
 import android.app.Activity
+import android.app.AlertDialog
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.graphics.Paint
+import android.graphics.Typeface
 import android.os.Build
 import android.os.Bundle
-import android.graphics.Typeface
 import android.text.InputType
 import android.text.util.Linkify
 import android.view.MenuItem
@@ -17,6 +19,7 @@ import android.widget.EditText
 import android.widget.LinearLayout
 import android.widget.RadioButton
 import android.widget.RadioGroup
+import android.widget.ScrollView
 import android.widget.TextView
 import android.widget.Toast
 import java.security.MessageDigest
@@ -37,6 +40,8 @@ class SettingsActivity : Activity() {
     private lateinit var linkEdit: EditText
     private lateinit var probeEdit: EditText
     private lateinit var batteryButton: Button
+    private lateinit var backgroundState: TextView
+    private var alwaysButton: RadioButton? = null
     private lateinit var aboutView: TextView
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -49,6 +54,7 @@ class SettingsActivity : Activity() {
         // Folded at once when a link is saved, so the key never flashes on
         // screen while describeLink checks it (a bad link unfolds).
         setLinkOpen(settings.link.isEmpty())
+        showTunnelChoice()
         describeLink()
         takeLink(intent)
     }
@@ -60,7 +66,9 @@ class SettingsActivity : Activity() {
 
     override fun onResume() {
         super.onResume()
-        batteryButton.visibility = if (Ui.batteryExempt(this)) View.GONE else View.VISIBLE
+        val exempt = Ui.batteryExempt(this)
+        batteryButton.visibility = if (exempt) View.GONE else View.VISIBLE
+        backgroundState.visibility = if (exempt) View.VISIBLE else View.GONE
     }
 
     override fun onDestroy() {
@@ -76,9 +84,11 @@ class SettingsActivity : Activity() {
         return super.onOptionsItemSelected(item)
     }
 
-    /** A tapped passage:// link goes into the field; Save stores it. */
+    /** A tapped passage:// or https://passage.gluek.info/link#… link goes into the field; Save stores it. */
     private fun takeLink(intent: Intent?) {
-        val link = intent?.takeIf { it.action == Intent.ACTION_VIEW }?.dataString ?: return
+        val data = intent?.takeIf { it.action == Intent.ACTION_VIEW }?.data ?: return
+        if (data.scheme == "https" && data.encodedFragment.isNullOrEmpty()) return // /link without fields
+        val link = data.toString()
         setIntent(Intent(this, SettingsActivity::class.java))
         linkEdit.setText(link)
         setLinkOpen(true)
@@ -134,6 +144,7 @@ class SettingsActivity : Activity() {
             modeGroup.addView(RadioButton(this).apply {
                 id = i + 1
                 text = getString(label)
+                if (MODES[i] == "always") alwaysButton = this
             })
         }
         modeGroup.check(MODES.indexOf(settings.mode).coerceAtLeast(0) + 1)
@@ -161,6 +172,11 @@ class SettingsActivity : Activity() {
         col.addView(Ui.hint(this, getString(R.string.new_access_help)))
 
         col.addView(Ui.heading(this, getString(R.string.background_label)))
+        col.addView(Ui.hint(this, getString(R.string.background_help)))
+        backgroundState = Ui.hint(this, getString(R.string.background_allowed)).apply {
+            setPadding(0, Ui.dp(this@SettingsActivity, 8), 0, 0)
+        }
+        col.addView(backgroundState)
         batteryButton = Button(this).apply {
             text = getString(R.string.battery)
             setOnClickListener { Ui.askBatteryExemption(this@SettingsActivity) }
@@ -190,6 +206,12 @@ class SettingsActivity : Activity() {
         col.addView(Ui.hint(this, getString(R.string.about_source, SOURCE_URL)).apply {
             Linkify.addLinks(this, Linkify.WEB_URLS)
         })
+        col.addView(Ui.hint(this, getString(R.string.about_licenses)).apply {
+            setPadding(0, Ui.dp(this@SettingsActivity, 12), 0, 0)
+            setTextColor(linkTextColors)
+            paintFlags = paintFlags or Paint.UNDERLINE_TEXT_FLAG
+            setOnClickListener { showLicenses() }
+        })
         worker.execute {
             val text = about()
             runOnUiThread { aboutView.text = text }
@@ -215,6 +237,7 @@ class SettingsActivity : Activity() {
                     Toast.makeText(this, getString(R.string.link_error_toast, err), Toast.LENGTH_LONG).show()
                 } else {
                     setLinkOpen(false)
+                    showTunnelChoice()
                     restartIfRunning()
                     Toast.makeText(this, getString(R.string.saved), Toast.LENGTH_SHORT).show()
                 }
@@ -268,6 +291,24 @@ class SettingsActivity : Activity() {
         }
     }
 
+    /** The licenses of the open-source code built into the app (res/raw/licenses.txt). */
+    private fun showLicenses() {
+        val text = resources.openRawResource(R.raw.licenses).bufferedReader().use { it.readText() }
+        val view = TextView(this).apply {
+            this.text = text
+            typeface = Typeface.MONOSPACE
+            textSize = 11f
+            setTextIsSelectable(true)
+            val pad = Ui.dp(this@SettingsActivity, 16)
+            setPadding(pad, pad, pad, pad)
+        }
+        AlertDialog.Builder(this)
+            .setTitle(R.string.about_licenses)
+            .setView(ScrollView(this).apply { addView(view) })
+            .setPositiveButton(android.R.string.ok, null)
+            .show()
+    }
+
     /** Version and soar version, so a tester can say what they run. */
     private fun about(): String {
         val soar = try {
@@ -299,6 +340,11 @@ class SettingsActivity : Activity() {
         d.joinToString(":") { "%02X".format(it) }
     } catch (_: Exception) {
         "?"
+    }
+
+    /** "Always tunnel" only makes sense with a link; without one the router runs auto. */
+    private fun showTunnelChoice() {
+        alwaysButton?.visibility = if (settings.link.isEmpty()) View.GONE else View.VISIBLE
     }
 
     private fun setLinkOpen(open: Boolean) {

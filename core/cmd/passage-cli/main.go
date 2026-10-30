@@ -25,7 +25,8 @@ import (
 )
 
 func main() {
-	link := flag.String("link", "", "passage://tunnel link")
+	link := flag.String("link", "", "passage://tunnel link (none: no tunnel)")
+	canaries := flag.String("canaries", "", "comma-separated host:port canaries, replacing the link's or the defaults")
 	linkFile := flag.String("link-file", "", "read the passage://tunnel link from this file")
 	systemDNS := flag.Bool("system-dns", true, "add this machine's DNS servers (resolv.conf) as first resolver paths")
 	operator := flag.String("operator", "", "SIM operator MCC+MNC (e.g. 25001) to add its known resolvers")
@@ -45,10 +46,16 @@ func main() {
 		}
 		*link = strings.TrimSpace(string(b))
 	}
-	cfg, err := tunnel.ParseLink(*link)
-	if err != nil {
-		fmt.Fprintln(os.Stderr, "passage-cli:", err)
-		os.Exit(2)
+	var cfg tunnel.Config // no link: direct and smart routes only
+	var err error
+	if *link != "" {
+		if cfg, err = tunnel.ParseLink(*link); err != nil {
+			fmt.Fprintln(os.Stderr, "passage-cli:", err)
+			os.Exit(2)
+		}
+	}
+	if *canaries != "" {
+		cfg.Canaries = strings.Split(*canaries, ",")
 	}
 	cfg.Mode, cfg.Listen, cfg.User, cfg.Pass = *mode, *listen, *user, *pass
 	cfg.Operator = *operator
@@ -89,7 +96,11 @@ func main() {
 					printed = e.Time
 				}
 			}
-			line, _ := json.Marshal(map[string]any{"route": s.Route, "state": s.State, "active": s.Active, "stats": s.Stats})
+			groups := map[string]any{}
+			for name, g := range s.Groups {
+				groups[name] = map[string]any{"route": g.Route, "state": g.State, "targets": g.Targets}
+			}
+			line, _ := json.Marshal(map[string]any{"route": s.Route, "state": s.State, "groups": groups, "active": s.Active, "stats": s.Stats})
 			fmt.Fprintf(os.Stderr, "%s status %s session=%v\n", time.Now().Format("15:04:05"), line, s.Session)
 			if *paths {
 				for _, p := range s.Paths {

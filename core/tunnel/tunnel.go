@@ -6,6 +6,7 @@ import (
 	"crypto/ed25519"
 	"crypto/rand"
 	"crypto/tls"
+	"crypto/x509"
 	"encoding/base64"
 	"encoding/hex"
 	"errors"
@@ -24,19 +25,73 @@ import (
 	"github.com/getlantern/soar"
 )
 
-// Route is where new connections go.
+// Route is one way to open connections. Routes are ordered from the most
+// direct to the last resort; in auto mode a connection that fails on one
+// route falls through to the next.
 type Route int
 
 const (
 	RouteDirect Route = iota
+	RouteSmart        // direct, with the first bytes reshaped (smart.go)
 	RouteTunnel
+	numRoutes
 )
 
-func (r Route) String() string {
-	if r == RouteTunnel {
-		return "tunnel"
-	}
-	return "direct"
+var routeNames = [numRoutes]string{"direct", "smart", "tunnel"}
+
+func (r Route) String() string { return routeNames[r] }
+
+// groupKind says what a group holds and how it is probed.
+type groupKind int
+
+const (
+	kindRelay    groupKind = iota // one mail relay, by host name: TLS probes to it
+	kindTelegram                  // IP literals in Telegram's ranges: MTProto probes
+	kindOther                     // other IP literals: not probed
+)
+
+var kindNames = [...]string{"relay", "telegram", "other"}
+
+func (k groupKind) String() string { return kindNames[k] }
+
+// group is a set of destinations that share one route decision: each mail
+// relay has its own, so one relay being blocked doesn't move another, and
+// Telegram has one.
+type group struct {
+	name        string
+	kind        groupKind
+	pinned      bool      // from cfg.ProbeTargets: never dropped
+	used        time.Time // last CONNECT, for dropping the least recently used relay
+	route       Route
+	routeSince  time.Time
+	tunnelFails int                  // tunnel dial failures since the route last changed
+	hosts       map[string]time.Time // probe host -> last seen in a CONNECT
+	ports       map[string]string    // probe host -> port to probe
+	seen        bool                 // has carried traffic; only then is it probed
+	failStreak  int
+	okStreak    int
+	state       string
+	lastProbe   time.Time
+	lastResult  probeResult
+}
+
+func newGroup(name string, kind groupKind, route Route) *group {
+	return &group{name: name, kind: kind, route: route, routeSince: time.Now(),
+		hosts: map[string]time.Time{}, ports: map[string]string{}, state: "unknown"}
+}
+
+const (
+	// maxTelegramHosts bounds the destinations remembered for the Telegram group.
+	maxTelegramHosts = 32
+	// maxRelayGroups bounds the relays tracked at once; the least recently
+	// used one without connections goes first.
+	maxRelayGroups = 8
+)
+
+// way is how a route dials; a nil dial means the route isn't set up here.
+type way struct {
+	dial    dialFunc
+	timeout time.Duration
 }
 
 // soar tuning: full-length query names and a wider per-path window.
@@ -65,6 +120,10 @@ const (
 	canaryStagger = 2 * time.Second
 )
 
+// firstResponseTimeout: a connection that has sent bytes and got none back
+// for this long triggers a probe (it stays open). A var for tests.
+var firstResponseTimeout = 5 * time.Second
+
 type dialFunc func(ctx context.Context, network, addr string) (net.Conn, error)
 
 // Tunnel is a running local proxy.
@@ -79,42 +138,43 @@ type Tunnel struct {
 	kick      chan struct{}
 	wg        sync.WaitGroup
 
-	// Swappable for tests.
-	dialDirect dialFunc
-	dialTunnel dialFunc
+	// Swappable for tests. ways[RouteSmart] is set while a strategy works;
+	// guarded by mu.
+	ways       [numRoutes]way
+	strategies []strategy
+	smartProbe func(ctx context.Context, dial dialFunc, hostport, sni string) error // nil: probeTLSVia
 	probeTLS   func(ctx context.Context, hostport, sni string) error
 	// probeTunnel is probeTLS through the tunnel. established reports a live
 	// soar session: only then does a relay failing through the tunnel prove
 	// the relay is down (see confirmViaTunnel).
 	probeTunnel func(ctx context.Context, hostport, sni string) error
 	established func() bool
+	// The Telegram group's probes (telegram.go), directly and through the tunnel.
+	probeMT       func(ctx context.Context, hostport string) error
+	probeMTTunnel func(ctx context.Context, hostport string) error
 
 	mu          sync.Mutex
 	mode        string
-	route       Route
-	routeSince  time.Time
+	relays      map[string]*group // by host name
+	telegram    *group
+	other       *group
 	routeGen    atomic.Int64 // bumped on every route change, for the shell to nudge the core
-	tunnelFails int          // tunnel dial failures since the route last changed
+	urgent      atomic.Bool  // the next probe skips minProbeGap (Recheck)
 	intercepted bool         // this network redirects port-53 traffic (see intercept.go)
 	dnsEgress   string       // who actually resolves for the interceptor, if learned
 	conns       map[*tracked]struct{}
-	relays      map[string]time.Time // relay host -> last seen in a CONNECT
-	relayPorts  map[string]string    // relay host -> TLS port to probe (the one the core used)
-	fixedProbes bool                 // cfg.ProbeTargets set: relays holds them and never learns
-	failStreak  int
-	okStreak    int
-	state       string
-	lastProbe   time.Time
-	lastResult  probeResult
-	lastCanary  string // the canary that answered last; tried first next time
-	stats       [2]routeStats
+	lastProbe   time.Time // the monitor's last round
+	lastCanary  string    // the canary that answered last; tried first next time
+	strategy    *strategy // the smart route's working strategy, if any
+	stats       [numRoutes]routeStats
 	// Bytes per route, counted as they flow: IMAP IDLE connections live for
 	// hours, so totals taken at close would show nothing for them.
-	upBytes   [2]atomic.Int64
-	downBytes [2]atomic.Int64
+	upBytes   [numRoutes]atomic.Int64
+	downBytes [numRoutes]atomic.Int64
 }
 
 type tracked struct {
+	group  *group
 	route  Route
 	local  net.Conn
 	remote net.Conn
@@ -135,12 +195,20 @@ type probeResult struct {
 	// answers directly (the network is open whatever they say) or when
 	// there is no relay to probe yet.
 	CanaryChecked bool `json:"canary_checked,omitempty"`
+	// SmartChecked: the probe hosts were tried on the smart route (they
+	// failed directly while a canary answered); SmartOK: a strategy works.
+	SmartChecked bool `json:"smart_checked,omitempty"`
+	SmartOK      bool `json:"smart_ok,omitempty"`
+	// SmartKnown: the strategy had worked on this network before this probe,
+	// so one blocked probe is enough to switch to it.
+	SmartKnown bool   `json:"smart_known,omitempty"`
+	Strategy   string `json:"strategy,omitempty"`
 	// Set by confirmViaTunnel before a switch to the tunnel: the same relays
 	// probed through a live tunnel session.
 	TunnelChecked bool `json:"tunnel_checked,omitempty"`
 	TunnelOK      bool `json:"tunnel_ok,omitempty"`
 
-	hosts []string // the relays probed, most recent first
+	hosts []string // the host:ports probed, most recent first
 }
 
 // Start validates cfg, creates the soar client and starts serving SOCKS5.
@@ -149,71 +217,86 @@ func Start(cfg Config) (*Tunnel, error) {
 	if err != nil {
 		return nil, err
 	}
-	key, _ := base64.StdEncoding.DecodeString(cfg.Key)
-	resolvers, skippedPrivate := withoutForeignPrivate(cfg.Effective(), cfg.SystemResolvers)
-	resolvers = ipv4First(resolvers)
-	skipped6 := 0
-	// On a network that redirects port 53, lead with the DoT paths.
-	intercepted := detectInterception(context.Background(), interceptProbeTimeout)
-	if intercepted {
-		resolvers = dotFirst(resolvers)
-	}
-	if !hasIPv6Route() {
-		// Without an IPv6 route these paths can only fail. A network change
-		// restarts the tunnel and re-checks.
-		resolvers, skipped6 = withoutIPv6(resolvers)
-	}
 	t := &Tunnel{
-		cfg:        cfg,
-		log:        newEventLog(500),
-		kick:       make(chan struct{}, 1),
-		mode:       cfg.Mode,
-		conns:      map[*tracked]struct{}{},
-		relays:     map[string]time.Time{},
-		relayPorts: map[string]string{},
-		state:      "unknown",
+		cfg:    cfg,
+		log:    newEventLog(500),
+		kick:   make(chan struct{}, 1),
+		mode:   cfg.Mode,
+		conns:  map[*tracked]struct{}{},
+		relays: map[string]*group{},
 	}
+	t.telegram = newGroup("telegram", kindTelegram, initialRoute(cfg.Mode))
+	t.other = newGroup("other", kindOther, initialRoute(cfg.Mode))
 	t.ctx, t.cancel = context.WithCancel(context.Background())
-	client, err := soar.NewClient(soar.Config{
-		Zone:          cfg.Zone,
-		ServerKey:     ed25519.PublicKey(key),
-		Resolvers:     resolvers,
-		TCP:           "auto",
-		SafeQName:     cmp.Or(cfg.SafeQName, soarSafeQName),
-		MaxPathWindow: soarPathWindow,
-		DialTCP:       dialResolver,
-		StreamOnly:    isDoT, // DoT resolvers get their TCP (TLS) path at once, no doomed UDP probe
-		Logger:        slog.New(&logHandler{log: t.log}),
-	})
-	if err != nil {
-		return nil, err
+	var skipped6, skippedPrivate int
+	if cfg.HasTunnel() {
+		key, _ := base64.StdEncoding.DecodeString(cfg.Key)
+		var resolvers []string
+		resolvers, skippedPrivate = withoutForeignPrivate(cfg.Effective(), cfg.SystemResolvers)
+		resolvers = ipv4First(resolvers)
+		// On a network that redirects port 53, lead with the DoT paths.
+		t.intercepted = detectInterception(context.Background(), interceptProbeTimeout)
+		if t.intercepted {
+			resolvers = dotFirst(resolvers)
+		}
+		if !hasIPv6Route() {
+			// Without an IPv6 route these paths can only fail. A network change
+			// restarts the tunnel and re-checks.
+			resolvers, skipped6 = withoutIPv6(resolvers)
+		}
+		client, err := soar.NewClient(soar.Config{
+			Zone:          cfg.Zone,
+			ServerKey:     ed25519.PublicKey(key),
+			Resolvers:     resolvers,
+			TCP:           "auto",
+			SafeQName:     cmp.Or(cfg.SafeQName, soarSafeQName),
+			MaxPathWindow: soarPathWindow,
+			DialTCP:       dialResolver,
+			StreamOnly:    isDoT, // DoT resolvers get their TCP (TLS) path at once, no doomed UDP probe
+			Logger:        slog.New(&logHandler{log: t.log}),
+		})
+		if err != nil {
+			return nil, err
+		}
+		t.client = client
+		t.resolvers = resolvers
 	}
-	t.client = client
-	t.resolvers = resolvers
-	t.intercepted = intercepted
 	d := &net.Dialer{Timeout: directDialTimeout}
-	t.dialDirect = d.DialContext
-	t.dialTunnel = client.DialContext
+	t.ways[RouteDirect] = way{d.DialContext, directDialTimeout}
+	t.strategies = smartStrategies()
+	t.useKnownStrategy()
 	t.probeTLS = probeTLS
-	t.probeTunnel = func(ctx context.Context, hostport, sni string) error {
-		return probeTLSVia(ctx, t.dialTunnel, hostport, sni)
+	t.probeMT = probeMTProto
+	if t.client != nil {
+		t.ways[RouteTunnel] = way{t.client.DialContext, tunnelDialTimeout}
+		t.probeTunnel = func(ctx context.Context, hostport, sni string) error {
+			return probeTLSVia(ctx, t.ways[RouteTunnel].dial, hostport, sni)
+		}
+		t.probeMTTunnel = func(ctx context.Context, hostport string) error {
+			return probeMTProtoVia(ctx, t.ways[RouteTunnel].dial, hostport)
+		}
+		t.established = t.client.Established
 	}
-	t.established = client.Established
 
 	ln, err := net.Listen("tcp", cfg.Listen)
 	if err != nil {
-		client.Close()
+		if t.client != nil {
+			t.client.Close()
+		}
 		return nil, err
 	}
 	t.ln = ln
 	t.useProbeTargets()
-	t.setRouteLocked(initialRoute(cfg.Mode), "start")
-	t.log.add("started: mode=%s resolvers=%d (network %d, operator %s +%d) soar=%s", cfg.Mode, len(resolvers),
-		len(cfg.SystemResolvers), cfg.Operator, len(OperatorResolvers[cfg.Operator]), SoarVersion())
+	if t.client == nil {
+		t.log.add("started: mode=%s, no tunnel (no link)", cfg.Mode)
+	} else {
+		t.log.add("started: mode=%s resolvers=%d (network %d, operator %s +%d) soar=%s", cfg.Mode, len(t.resolvers),
+			len(cfg.SystemResolvers), cfg.Operator, len(OperatorResolvers[cfg.Operator]), SoarVersion())
+	}
 	if skipped6 > 0 {
 		t.log.add("no IPv6 route: skipped %d IPv6 resolvers", skipped6)
 	}
-	if intercepted {
+	if t.intercepted {
 		t.log.add("this network intercepts DNS (port 53): plain-DNS paths all reach one resolver; DoT paths moved first")
 		go t.learnDNSEgress()
 	}
@@ -226,22 +309,105 @@ func Start(cfg Config) (*Tunnel, error) {
 	return t, nil
 }
 
-// useProbeTargets puts cfg.ProbeTargets in place of the learned relays.
+// useProbeTargets makes a pinned relay group for each of cfg.ProbeTargets.
 func (t *Tunnel) useProbeTargets() {
 	if len(t.cfg.ProbeTargets) == 0 {
 		return
 	}
-	t.fixedProbes = true
-	now := time.Now()
 	for _, hp := range t.cfg.ProbeTargets {
 		host, port, err := net.SplitHostPort(hp)
-		if err != nil {
+		if err != nil || net.ParseIP(host) != nil {
 			continue
 		}
-		t.relays[host] = now
-		t.relayPorts[host] = port
+		g := t.relayLocked(host)
+		g.pinned = true
+		g.hosts[g.name] = time.Now()
+		g.ports[g.name] = port
 	}
 	t.log.add("probing fixed hosts: %s", strings.Join(t.cfg.ProbeTargets, ", "))
+}
+
+// relayLocked returns host's relay group, making it on first use and
+// dropping the least recently used unpinned relay without connections when
+// there are too many. Caller holds t.mu.
+func (t *Tunnel) relayLocked(host string) *group {
+	host = strings.ToLower(host)
+	if g := t.relays[host]; g != nil {
+		return g
+	}
+	g := newGroup(host, kindRelay, initialRoute(t.mode))
+	g.seen = true
+	t.relays[host] = g
+	for len(t.relays) > maxRelayGroups {
+		var oldest *group
+		for _, r := range t.relays {
+			if r == g || r.pinned || t.hasConnsLocked(r) {
+				continue
+			}
+			if oldest == nil || r.used.Before(oldest.used) {
+				oldest = r
+			}
+		}
+		if oldest == nil {
+			break
+		}
+		delete(t.relays, oldest.name)
+	}
+	return g
+}
+
+func (t *Tunnel) hasConnsLocked(g *group) bool {
+	for c := range t.conns {
+		if c.group == g {
+			return true
+		}
+	}
+	return false
+}
+
+// kindOf classifies a CONNECT destination: Telegram's addresses, other IP
+// literals, or a relay by host name.
+func kindOf(addr string) groupKind {
+	host, _, err := net.SplitHostPort(addr)
+	switch {
+	case err != nil:
+		return kindOther
+	case isTelegram(host):
+		return kindTelegram
+	case net.ParseIP(host) != nil:
+		return kindOther
+	default:
+		return kindRelay
+	}
+}
+
+// groupForLocked returns addr's group, making a relay's on first use.
+// Caller holds t.mu.
+func (t *Tunnel) groupForLocked(addr string) *group {
+	switch kindOf(addr) {
+	case kindTelegram:
+		return t.telegram
+	case kindRelay:
+		host, _, _ := net.SplitHostPort(addr)
+		return t.relayLocked(host)
+	default:
+		return t.other
+	}
+}
+
+// groupsLocked lists every group: Telegram, other, then the relays by name.
+// Caller holds t.mu.
+func (t *Tunnel) groupsLocked() []*group {
+	out := []*group{t.telegram, t.other}
+	names := make([]string, 0, len(t.relays))
+	for n := range t.relays {
+		names = append(names, n)
+	}
+	sort.Strings(names)
+	for _, n := range names {
+		out = append(out, t.relays[n])
+	}
+	return out
 }
 
 func initialRoute(mode string) Route {
@@ -303,20 +469,33 @@ func (t *Tunnel) SetMode(mode string) error {
 	}
 	t.mu.Lock()
 	t.mode = mode
-	t.failStreak, t.okStreak = 0, 0
-	switch mode {
-	case ModeAlways:
-		t.setRouteLocked(RouteTunnel, "mode always")
-	case ModeOff:
-		t.setRouteLocked(RouteDirect, "mode off")
-	case ModeAuto:
-		// Start auto from direct; the monitor moves to the tunnel if needed.
-		t.setRouteLocked(RouteDirect, "mode auto")
+	if mode == ModeAlways && t.ways[RouteTunnel].dial == nil {
+		mode = ModeAuto
+		t.mode = mode
+	}
+	for _, g := range t.groupsLocked() {
+		g.failStreak, g.okStreak = 0, 0
+		switch mode {
+		case ModeAlways:
+			t.setRouteLocked(g, RouteTunnel, "mode always")
+		case ModeOff:
+			t.setRouteLocked(g, RouteDirect, "mode off")
+		case ModeAuto:
+			// Start auto from direct; the monitor moves to the tunnel if needed.
+			t.setRouteLocked(g, RouteDirect, "mode auto")
+		}
 	}
 	t.mu.Unlock()
 	t.log.add("mode set to %s", mode)
 	t.kickProbe()
 	return nil
+}
+
+// Recheck probes at once, without the usual minimum gap between probes:
+// the user asked for it ("Check now").
+func (t *Tunnel) Recheck() {
+	t.urgent.Store(true)
+	t.kickProbe()
 }
 
 // NetworkChanged asks for an immediate re-check. The streaks are kept: some
@@ -333,22 +512,20 @@ func (t *Tunnel) kickProbe() {
 	}
 }
 
-// setRouteLocked changes the route and closes the connections on the old
-// one, so clients reconnect over the new route at once. Caller holds t.mu.
-func (t *Tunnel) setRouteLocked(r Route, reason string) {
-	if r == t.route && !t.routeSince.IsZero() {
+// setRouteLocked changes g's route and closes g's connections on other
+// routes, so clients reconnect over the new route at once. Caller holds t.mu.
+func (t *Tunnel) setRouteLocked(g *group, r Route, reason string) {
+	if r == g.route {
 		return
 	}
-	old := t.route
-	t.route = r
-	t.routeSince = time.Now()
-	t.tunnelFails = 0
-	if reason != "start" {
-		t.routeGen.Add(1)
-		t.log.add("route %s -> %s (%s)", old, r, reason)
-	}
+	old := g.route
+	g.route = r
+	g.routeSince = time.Now()
+	g.tunnelFails = 0
+	t.routeGen.Add(1)
+	t.log.add("%s route %s -> %s (%s)", g.name, old, r, reason)
 	for c := range t.conns {
-		if c.route != r {
+		if c.group == g && c.route != r {
 			// Close only wakes the pipes; their cleanup takes t.mu after we release it.
 			c.local.Close()
 			c.remote.Close()
@@ -380,19 +557,17 @@ func (t *Tunnel) handle(c net.Conn) {
 		t.log.add("socks: %v", err)
 		return
 	}
-	if host, _, err := net.SplitHostPort(addr); err == nil && net.ParseIP(host) == nil && !t.fixedProbes {
-		t.mu.Lock()
-		t.relays[host] = time.Now()
-		t.relayPorts[host] = probePort(addr)
-		t.mu.Unlock()
-	}
+	t.mu.Lock()
+	g := t.groupForLocked(addr)
+	t.mu.Unlock()
+	t.learn(g, addr)
 
-	remote, route, err := t.dial(addr)
+	remote, route, err := t.dial(g, addr)
 	if err != nil {
 		t.mu.Lock()
 		t.stats[route].Fails++
 		if route == RouteTunnel {
-			t.tunnelFails++
+			g.tunnelFails++
 		}
 		t.mu.Unlock()
 		t.log.add("%s dial %s failed: %v", route, addr, err)
@@ -405,7 +580,7 @@ func (t *Tunnel) handle(c net.Conn) {
 	}
 	c.SetDeadline(time.Time{})
 
-	tr := &tracked{route: route, local: c, remote: remote}
+	tr := &tracked{group: g, route: route, local: c, remote: remote}
 	t.mu.Lock()
 	t.conns[tr] = struct{}{}
 	t.stats[route].Conns++
@@ -413,6 +588,14 @@ func (t *Tunnel) handle(c net.Conn) {
 
 	start := time.Now()
 	var up, down atomic.Int64
+	if route != RouteTunnel {
+		stall := time.AfterFunc(firstResponseTimeout, func() {
+			if up.Load() > 0 && down.Load() == 0 {
+				t.kickProbe()
+			}
+		})
+		defer stall.Stop()
+	}
 	var wg sync.WaitGroup
 	wg.Add(2)
 	go func() { defer wg.Done(); pipe(remote, c, &up, &t.upBytes[route]) }()
@@ -429,32 +612,116 @@ func (t *Tunnel) handle(c net.Conn) {
 	}
 }
 
-// dial opens addr on the current route. In auto mode a failed direct dial
-// falls back to the tunnel for this connection and triggers a probe.
-func (t *Tunnel) dial(addr string) (net.Conn, Route, error) {
+// learn marks g as used and records addr as its probe host: a relay its own
+// name, Telegram the addresses it connects to (up to maxTelegramHosts).
+func (t *Tunnel) learn(g *group, addr string) {
+	host, port, err := net.SplitHostPort(addr)
+	if err != nil {
+		return
+	}
 	t.mu.Lock()
-	route, mode := t.route, t.mode
+	defer t.mu.Unlock()
+	g.used = time.Now()
+	switch g.kind {
+	case kindRelay:
+		g.hosts[g.name] = time.Now()
+		g.ports[g.name] = probePort(addr)
+	case kindTelegram:
+		if !g.seen {
+			g.seen = true
+			t.kickProbe()
+		}
+		g.hosts[host] = time.Now()
+		g.ports[host] = port
+		for len(g.hosts) > maxTelegramHosts {
+			oldest := ""
+			for h, at := range g.hosts {
+				if oldest == "" || at.Before(g.hosts[oldest]) {
+					oldest = h
+				}
+			}
+			delete(g.hosts, oldest)
+			delete(g.ports, oldest)
+		}
+	}
+}
+
+// dial opens addr on g's current route. In auto mode a failed dial falls
+// through to the next usable route for this connection and triggers a probe.
+// The error of the last route tried is returned for the caller to count.
+func (t *Tunnel) dial(g *group, addr string) (net.Conn, Route, error) {
+	t.mu.Lock()
+	route, mode := g.route, t.mode
 	t.mu.Unlock()
-	if route == RouteDirect {
-		ctx, cancel := context.WithTimeout(t.ctx, directDialTimeout)
-		c, err := t.dialDirect(ctx, "tcp", addr)
+	for r := route; ; {
+		t.mu.Lock()
+		w := t.ways[r]
+		if !t.usableLocked(g, r) {
+			w = way{}
+		}
+		next := t.nextRouteLocked(g, r)
+		t.mu.Unlock()
+		if w.dial == nil { // the smart route went away since the route was chosen
+			if next == r {
+				return nil, r, errors.New(r.String() + " route not available")
+			}
+			r = next
+			continue
+		}
+		ctx, cancel := context.WithTimeout(t.ctx, w.timeout)
+		c, err := w.dial(ctx, "tcp", addr)
 		cancel()
 		if err == nil {
-			return c, RouteDirect, nil
+			return c, r, nil
+		}
+		if next == r {
+			return nil, r, err
 		}
 		t.kickProbe()
 		if mode != ModeAuto {
-			return nil, RouteDirect, err // counted by the caller
+			return nil, r, err
 		}
 		t.mu.Lock()
-		t.stats[RouteDirect].Fails++
+		t.stats[r].Fails++
 		t.mu.Unlock()
-		t.log.add("direct dial %s failed (%v); trying the tunnel", addr, err)
+		t.log.add("%s dial %s failed (%v); trying %s", r, addr, err, next)
+		r = next
 	}
-	ctx, cancel := context.WithTimeout(t.ctx, tunnelDialTimeout)
-	defer cancel()
-	c, err := t.dialTunnel(ctx, "tcp", addr)
-	return c, RouteTunnel, err
+}
+
+// nextRouteLocked is the next route after r usable for g, or r itself if
+// there is none. Caller holds t.mu.
+func (t *Tunnel) nextRouteLocked(g *group, r Route) Route {
+	for n := r + 1; n < numRoutes; n++ {
+		if t.usableLocked(g, n) {
+			return n
+		}
+	}
+	return r
+}
+
+// usableLocked: r is set up, and allowed for g (MTProto is not TLS, so the
+// smart route's strategies don't apply to Telegram). Caller holds t.mu.
+func (t *Tunnel) usableLocked(g *group, r Route) bool {
+	return t.ways[r].dial != nil && !(g.kind == kindTelegram && r == RouteSmart)
+}
+
+func (t *Tunnel) strategyNameLocked() string {
+	if t.strategy == nil {
+		return ""
+	}
+	return t.strategy.name
+}
+
+// routes lists the set-up routes in order. Caller holds t.mu.
+func (t *Tunnel) routes() []string {
+	var out []string
+	for r := Route(0); r < numRoutes; r++ {
+		if t.ways[r].dial != nil {
+			out = append(out, r.String())
+		}
+	}
+	return out
 }
 
 // pipe copies src to dst, counting bytes into conn and route as they flow,
@@ -495,78 +762,191 @@ func (t *Tunnel) monitor() {
 		if mode != ModeAuto {
 			continue
 		}
-		if since < minProbeGap {
+		if since < minProbeGap && !t.urgent.Swap(false) {
 			select {
 			case <-t.ctx.Done():
 				return
 			case <-time.After(minProbeGap - since):
 			}
 		}
-		t.applyProbe(t.confirmViaTunnel(t.probe()))
+		t.check()
 	}
 }
 
+// check is one monitor round: probe, then apply the verdict to each group
+// that had probe hosts.
+func (t *Tunnel) check() {
+	res := t.probe()
+	t.mu.Lock()
+	t.lastProbe = time.Now()
+	t.mu.Unlock()
+	for g, r := range res {
+		if r.Relays > 0 {
+			t.applyProbe(g, t.confirmViaTunnel(g, r))
+		}
+	}
+}
+
+// nextProbeIn is the shortest wait any probed group asks for.
 func (t *Tunnel) nextProbeIn() time.Duration {
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	switch {
-	case t.mode != ModeAuto:
+	if t.mode != ModeAuto {
 		return time.Hour
-	case t.state == "offline":
+	}
+	next := time.Hour
+	for _, g := range t.groupsLocked() {
+		if g.seen {
+			next = min(next, g.probeIn())
+		}
+	}
+	return next
+}
+
+func (gs *group) probeIn() time.Duration {
+	switch {
+	case gs.state == "offline":
 		return 30 * time.Second
-	case t.route == RouteTunnel:
+	case gs.route != RouteDirect:
 		return 30 * time.Second
-	case t.state == stateRelaysDown:
-		return time.Minute // each check costs a TLS handshake through the tunnel
-	case t.failStreak > 0:
+	case gs.state == stateRelaysDown:
+		return time.Minute // each check costs a handshake through the tunnel
+	case gs.failStreak > 0:
 		return 15 * time.Second
-	case t.state == "unknown":
+	case gs.state == "unknown":
 		return time.Minute
 	default:
 		return 5 * time.Minute
 	}
 }
 
-// probe checks the most recently used probe hosts with a full TLS handshake
-// (a TCP connect alone proves little), and the canaries only when none of
-// them answered.
-func (t *Tunnel) probe() probeResult {
-	t.mu.Lock()
-	hosts := make([]string, 0, len(t.relays))
-	for h := range t.relays {
+// targetsLocked lists the host:ports to probe for g, most recent first: a
+// relay's own name, or Telegram's learned addresses (up to maxProbedRelays)
+// and its data centers. Nothing until g has seen traffic. Caller holds t.mu.
+func (t *Tunnel) targetsLocked(g *group) []string {
+	gs := g
+	if !gs.seen || gs.kind == kindOther {
+		return nil
+	}
+	hosts := make([]string, 0, len(gs.hosts))
+	for h := range gs.hosts {
 		hosts = append(hosts, h)
 	}
-	sort.Slice(hosts, func(i, j int) bool { return t.relays[hosts[i]].After(t.relays[hosts[j]]) })
-	t.mu.Unlock()
-	if len(hosts) > maxProbedRelays {
-		hosts = hosts[:maxProbedRelays]
+	sort.Slice(hosts, func(i, j int) bool { return gs.hosts[hosts[i]].After(gs.hosts[hosts[j]]) })
+	var out []string
+	for _, h := range hosts {
+		if len(out) == maxProbedRelays {
+			break
+		}
+		port := gs.ports[h]
+		if port == "" {
+			port = "443"
+		}
+		if hp := net.JoinHostPort(h, port); !slices.Contains(telegramDCs, hp) {
+			out = append(out, hp)
+		}
 	}
+	if g.kind == kindTelegram {
+		out = append(out, telegramDCs...)
+	}
+	return out
+}
+
+// probeHost checks one probe host of g, directly or through the tunnel:
+// a full TLS handshake for mail (a TCP connect alone proves little), an
+// MTProto exchange for Telegram.
+func (t *Tunnel) probeHost(ctx context.Context, g *group, viaTunnel bool, hostport string) error {
+	host, _, _ := net.SplitHostPort(hostport)
+	switch {
+	case g.kind == kindTelegram && viaTunnel:
+		return t.probeMTTunnel(ctx, hostport)
+	case g.kind == kindTelegram:
+		return t.probeMT(ctx, hostport)
+	case viaTunnel:
+		return t.probeTunnel(ctx, hostport, host)
+	default:
+		return t.probeTLS(ctx, hostport, host)
+	}
+}
+
+// probe checks each group's probe hosts, then the canaries (they are global)
+// once if some group's hosts all failed, then the smart route for each relay
+// that failed, one at a time since they share the strategy.
+func (t *Tunnel) probe() map[*group]probeResult {
+	t.mu.Lock()
+	groups := t.groupsLocked()
+	auto := t.mode == ModeAuto
+	t.mu.Unlock()
+	res := make(map[*group]probeResult, len(groups))
+	var mu sync.Mutex
+	var wg sync.WaitGroup
+	for _, g := range groups {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			r := t.probeGroup(g)
+			mu.Lock()
+			res[g] = r
+			mu.Unlock()
+		}()
+	}
+	wg.Wait()
+	failed := func(r probeResult) bool { return r.Relays > 0 && r.RelayOK == 0 }
+	anyFailed := false
+	for _, r := range res {
+		anyFailed = anyFailed || failed(r)
+	}
+	if anyFailed {
+		canary := t.probeCanaries()
+		for g, r := range res {
+			if failed(r) {
+				r.CanaryChecked, r.CanaryOK = true, canary
+				res[g] = r
+			}
+		}
+	}
+	if !auto || len(t.strategies) == 0 {
+		return res
+	}
+	for _, g := range groups {
+		r := res[g]
+		if g.kind != kindRelay || !r.CanaryOK {
+			continue
+		}
+		t.mu.Lock()
+		r.SmartKnown = t.strategy != nil
+		t.mu.Unlock()
+		r.SmartChecked = true
+		r.SmartOK = t.smartCheck(r.hosts)
+		if r.SmartOK {
+			t.mu.Lock()
+			r.Strategy = t.strategyNameLocked()
+			t.mu.Unlock()
+		}
+		res[g] = r
+	}
+	return res
+}
+func (t *Tunnel) probeGroup(g *group) probeResult {
+	t.mu.Lock()
+	hosts := t.targetsLocked(g)
+	t.mu.Unlock()
 	res := probeResult{Relays: len(hosts), hosts: hosts}
 	var ok atomic.Int32
 	var wg sync.WaitGroup
-	for _, h := range hosts {
+	for _, hp := range hosts {
 		wg.Add(1)
-		go func(h string) {
+		go func() {
 			defer wg.Done()
 			ctx, cancel := context.WithTimeout(t.ctx, probeTimeout)
 			defer cancel()
-			t.mu.Lock()
-			port := t.relayPorts[h]
-			t.mu.Unlock()
-			if port == "" {
-				port = "443"
-			}
-			if t.probeTLS(ctx, net.JoinHostPort(h, port), h) == nil {
+			if t.probeHost(ctx, g, false, hp) == nil {
 				ok.Add(1)
 			}
-		}(h)
+		}()
 	}
 	wg.Wait()
 	res.RelayOK = int(ok.Load())
-	if res.Relays > 0 && res.RelayOK == 0 {
-		res.CanaryChecked = true
-		res.CanaryOK = t.probeCanaries()
-	}
 	return res
 }
 
@@ -630,36 +1010,35 @@ func (t *Tunnel) probeCanaries() bool {
 	return false
 }
 
-// confirmViaTunnel runs when the next "blocked" probe would switch to the
+// confirmViaTunnel runs when the next "blocked" probe would switch g to the
 // tunnel. If a live tunnel session can't reach the probe hosts either, they
 // are down rather than blocked, and the route stays. Without a live session
 // a failure proves nothing, and the switch goes ahead.
-func (t *Tunnel) confirmViaTunnel(res probeResult) probeResult {
+func (t *Tunnel) confirmViaTunnel(g *group, res probeResult) probeResult {
 	t.mu.Lock()
-	switching := t.mode == ModeAuto && t.route == RouteDirect &&
-		res.Relays > 0 && res.RelayOK == 0 && res.CanaryOK && t.failStreak+1 >= blockedAfter
+	gs := g
+	switching := t.mode == ModeAuto && gs.route == RouteDirect && !res.SmartOK &&
+		res.Relays > 0 && res.RelayOK == 0 && res.CanaryOK && gs.failStreak+1 >= blockedAfter
 	t.mu.Unlock()
-	if !switching || t.probeTunnel == nil || t.established == nil {
+	canProbe := t.probeTunnel != nil
+	if g.kind == kindTelegram {
+		canProbe = t.probeMTTunnel != nil
+	}
+	if !switching || !canProbe || t.established == nil {
 		return res
 	}
 	var ok atomic.Bool
 	var wg sync.WaitGroup
-	for _, h := range res.hosts {
+	for _, hp := range res.hosts {
 		wg.Add(1)
-		go func(h string) {
+		go func() {
 			defer wg.Done()
 			ctx, cancel := context.WithTimeout(t.ctx, tunnelProbeTimeout)
 			defer cancel()
-			t.mu.Lock()
-			port := t.relayPorts[h]
-			t.mu.Unlock()
-			if port == "" {
-				port = "443"
-			}
-			if t.probeTunnel(ctx, net.JoinHostPort(h, port), h) == nil {
+			if t.probeHost(ctx, g, true, hp) == nil {
 				ok.Store(true)
 			}
-		}(h)
+		}()
 	}
 	wg.Wait()
 	if ok.Load() || t.established() {
@@ -668,35 +1047,46 @@ func (t *Tunnel) confirmViaTunnel(res probeResult) probeResult {
 	return res
 }
 
-func (t *Tunnel) applyProbe(res probeResult) {
+func (t *Tunnel) applyProbe(g *group, res probeResult) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	t.lastProbe = time.Now()
-	t.lastResult = res
-	healthy := t.tunnelFails == 0 && (t.client == nil || t.client.Established())
-	route, fail, ok, state := decide(t.route, res, t.failStreak, t.okStreak, healthy)
-	if state != t.state {
+	gs := g
+	gs.lastProbe = time.Now()
+	gs.lastResult = res
+	healthy := gs.tunnelFails == 0 && (t.client == nil || t.client.Established())
+	route, fail, ok, state := decide(gs.route, res, gs.failStreak, gs.okStreak, healthy)
+	if g.kind == kindTelegram && route == RouteSmart {
+		route = RouteTunnel
+	}
+	if !t.usableLocked(g, route) { // no tunnel without a link, no smart without a strategy
+		route = RouteDirect
+	}
+	if state != gs.state {
 		via := ""
 		if res.CanaryChecked {
 			via = fmt.Sprintf(", canary ok=%v", res.CanaryOK)
 		}
+		if res.SmartChecked {
+			via += fmt.Sprintf(", smart ok=%v", res.SmartOK)
+		}
 		if res.TunnelChecked {
 			via += fmt.Sprintf(", via tunnel ok=%v", res.TunnelOK)
 		}
-		t.log.add("state %s -> %s (relays %d/%d ok%s)", t.state, state, res.RelayOK, res.Relays, via)
+		t.log.add("%s state %s -> %s (probe hosts %d/%d ok%s)", g.name, gs.state, state, res.RelayOK, res.Relays, via)
 	}
-	t.failStreak, t.okStreak, t.state = fail, ok, state
+	gs.failStreak, gs.okStreak, gs.state = fail, ok, state
 	if t.mode == ModeAuto {
-		t.setRouteLocked(route, state)
+		t.setRouteLocked(g, route, state)
 	}
 }
 
 // decide is the monitor's state machine, kept pure for tests.
 //   - any probe host answering directly means the network is open; leaving
 //     the tunnel takes recoveredAfter such probes, or one if it is failing;
-//   - every relay failing while the canary answers means "blocked", unless
-//     the relays fail through a live tunnel too: then they are down
-//     ("relays-down") and the route stays;
+//   - every relay failing while the canary answers means "blocked": the
+//     smart route if a strategy works, else the tunnel, unless the relays
+//     fail through a live tunnel too: then they are down ("relays-down")
+//     and the route stays;
 //   - everything failing means "offline": change nothing.
 func decide(route Route, res probeResult, failStreak, okStreak int, tunnelHealthy bool) (Route, int, int, string) {
 	switch {
@@ -704,18 +1094,23 @@ func decide(route Route, res probeResult, failStreak, okStreak int, tunnelHealth
 		return route, failStreak, okStreak, "unknown"
 	case res.RelayOK > 0:
 		okStreak++
-		// A working tunnel waits for recoveredAfter good probes (no
-		// flapping); a failing one is left after the first.
-		if route == RouteTunnel && (okStreak >= recoveredAfter || !tunnelHealthy) {
+		// Leaving smart or a working tunnel waits for recoveredAfter good
+		// probes (no flapping); a failing tunnel is left after the first.
+		if route != RouteDirect && (okStreak >= recoveredAfter || route == RouteTunnel && !tunnelHealthy) {
 			route = RouteDirect
 		}
 		return route, 0, okStreak, "direct"
 	case res.CanaryOK:
 		failStreak++
-		if route == RouteDirect && failStreak >= blockedAfter {
+		switch {
+		case res.SmartOK && (route != RouteDirect || failStreak >= blockedAfter || res.SmartKnown):
+			route = RouteSmart
+		case route == RouteDirect && failStreak >= blockedAfter:
 			if res.TunnelChecked && !res.TunnelOK {
 				return route, failStreak, 0, stateRelaysDown
 			}
+			route = RouteTunnel
+		case route == RouteSmart: // its strategy stopped working
 			route = RouteTunnel
 		}
 		return route, failStreak, 0, "blocked"
@@ -748,13 +1143,16 @@ func probeTLSVia(ctx context.Context, dial dialFunc, hostport, sni string) error
 		return err
 	}
 	defer c.Close()
-	return tls.Client(c, &tls.Config{ServerName: sni, MinVersion: tls.VersionTLS12}).HandshakeContext(ctx)
+	return tls.Client(c, &tls.Config{ServerName: sni, MinVersion: tls.VersionTLS12, RootCAs: probeRoots}).HandshakeContext(ctx)
 }
+
+// probeRoots verifies probe handshakes; nil means the system roots. Tests set it.
+var probeRoots *x509.CertPool
 
 func probeTLS(ctx context.Context, hostport, sni string) error {
 	d := &tls.Dialer{
 		NetDialer: &net.Dialer{Timeout: probeTimeout},
-		Config:    &tls.Config{ServerName: sni, MinVersion: tls.VersionTLS12},
+		Config:    &tls.Config{ServerName: sni, MinVersion: tls.VersionTLS12, RootCAs: probeRoots},
 	}
 	c, err := d.DialContext(ctx, "tcp", hostport)
 	if err != nil {
@@ -858,6 +1256,8 @@ type Status struct {
 	Zone       string                `json:"zone"`
 	Mode       string                `json:"mode"`
 	Route      string                `json:"route"`
+	Strategy   string                `json:"strategy,omitempty"` // the smart route's, when it works
+	Routes     []string              `json:"routes"`             // set-up routes, in fallback order
 	RouteSince time.Time             `json:"route_since"`
 	State      string                `json:"state"`
 	Resolvers  int                   `json:"resolvers"`
@@ -878,31 +1278,74 @@ type Status struct {
 	DNSEgress      string          `json:"dns_egress,omitempty"`
 	Paths          []soar.PathStat `json:"paths"`
 	Events         []Event         `json:"events"`
+	// Groups has each group's verdict, by relay host name or "telegram". The
+	// top-level route, state and last probe are the most recently used
+	// relay's; relays lists every relay group.
+	Groups map[string]GroupStatus `json:"groups"`
+}
+
+// GroupStatus is one group's part of Status.
+type GroupStatus struct {
+	Kind       string      `json:"kind"` // relay or telegram
+	Route      string      `json:"route"`
+	RouteSince time.Time   `json:"route_since"`
+	State      string      `json:"state"`
+	LastProbe  time.Time   `json:"last_probe"`
+	LastResult probeResult `json:"last_result"`
+	Targets    []string    `json:"targets"` // what the next probe checks
 }
 
 // Status returns a snapshot with the last n events.
 func (t *Tunnel) Status(n int) Status {
 	t.mu.Lock()
 	defer t.mu.Unlock()
+	// The top-level fields follow the most recently used relay.
+	mail := t.other
+	for _, g := range t.relays {
+		if mail == t.other || g.used.After(mail.used) {
+			mail = g
+		}
+	}
 	s := Status{
 		Zone:           t.cfg.Zone,
 		Mode:           t.mode,
-		Route:          t.route.String(),
-		RouteSince:     t.routeSince.UTC(),
-		State:          t.state,
+		Route:          mail.route.String(),
+		RouteSince:     mail.routeSince.UTC(),
+		State:          mail.state,
 		Resolvers:      len(t.resolvers),
 		Network:        t.cfg.SystemResolvers,
 		DNSIntercepted: t.intercepted,
 		DNSEgress:      t.dnsEgress,
 		Operator:       t.cfg.Operator,
-		LastProbe:      t.lastProbe.UTC(),
-		LastResult:     t.lastResult,
-		Active:         map[string]int{"direct": 0, "tunnel": 0},
-		Stats:          map[string]routeStats{"direct": t.routeStatsLocked(RouteDirect), "tunnel": t.routeStatsLocked(RouteTunnel)},
+		LastProbe:      mail.lastProbe.UTC(),
+		LastResult:     mail.lastResult,
+		Routes:         t.routes(),
+		Strategy:       t.strategyNameLocked(),
+		Active:         map[string]int{},
+		Stats:          map[string]routeStats{},
 		Soar:           SoarVersion(),
+		Groups:         map[string]GroupStatus{},
 	}
-	for h := range t.relays {
-		s.Relays = append(s.Relays, h)
+	for _, gs := range t.groupsLocked() {
+		if gs.kind == kindOther {
+			continue
+		}
+		s.Groups[gs.name] = GroupStatus{
+			Kind:       gs.kind.String(),
+			Route:      gs.route.String(),
+			RouteSince: gs.routeSince.UTC(),
+			State:      gs.state,
+			LastProbe:  gs.lastProbe.UTC(),
+			LastResult: gs.lastResult,
+			Targets:    append([]string{}, t.targetsLocked(gs)...),
+		}
+	}
+	for r := Route(0); r < numRoutes; r++ {
+		s.Active[r.String()] = 0
+		s.Stats[r.String()] = t.routeStatsLocked(r)
+	}
+	for name := range t.relays {
+		s.Relays = append(s.Relays, name)
 	}
 	sort.Strings(s.Relays)
 	for c := range t.conns {

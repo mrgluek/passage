@@ -34,7 +34,9 @@
 
     <string name="not_running">не запущен</string>
     <string name="proxy_not_running">Прокси не запущен.</string>
-    <string name="one_line">маршрут: %1$s · %2$s · туннель: %3$s</string>
+    <string name="one_line">%1$s · %2$s · туннель: %3$s</string>
+    <string name="group_mail">Почта: %1$s</string>
+    <string name="group_telegram">Telegram: %1$s</string>
     <string name="route_direct">напрямую</string>
     <string name="route_tunnel">туннель</string>
     <string name="session_up">есть</string>
@@ -69,9 +71,8 @@
     <string name="action_stop">Остановить прокси</string>
     <string name="proxy_running">Прокси работает</string>
     <string name="proxy_stopped">Прокси остановлен</string>
-    <string name="no_link">Добавьте полученную ссылку passage:// в настройках.</string>
+    <string name="no_link">Ссылки пока нет: Passage работает напрямую и с подстройкой. Ссылка добавит туннель для сетей, где больше ничего не проходит; её можно добавить в настройках.</string>
     <string name="open_settings">Открыть настройки</string>
-    <string name="need_link_first">Сначала добавьте ссылку в настройках</string>
     <string name="connect_label">Подключить приложение</string>
     <string name="connect_help">Скопируйте ссылку на прокси и вставьте её в настройки прокси приложения (Delta Chat, ArcaneChat: Настройки → Дополнительно → Прокси → Добавить прокси). Если приложение умеет добавлять прокси по ссылке, быстрее нажать «Открыть ссылку на прокси».</string>
     <string name="copy_proxy_link">Скопировать ссылку на прокси</string>
@@ -97,4 +98,24 @@
     <string name="no_app_for_link">На телефоне нет приложения, которое открывает ссылки на прокси. Скопируйте ссылку.</string>
     <string name="about_cert_copied">Имя пакета и сертификат скопированы</string>
     <string name="about_cert_help">Чтобы проверить этот APK, сверяйте его с отпечатком на странице проекта, а не с этой копией: изменённое приложение покажет свой.</string>
+    <string name="route_smart">напрямую (с подстройкой)</string>
+    <string name="status_smart">Напрямую (с подстройкой)</string>
+    <string name="about_licenses">Лицензии открытого ПО</string>
+    <string name="tunnel_no_link">нет ссылки</string>
+    <string name="status_no_tunnel">Туннель: нет ссылки (добавьте в настройках)</string>
+    <string name="notification_route">Маршрут: %1$s</string>
+    <string name="notification_state">%1$s · туннель: %2$s</string>
+    <string name="background_help">Passage должен работать и при выключенном экране. Иначе Android через какое-то время остановит его ради экономии заряда, и мессенджеры потеряют связь.</string>
+    <string name="background_allowed">Разрешено: Android не будет останавливать Passage ради экономии заряда.</string>
+    <string name="notifications_title">Уведомление во время работы</string>
+    <string name="notifications_why">Пока прокси работает, Passage держит уведомление в шторке: Android требует его от приложений, которые работают в фоне. В нём видно текущий маршрут и есть кнопка «Стоп».\n\nНа следующем экране разрешите Passage показывать уведомления.</string>
+    <string name="notifications_continue">Продолжить</string>
+    <string name="notifications_not_now">Не сейчас</string>
+    <string name="status_relays">Релеи:</string>
+    <string name="status_relay">"  %1$s: %2$s, %3$s"</string>
+    <string name="test_network">Проверить сеть</string>
+    <string name="testing_network">Проверяю каждый релей и способ, до 20 секунд…</string>
+    <string name="test_target">цель</string>
+    <string name="test_time">Проверка сети в %1$s</string>
+    <string name="share">Отправить</string>
 </resources>

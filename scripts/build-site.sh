@@ -56,6 +56,8 @@ rm -rf "$out"
 mkdir -p "$out/fdroid"
 cp -R "$work/repo" "$out/fdroid/repo"
 cp "$root/site/style.css" "$root/site/icon.svg" "$out/"
+# App Links: lets Android open https://passage.gluek.info/link#… in the app.
+cp -R "$root/site/.well-known" "$out/"
 python3 - "$repo_url?fingerprint=$fingerprint" "$out/fdroid/qr.svg" <<'EOF'
 import sys, qrcode, qrcode.image.svg
 qrcode.make(sys.argv[1], image_factory=qrcode.image.svg.SvgPathFillImage, border=1).save(sys.argv[2])
@@ -66,4 +68,7 @@ sed -e "s#{{VERSION}}#$version#g" \
   -e "s#{{REPO_LINK}}#fdroidrepos://${repo_url#https://}?fingerprint=$fingerprint#g" \
   -e "s#{{REPO_FINGERPRINT}}#$fingerprint#g" \
   "$root/site/index.html" > "$out/index.html"
+# Connection links are https://passage.gluek.info/link#…: the same page,
+# whose script offers to open the link in the app.
+cp "$out/index.html" "$out/link.html"
 echo "site in $out, repository fingerprint $fingerprint"

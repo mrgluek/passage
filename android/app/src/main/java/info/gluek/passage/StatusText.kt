@@ -11,9 +11,82 @@ import java.util.Locale
 object StatusText {
     fun oneLine(c: Context, s: JSONObject): String {
         if (!s.optBoolean("running")) return c.getString(R.string.not_running)
-        val session = c.getString(if (s.optBoolean("session")) R.string.session_up else R.string.session_down)
-        return c.getString(R.string.one_line, routeName(c, s.optString("route")), stateName(c, s.optString("state")), session)
+        return c.getString(R.string.one_line, routes(c, s), stateName(c, s.optString("state")), tunnelState(c, s))
     }
+
+    /** Notification title and text: the routes, then the network and the tunnel. */
+    fun notification(c: Context, s: JSONObject): Pair<String, String> {
+        if (!s.optBoolean("running")) return c.getString(R.string.app_name) to c.getString(R.string.not_running)
+        return routes(c, s) to
+            c.getString(R.string.notification_state, stateName(c, s.optString("state")), tunnelState(c, s))
+    }
+
+    /**
+     * The routes in one line: "Route: direct" until relays have been seen,
+     * then "Mail: direct" (or "Mail: direct (2), tunnel (1)" when relays
+     * differ), plus "Telegram: tunnel" once Telegram has been used.
+     */
+    private fun routes(c: Context, s: JSONObject): String {
+        val groups = s.optJSONObject("groups") ?: JSONObject()
+        val counts = linkedMapOf<String, Int>()
+        for (route in listOf("direct", "smart", "tunnel")) {
+            val n = relays(groups).count { it.second.optString("route") == route }
+            if (n > 0) counts[route] = n
+        }
+        val telegram = groups.optJSONObject("telegram")?.takeIf { (it.optJSONArray("targets")?.length() ?: 0) > 0 }
+        if (counts.isEmpty() && telegram == null) {
+            return c.getString(R.string.notification_route, routeName(c, s.optString("route")))
+        }
+        val parts = mutableListOf<String>()
+        if (counts.isNotEmpty()) {
+            val mail = if (counts.size == 1) routeName(c, counts.keys.first())
+            else counts.entries.joinToString(", ") { "${routeName(c, it.key)} (${it.value})" }
+            parts += c.getString(R.string.group_mail, mail)
+        }
+        if (telegram != null) parts += c.getString(R.string.group_telegram, routeName(c, telegram.optString("route")))
+        return parts.joinToString(" · ")
+    }
+
+    /** The relay groups (host name, status), sorted by name. */
+    private fun relays(groups: JSONObject): List<Pair<String, JSONObject>> =
+        groups.keys().asSequence()
+            .mapNotNull { name -> groups.optJSONObject(name)?.takeIf { it.optString("kind") == "relay" }?.let { name to it } }
+            .sortedBy { it.first }
+            .toList()
+
+    /** The network test (tunnel.Diagnosis) as a table: one row per target. */
+    fun diagnosis(c: Context, d: JSONObject): String {
+        d.optString("error").takeIf { it.isNotEmpty() }?.let { return it }
+        val ways = d.optJSONArray("ways") ?: JSONArray()
+        val head = listOf(c.getString(R.string.test_target)) + (0 until ways.length()).map { ways.optString(it) }
+        val rows = mutableListOf(head)
+        val list = d.optJSONArray("rows") ?: JSONArray()
+        for (i in 0 until list.length()) {
+            val r = list.getJSONObject(i)
+            val res = r.optJSONArray("results") ?: JSONArray()
+            rows += listOf(r.optString("target").take(32)) + (0 until res.length()).map { j ->
+                val x = res.getJSONObject(j)
+                when {
+                    x.optBoolean("skip") -> "-"
+                    x.optBoolean("ok") -> "ok ${x.optLong("ms")}ms"
+                    else -> x.optString("error", "fail")
+                }
+            }
+        }
+        val widths = head.indices.map { col -> rows.maxOf { it.getOrElse(col) { "" }.length } }
+        val sb = StringBuilder(c.getString(R.string.test_time, clock(d.optString("time")))).append("\n\n")
+        for (row in rows) {
+            sb.append(row.mapIndexed { col, cell -> cell.padEnd(widths[col]) }.joinToString("  ").trimEnd()).append('\n')
+        }
+        return sb.toString()
+    }
+
+    /** up / down, or "no link" when the router runs without a tunnel. */
+    private fun tunnelState(c: Context, s: JSONObject): String = c.getString(when {
+        s.optString("zone").isEmpty() -> R.string.tunnel_no_link
+        s.optBoolean("session") -> R.string.session_up
+        else -> R.string.session_down
+    })
 
     fun full(c: Context, s: JSONObject): String {
         if (!s.optBoolean("running")) return c.getString(R.string.proxy_not_running)
@@ -33,11 +106,23 @@ object StatusText {
             sb.append(c.getString(R.string.status_last_check, clock(probe), r.optInt("relay_ok"), r.optInt("relays"), canary))
                 .append('\n')
         }
-        sb.append(c.getString(R.string.status_probe_hosts,
-            list(s.optJSONArray("relays")).ifEmpty { c.getString(R.string.none_yet) })).append('\n')
-        val session = c.getString(if (s.optBoolean("session")) R.string.session_up else R.string.session_down)
-        sb.append(c.getString(R.string.status_session, session, s.optInt("resolvers"),
-            s.optString("operator").ifEmpty { "?" })).append('\n')
+        val relays = relays(s.optJSONObject("groups") ?: JSONObject())
+        if (relays.isEmpty()) {
+            sb.append(c.getString(R.string.status_probe_hosts, c.getString(R.string.none_yet))).append('\n')
+        } else {
+            sb.append(c.getString(R.string.status_relays)).append('\n')
+            for ((name, g) in relays) {
+                sb.append(c.getString(R.string.status_relay, name, routeName(c, g.optString("route")),
+                    stateName(c, g.optString("state")))).append('\n')
+            }
+        }
+        if (s.optString("zone").isEmpty()) {
+            sb.append(c.getString(R.string.status_no_tunnel)).append('\n')
+        } else {
+            val session = c.getString(if (s.optBoolean("session")) R.string.session_up else R.string.session_down)
+            sb.append(c.getString(R.string.status_session, session, s.optInt("resolvers"),
+                s.optString("operator").ifEmpty { "?" })).append('\n')
+        }
         sb.append(c.getString(R.string.status_network_resolvers,
             list(s.optJSONArray("network_resolvers")).ifEmpty { c.getString(R.string.none) })).append('\n')
         if (s.optBoolean("dns_intercepted")) {
@@ -46,9 +131,11 @@ object StatusText {
                 else c.getString(R.string.status_intercepted)).append('\n')
         }
         val active = s.optJSONObject("active") ?: JSONObject()
-        sb.append(c.getString(R.string.status_open_conns, active.optInt("direct"), active.optInt("tunnel"))).append('\n')
+        sb.append(c.getString(R.string.status_open_conns, active.optInt("direct") + active.optInt("smart"), active.optInt("tunnel"))).append('\n')
         val stats = s.optJSONObject("stats") ?: JSONObject()
-        for ((route, label) in listOf("direct" to R.string.status_direct, "tunnel" to R.string.status_tunnel)) {
+        for ((route, label) in listOf(
+            "direct" to R.string.status_direct, "smart" to R.string.status_smart, "tunnel" to R.string.status_tunnel,
+        )) {
             val r = stats.optJSONObject(route) ?: continue
             sb.append(c.getString(R.string.status_route_stats, c.getString(label), r.optLong("conns"), r.optLong("fails"),
                 bytes(r.optLong("up")), bytes(r.optLong("down")))).append('\n')
@@ -129,6 +216,7 @@ object StatusText {
     private fun routeName(c: Context, route: String): String = when (route) {
         "direct" -> c.getString(R.string.route_direct)
         "tunnel" -> c.getString(R.string.route_tunnel)
+        "smart" -> c.getString(R.string.route_smart)
         else -> route
     }
 

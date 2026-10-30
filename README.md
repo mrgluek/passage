@@ -14,10 +14,15 @@ Website: <https://passage.gluek.info>
    [Releases](https://github.com/mrgluek/passage/releases) (`arm64` for most
    phones, `armv7` for older 32-bit ones, `universal` if unsure) and check it
    against `SHA256SUMS`.
-2. Open the `passage://` link you received, or paste it in Settings, and tap
-   the start button. Allow notifications and running in the background.
+2. Tap the start button. Allow notifications and running in the background.
+   If you received a link (`https://passage.gluek.info/link#…` or
+   `passage://…`), open it or paste it in Settings: it adds a tunnel for
+   networks where nothing else gets through. Passage works without one too.
 3. Tap **Copy proxy link** and paste it into the proxy settings of the other
    app, or tap **Open proxy link** if the app adds proxies from links.
+
+If something doesn't connect, **Test network** in the menu shows what works on
+the current network; **Share** sends the result.
 
 ### Verify the APK
 

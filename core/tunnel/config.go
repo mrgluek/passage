@@ -73,10 +73,22 @@ type Config struct {
 	// SafeQName is the query-name length every resolver path starts at; soar
 	// grows it to the 253 maximum. 0 = soarSafeQName; 101 = soar's default.
 	SafeQName int `json:"safe_qname,omitempty"`
+	// StateFile keeps what the router learned across restarts (the smart
+	// route's strategy per network), in the app's private storage.
+	StateFile string `json:"state_file,omitempty"`
 }
 
+// LinkHost and LinkPath give the web form of links:
+// https://passage.gluek.info/link#<fields>. The fields after # never reach
+// the server; a path of its own keeps the site's other pages in the browser.
+const (
+	LinkHost = "passage.gluek.info"
+	LinkPath = "/link"
+)
+
 // ParseLink parses passage://tunnel?v=1&zone=<zone>&key=<base64>[&r=<ip:port,…>][&c=<host:port,…>].
-// The older velta://tunnel form with the same fields is accepted too.
+// The web form https://passage.gluek.info/link#v=1&zone=… and the older
+// velta://tunnel form carry the same fields.
 // r adds resolvers to the defaults; c replaces the default canaries.
 // The key may be standard or URL-safe base64, padded or not.
 func ParseLink(link string) (Config, error) {
@@ -84,11 +96,19 @@ func ParseLink(link string) (Config, error) {
 	if err != nil {
 		return Config{}, fmt.Errorf("bad link: %w", err)
 	}
-	scheme := strings.ToLower(u.Scheme)
-	if scheme != "passage" && scheme != "velta" || !strings.EqualFold(u.Host, "tunnel") {
+	var raw string
+	switch scheme := strings.ToLower(u.Scheme); {
+	case (scheme == "passage" || scheme == "velta") && strings.EqualFold(u.Host, "tunnel"):
+		raw = u.RawQuery
+	case scheme == "https" && strings.EqualFold(u.Host, LinkHost) && strings.TrimSuffix(u.Path, "/") == LinkPath:
+		raw = u.EscapedFragment()
+	default:
 		return Config{}, errors.New("not a passage://tunnel link")
 	}
-	q := u.Query()
+	q, err := url.ParseQuery(raw)
+	if err != nil {
+		return Config{}, fmt.Errorf("bad link: %w", err)
+	}
 	if v := q.Get("v"); v != "" && v != "1" {
 		return Config{}, fmt.Errorf("unsupported link version %q", v)
 	}
@@ -114,14 +134,17 @@ func ParseLink(link string) (Config, error) {
 // Normalize validates the config and fills defaults.
 func (c Config) Normalize() (Config, error) {
 	c.Zone = strings.TrimSuffix(strings.ToLower(strings.TrimSpace(c.Zone)), ".")
-	if err := checkZone(c.Zone); err != nil {
-		return Config{}, err
+	// Without a zone and key (no link yet) the router runs without the tunnel.
+	if c.Zone != "" || strings.TrimSpace(c.Key) != "" {
+		if err := checkZone(c.Zone); err != nil {
+			return Config{}, err
+		}
+		key, err := decodeKey(c.Key)
+		if err != nil {
+			return Config{}, err
+		}
+		c.Key = base64.StdEncoding.EncodeToString(key)
 	}
-	key, err := decodeKey(c.Key)
-	if err != nil {
-		return Config{}, err
-	}
-	c.Key = base64.StdEncoding.EncodeToString(key)
 
 	var rs []string
 	seen := map[string]bool{}
@@ -174,11 +197,17 @@ func (c Config) Normalize() (Config, error) {
 	default:
 		return Config{}, fmt.Errorf("unknown mode %q", c.Mode)
 	}
+	if c.Mode == ModeAlways && !c.HasTunnel() {
+		c.Mode = ModeAuto
+	}
 	if c.Listen == "" {
 		c.Listen = "127.0.0.1:0"
 	}
 	return c, nil
 }
+
+// HasTunnel reports whether the config carries a tunnel (a link was given).
+func (c Config) HasTunnel() bool { return c.Zone != "" }
 
 // Effective is the resolver list the tunnel uses: the network's resolvers,
 // then the SIM operator's known resolvers, then the link's extra resolvers,
@@ -242,7 +271,9 @@ func checkZone(z string) error {
 }
 
 func decodeKey(s string) ([]byte, error) {
-	s = strings.TrimSpace(s)
+	// A '+' of standard base64 arrives as a space after query unescaping, so
+	// spaces become '+' again and only line breaks and tabs are trimmed.
+	s = strings.ReplaceAll(strings.Trim(s, "\t\r\n"), " ", "+")
 	for _, enc := range []*base64.Encoding{base64.StdEncoding, base64.RawStdEncoding, base64.URLEncoding, base64.RawURLEncoding} {
 		if b, err := enc.DecodeString(s); err == nil {
 			if len(b) != 32 {
