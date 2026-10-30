@@ -866,3 +866,34 @@ func TestStrategyIsRememberedPerNetwork(t *testing.T) {
 		t.Fatalf("another network starts without one, got %q", s.Strategy)
 	}
 }
+
+func TestParseWebLink(t *testing.T) {
+	// A key with '+' and '/' in standard base64, unescaped as people paste it.
+	key := base64.StdEncoding.EncodeToString(bytes.Repeat([]byte{0xfb, 0xef}, 16))
+	if !strings.ContainsAny(key, "+/") {
+		t.Fatal("test key must contain + or /")
+	}
+	want := base64.StdEncoding.EncodeToString(bytes.Repeat([]byte{0xfb, 0xef}, 16))
+	for _, link := range []string{
+		"https://passage.gluek.info/#v=1&zone=t.example.org&key=" + key + "&r=192.0.2.1,192.0.2.2",
+		"https://passage.gluek.info#v=1&zone=t.example.org&key=" + key + "&r=192.0.2.1,192.0.2.2",
+		"passage://tunnel?v=1&zone=t.example.org&key=" + key + "&r=192.0.2.1,192.0.2.2",
+	} {
+		cfg, err := ParseLink(link)
+		if err != nil {
+			t.Fatalf("%s: %v", link, err)
+		}
+		if cfg.Zone != "t.example.org" || cfg.Key != want || strings.Join(cfg.Resolvers, ",") != "192.0.2.1:53,192.0.2.2:53" {
+			t.Errorf("%s: %+v", link, cfg)
+		}
+	}
+	for _, bad := range []string{
+		"https://example.org/#v=1&zone=t.example.org&key=" + key,
+		"https://passage.gluek.info/other#v=1&zone=t.example.org&key=" + key,
+		"http://passage.gluek.info/#v=1&zone=t.example.org&key=" + key,
+	} {
+		if _, err := ParseLink(bad); err == nil {
+			t.Errorf("accepted %q", bad)
+		}
+	}
+}

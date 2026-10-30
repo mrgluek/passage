@@ -75,8 +75,13 @@ type Config struct {
 	SafeQName int `json:"safe_qname,omitempty"`
 }
 
+// LinkHost serves the web form of links: https://LinkHost/#<fields>. The
+// fields after # never reach the server.
+const LinkHost = "passage.gluek.info"
+
 // ParseLink parses passage://tunnel?v=1&zone=<zone>&key=<base64>[&r=<ip:port,…>][&c=<host:port,…>].
-// The older velta://tunnel form with the same fields is accepted too.
+// The web form https://passage.gluek.info/#v=1&zone=… and the older
+// velta://tunnel form carry the same fields.
 // r adds resolvers to the defaults; c replaces the default canaries.
 // The key may be standard or URL-safe base64, padded or not.
 func ParseLink(link string) (Config, error) {
@@ -84,11 +89,19 @@ func ParseLink(link string) (Config, error) {
 	if err != nil {
 		return Config{}, fmt.Errorf("bad link: %w", err)
 	}
-	scheme := strings.ToLower(u.Scheme)
-	if scheme != "passage" && scheme != "velta" || !strings.EqualFold(u.Host, "tunnel") {
+	var raw string
+	switch scheme := strings.ToLower(u.Scheme); {
+	case (scheme == "passage" || scheme == "velta") && strings.EqualFold(u.Host, "tunnel"):
+		raw = u.RawQuery
+	case scheme == "https" && strings.EqualFold(u.Host, LinkHost) && (u.Path == "" || u.Path == "/"):
+		raw = u.EscapedFragment()
+	default:
 		return Config{}, errors.New("not a passage://tunnel link")
 	}
-	q := u.Query()
+	q, err := url.ParseQuery(raw)
+	if err != nil {
+		return Config{}, fmt.Errorf("bad link: %w", err)
+	}
 	if v := q.Get("v"); v != "" && v != "1" {
 		return Config{}, fmt.Errorf("unsupported link version %q", v)
 	}
@@ -242,7 +255,9 @@ func checkZone(z string) error {
 }
 
 func decodeKey(s string) ([]byte, error) {
-	s = strings.TrimSpace(s)
+	// A '+' of standard base64 arrives as a space after query unescaping, so
+	// spaces become '+' again and only line breaks and tabs are trimmed.
+	s = strings.ReplaceAll(strings.Trim(s, "\t\r\n"), " ", "+")
 	for _, enc := range []*base64.Encoding{base64.StdEncoding, base64.RawStdEncoding, base64.URLEncoding, base64.RawURLEncoding} {
 		if b, err := enc.DecodeString(s); err == nil {
 			if len(b) != 32 {

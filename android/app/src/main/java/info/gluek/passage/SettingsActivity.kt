@@ -79,9 +79,11 @@ class SettingsActivity : Activity() {
         return super.onOptionsItemSelected(item)
     }
 
-    /** A tapped passage:// link goes into the field; Save stores it. */
+    /** A tapped passage:// or https://passage.gluek.info/#… link goes into the field; Save stores it. */
     private fun takeLink(intent: Intent?) {
-        val link = intent?.takeIf { it.action == Intent.ACTION_VIEW }?.dataString ?: return
+        val data = intent?.takeIf { it.action == Intent.ACTION_VIEW }?.data ?: return
+        if (data.scheme == "https" && data.encodedFragment.isNullOrEmpty()) return // the site itself, no link
+        val link = data.toString()
         setIntent(Intent(this, SettingsActivity::class.java))
         linkEdit.setText(link)
         setLinkOpen(true)

@@ -56,6 +56,8 @@ rm -rf "$out"
 mkdir -p "$out/fdroid"
 cp -R "$work/repo" "$out/fdroid/repo"
 cp "$root/site/style.css" "$root/site/icon.svg" "$out/"
+# App Links: lets Android open https://passage.gluek.info/#… in the app.
+cp -R "$root/site/.well-known" "$out/"
 python3 - "$repo_url?fingerprint=$fingerprint" "$out/fdroid/qr.svg" <<'EOF'
 import sys, qrcode, qrcode.image.svg
 qrcode.make(sys.argv[1], image_factory=qrcode.image.svg.SvgPathFillImage, border=1).save(sys.argv[2])
