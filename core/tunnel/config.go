@@ -75,12 +75,16 @@ type Config struct {
 	SafeQName int `json:"safe_qname,omitempty"`
 }
 
-// LinkHost serves the web form of links: https://LinkHost/#<fields>. The
-// fields after # never reach the server.
-const LinkHost = "passage.gluek.info"
+// LinkHost and LinkPath give the web form of links:
+// https://passage.gluek.info/link#<fields>. The fields after # never reach
+// the server; a path of its own keeps the site's other pages in the browser.
+const (
+	LinkHost = "passage.gluek.info"
+	LinkPath = "/link"
+)
 
 // ParseLink parses passage://tunnel?v=1&zone=<zone>&key=<base64>[&r=<ip:port,…>][&c=<host:port,…>].
-// The web form https://passage.gluek.info/#v=1&zone=… and the older
+// The web form https://passage.gluek.info/link#v=1&zone=… and the older
 // velta://tunnel form carry the same fields.
 // r adds resolvers to the defaults; c replaces the default canaries.
 // The key may be standard or URL-safe base64, padded or not.
@@ -93,7 +97,7 @@ func ParseLink(link string) (Config, error) {
 	switch scheme := strings.ToLower(u.Scheme); {
 	case (scheme == "passage" || scheme == "velta") && strings.EqualFold(u.Host, "tunnel"):
 		raw = u.RawQuery
-	case scheme == "https" && strings.EqualFold(u.Host, LinkHost) && (u.Path == "" || u.Path == "/"):
+	case scheme == "https" && strings.EqualFold(u.Host, LinkHost) && strings.TrimSuffix(u.Path, "/") == LinkPath:
 		raw = u.EscapedFragment()
 	default:
 		return Config{}, errors.New("not a passage://tunnel link")

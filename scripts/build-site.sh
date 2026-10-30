@@ -68,4 +68,7 @@ sed -e "s#{{VERSION}}#$version#g" \
   -e "s#{{REPO_LINK}}#fdroidrepos://${repo_url#https://}?fingerprint=$fingerprint#g" \
   -e "s#{{REPO_FINGERPRINT}}#$fingerprint#g" \
   "$root/site/index.html" > "$out/index.html"
+# Connection links are https://passage.gluek.info/link#…: the same page,
+# whose script offers to open the link in the app.
+cp "$out/index.html" "$out/link.html"
 echo "site in $out, repository fingerprint $fingerprint"

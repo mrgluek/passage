@@ -41,13 +41,14 @@
                 <category android:name="android.intent.category.BROWSABLE" />
                 <data android:scheme="passage" android:host="tunnel" />
             </intent-filter>
-            <!-- The web form https://passage.gluek.info/#v=1&zone=…, verified
-                 through the site's .well-known/assetlinks.json. -->
+            <!-- The web form https://passage.gluek.info/link#v=1&zone=…, verified
+                 through the site's .well-known/assetlinks.json. Only /link, so
+                 the site's own pages keep opening in the browser. -->
             <intent-filter android:autoVerify="true">
                 <action android:name="android.intent.action.VIEW" />
                 <category android:name="android.intent.category.DEFAULT" />
                 <category android:name="android.intent.category.BROWSABLE" />
-                <data android:scheme="https" android:host="passage.gluek.info" android:path="/" />
+                <data android:scheme="https" android:host="passage.gluek.info" android:path="/link" />
             </intent-filter>
         </activity>
 

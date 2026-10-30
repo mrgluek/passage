@@ -875,8 +875,8 @@ func TestParseWebLink(t *testing.T) {
 	}
 	want := base64.StdEncoding.EncodeToString(bytes.Repeat([]byte{0xfb, 0xef}, 16))
 	for _, link := range []string{
-		"https://passage.gluek.info/#v=1&zone=t.example.org&key=" + key + "&r=192.0.2.1,192.0.2.2",
-		"https://passage.gluek.info#v=1&zone=t.example.org&key=" + key + "&r=192.0.2.1,192.0.2.2",
+		"https://passage.gluek.info/link#v=1&zone=t.example.org&key=" + key + "&r=192.0.2.1,192.0.2.2",
+		"https://passage.gluek.info/link/#v=1&zone=t.example.org&key=" + key + "&r=192.0.2.1,192.0.2.2",
 		"passage://tunnel?v=1&zone=t.example.org&key=" + key + "&r=192.0.2.1,192.0.2.2",
 	} {
 		cfg, err := ParseLink(link)
@@ -888,9 +888,10 @@ func TestParseWebLink(t *testing.T) {
 		}
 	}
 	for _, bad := range []string{
-		"https://example.org/#v=1&zone=t.example.org&key=" + key,
+		"https://example.org/link#v=1&zone=t.example.org&key=" + key,
+		"https://passage.gluek.info/#v=1&zone=t.example.org&key=" + key,
 		"https://passage.gluek.info/other#v=1&zone=t.example.org&key=" + key,
-		"http://passage.gluek.info/#v=1&zone=t.example.org&key=" + key,
+		"http://passage.gluek.info/link#v=1&zone=t.example.org&key=" + key,
 	} {
 		if _, err := ParseLink(bad); err == nil {
 			t.Errorf("accepted %q", bad)
