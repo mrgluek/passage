@@ -112,4 +112,6 @@
     <string name="notifications_why">While the proxy runs, Passage keeps a notification in the status bar: Android requires it for apps working in the background. It shows the current route and has a Stop button.\n\nOn the next screen, allow notifications for Passage.</string>
     <string name="notifications_continue">Continue</string>
     <string name="notifications_not_now">Not now</string>
+    <string name="status_relays">Relays:</string>
+    <string name="status_relay">"  %1$s: %2$s, %3$s"</string>
 </resources>

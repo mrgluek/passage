@@ -111,4 +111,6 @@
     <string name="notifications_why">Пока прокси работает, Passage держит уведомление в шторке: Android требует его от приложений, которые работают в фоне. В нём видно текущий маршрут и есть кнопка «Стоп».\n\nНа следующем экране разрешите Passage показывать уведомления.</string>
     <string name="notifications_continue">Продолжить</string>
     <string name="notifications_not_now">Не сейчас</string>
+    <string name="status_relays">Релеи:</string>
+    <string name="status_relay">"  %1$s: %2$s, %3$s"</string>
 </resources>

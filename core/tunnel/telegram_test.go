@@ -15,25 +15,25 @@ import (
 )
 
 func TestTelegramClassification(t *testing.T) {
-	for addr, want := range map[string]Group{
-		"149.154.167.41:443":           GroupTelegram,
-		"91.108.56.191:5222":           GroupTelegram,
-		"185.76.151.7:80":              GroupTelegram,
-		"[2001:67c:4e8:f002::a]:443":   GroupTelegram,
-		"[2a0a:f280:1::1]:443":         GroupTelegram,
-		"[::ffff:149.154.175.100]:443": GroupTelegram,
-		"192.0.2.1:443":                GroupMail,
-		"149.154.176.1:443":            GroupMail, // just past 149.154.160.0/20
-		"[2001:db8::1]:993":            GroupMail,
-		"[2001:67c:4e9::1]:443":        GroupMail,
-		"relay.example.org:993":        GroupMail,
+	for addr, want := range map[string]groupKind{
+		"149.154.167.41:443":           kindTelegram,
+		"91.108.56.191:5222":           kindTelegram,
+		"185.76.151.7:80":              kindTelegram,
+		"[2001:67c:4e8:f002::a]:443":   kindTelegram,
+		"[2a0a:f280:1::1]:443":         kindTelegram,
+		"[::ffff:149.154.175.100]:443": kindTelegram,
+		"192.0.2.1:443":                kindOther,
+		"149.154.176.1:443":            kindOther, // just past 149.154.160.0/20
+		"[2001:db8::1]:993":            kindOther,
+		"[2001:67c:4e9::1]:443":        kindOther,
+		"relay.example.org:993":        kindRelay,
 	} {
-		if got := groupOf(addr); got != want {
+		if got := kindOf(addr); got != want {
 			t.Errorf("%s: %s, want %s", addr, got, want)
 		}
 	}
 	for _, dc := range telegramDCs {
-		if groupOf(dc) != GroupTelegram {
+		if kindOf(dc) != kindTelegram {
 			t.Errorf("DC %s outside the Telegram ranges", dc)
 		}
 	}
@@ -131,8 +131,8 @@ func TestMTProtoProbe(t *testing.T) {
 func groupsTunnel(t *testing.T, direct dialFunc) (*Tunnel, *atomic.Bool) {
 	var n atomic.Int32
 	tt := newTestTunnel(t, ModeAuto, direct, echoDialer("T:", &n))
-	tt.learn(GroupMail, "relay.example.org:993")
-	tt.learn(GroupTelegram, "149.154.167.50:443")
+	tt.testGroup("relay.example.org:993")
+	tt.testGroup("149.154.167.50:443")
 	var mailOK atomic.Bool
 	mailOK.Store(true)
 	tt.probeTLS = func(_ context.Context, hostport, _ string) error {
@@ -152,7 +152,7 @@ func TestTelegramBlockedKeepsMailDirect(t *testing.T) {
 		tt.check()
 	}
 	s := tt.Status(0)
-	mail, tg := s.Groups["mail"], s.Groups["telegram"]
+	mail, tg := s.Groups["relay.example.org"], s.Groups["telegram"]
 	if s.Route != "direct" || mail.Route != "direct" || mail.State != "direct" {
 		t.Fatalf("mail must stay direct: %s / %+v", s.Route, mail)
 	}
@@ -183,17 +183,17 @@ func TestTelegramNeverUsesSmart(t *testing.T) {
 	tt, _ := groupsTunnel(t, echoDialer("D:", &n))
 	tt.mu.Lock()
 	tt.ways[RouteSmart] = way{echoDialer("S:", &n), time.Second}
-	if r := tt.nextRouteLocked(GroupTelegram, RouteDirect); r != RouteTunnel {
+	if r := tt.nextRouteLocked(tt.telegram, RouteDirect); r != RouteTunnel {
 		t.Errorf("telegram falls through to %s", r)
 	}
-	if r := tt.nextRouteLocked(GroupMail, RouteDirect); r != RouteSmart {
+	if r := tt.nextRouteLocked(tt.relays["relay.example.org"], RouteDirect); r != RouteSmart {
 		t.Errorf("mail falls through to %s", r)
 	}
 	tt.mu.Unlock()
 	works := probeResult{Relays: 5, CanaryOK: true, CanaryChecked: true, SmartChecked: true, SmartOK: true, SmartKnown: true}
 	for range blockedAfter {
-		tt.applyProbe(GroupMail, works)
-		tt.applyProbe(GroupTelegram, works)
+		tt.applyProbe(tt.relays["relay.example.org"], works)
+		tt.applyProbe(tt.telegram, works)
 	}
 	s := tt.Status(0)
 	if s.Route != "smart" || s.Groups["telegram"].Route != "tunnel" {
@@ -227,12 +227,12 @@ func TestGroupSwitchClosesOnlyItsConnections(t *testing.T) {
 		t.Fatalf("the mail connection must stay open: %v", err)
 	}
 	tt.mu.Lock()
-	routes := map[Group]Route{}
+	routes := map[*group]Route{}
 	for c := range tt.conns {
 		routes[c.group] = c.route
 	}
 	tt.mu.Unlock()
-	if len(routes) != 1 || routes[GroupMail] != RouteDirect {
+	if len(routes) != 1 || routes[tt.relays["relay.example.org"]] != RouteDirect {
 		t.Fatalf("open connections: %v", routes)
 	}
 }
@@ -264,20 +264,20 @@ func TestTelegramTargets(t *testing.T) {
 	var n atomic.Int32
 	tt := newTestTunnel(t, ModeAuto, echoDialer("D:", &n), nil)
 	tt.mu.Lock()
-	if got := tt.targetsLocked(GroupTelegram); got != nil {
+	if got := tt.targetsLocked(tt.telegram); got != nil {
 		t.Errorf("unused group has targets %v", got)
 	}
 	tt.mu.Unlock()
-	if res := tt.probe(); res[GroupTelegram].Relays != 0 {
-		t.Errorf("unused group was probed: %+v", res[GroupTelegram])
+	if res := tt.probe(); res[tt.telegram].Relays != 0 {
+		t.Errorf("unused group was probed: %+v", res[tt.telegram])
 	}
 	for i := range maxTelegramHosts + 4 {
-		tt.learn(GroupTelegram, net.JoinHostPort(net.IPv4(149, 154, 164, byte(i)).String(), "443"))
+		tt.learn(tt.telegram, net.JoinHostPort(net.IPv4(149, 154, 164, byte(i)).String(), "443"))
 	}
-	tt.learn(GroupTelegram, telegramDCs[1])
+	tt.learn(tt.telegram, telegramDCs[1])
 	tt.mu.Lock()
-	got := tt.targetsLocked(GroupTelegram)
-	kept := len(tt.groups[GroupTelegram].hosts)
+	got := tt.targetsLocked(tt.telegram)
+	kept := len(tt.telegram.hosts)
 	tt.mu.Unlock()
 	if len(got) != maxProbedRelays+len(telegramDCs) || got[0] != "149.154.164.35:443" || kept != maxTelegramHosts {
 		t.Fatalf("targets %v, %d hosts kept", got, kept)
@@ -309,8 +309,8 @@ func TestStatusHasGroups(t *testing.T) {
 	if err := json.Unmarshal(b, &s); err != nil {
 		t.Fatal(err)
 	}
-	if s.Route != "direct" || s.Groups["mail"].Route != "direct" || s.Groups["telegram"].Route != "tunnel" ||
-		s.Groups["telegram"].LastResult["relays"] == nil || len(s.Groups["mail"].Targets) != 1 {
+	if s.Route != "direct" || s.Groups["relay.example.org"].Route != "direct" || s.Groups["telegram"].Route != "tunnel" ||
+		s.Groups["telegram"].LastResult["relays"] == nil || len(s.Groups["relay.example.org"].Targets) != 1 {
 		t.Fatalf("status JSON: %s", b)
 	}
 }

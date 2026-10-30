@@ -113,7 +113,9 @@ func newTestTunnel(t *testing.T, mode string, direct, tun dialFunc) *Tunnel {
 		t.Fatal(err)
 	}
 	tt := &Tunnel{cfg: cfg, log: newEventLog(100), kick: make(chan struct{}, 1), mode: mode,
-		conns: map[*tracked]struct{}{}, groups: newGroups(),
+		conns: map[*tracked]struct{}{}, relays: map[string]*group{},
+		telegram: newGroup("telegram", kindTelegram, initialRoute(mode)),
+		other:    newGroup("other", kindOther, initialRoute(mode)),
 		ways:     [numRoutes]way{RouteDirect: {direct, time.Second}, RouteTunnel: {tun, time.Second}},
 		probeTLS: func(context.Context, string, string) error { return errors.New("no probes in tests") },
 		probeMT:  func(context.Context, string) error { return errors.New("no probes in tests") }}
@@ -123,9 +125,6 @@ func newTestTunnel(t *testing.T, mode string, direct, tun dialFunc) *Tunnel {
 		t.Fatal(err)
 	}
 	tt.ln = ln
-	for g := range numGroups {
-		tt.setRouteLocked(g, initialRoute(mode), "start")
-	}
 	tt.wg.Add(1)
 	go tt.serve()
 	t.Cleanup(tt.Close)
@@ -295,9 +294,7 @@ func TestEventLogRing(t *testing.T) {
 func TestAnyCanaryMeansBlocked(t *testing.T) {
 	var n atomic.Int32
 	tt := newTestTunnel(t, ModeAuto, echoDialer("D:", &n), echoDialer("T:", &n))
-	tt.mu.Lock()
-	tt.groups[GroupMail].hosts["relay.example.org"] = time.Now()
-	tt.mu.Unlock()
+	mail := tt.testGroup("relay.example.org:443")
 	// Relays fail, only the last default canary answers.
 	last := DefaultCanaries[len(DefaultCanaries)-1]
 	tt.probeTLS = func(_ context.Context, hostport, _ string) error {
@@ -306,11 +303,11 @@ func TestAnyCanaryMeansBlocked(t *testing.T) {
 		}
 		return errors.New("refused")
 	}
-	if res := tt.probe()[GroupMail]; res.Relays != 1 || res.RelayOK != 0 || !res.CanaryOK {
+	if res := tt.probe()[mail]; res.Relays != 1 || res.RelayOK != 0 || !res.CanaryOK {
 		t.Fatalf("one canary answering must count: %+v", res)
 	}
 	tt.probeTLS = func(context.Context, string, string) error { return errors.New("refused") }
-	if res := tt.probe()[GroupMail]; res.CanaryOK {
+	if res := tt.probe()[mail]; res.CanaryOK {
 		t.Fatalf("no canary answering must read as offline: %+v", res)
 	}
 }
@@ -407,25 +404,31 @@ func TestFixedProbeTargets(t *testing.T) {
 	}
 	tt.cfg.ProbeTargets = cfg.ProbeTargets
 	tt.useProbeTargets()
-	// With fixed probe targets, other hosts opened through the proxy must
-	// not become probe targets.
+	// Each fixed target is a pinned relay group of its own. A host opened
+	// through the proxy gets its own group and leaves theirs alone.
 	c, _ := socksConnect(t, tt.Addr(), "u", "p", "allowed.example.net:443")
 	c.Close()
 	var probed sync.Map
 	tt.probeTLS = func(_ context.Context, hostport, _ string) error {
 		probed.Store(hostport, true)
-		return nil
+		if hostport == "allowed.example.net:443" {
+			return nil
+		}
+		return errors.New("refused")
 	}
-	if res := tt.probe()[GroupMail]; res.Relays != 2 {
-		t.Errorf("probed %d hosts, want the 2 fixed ones", res.Relays)
-	}
+	res := tt.probe()
 	for _, want := range []string{"relay.example.org:443", "mx.example.org:993"} {
+		host, _, _ := net.SplitHostPort(want)
+		g := tt.relays[host]
+		if g == nil || !g.pinned || res[g].Relays != 1 || res[g].RelayOK != 0 {
+			t.Errorf("%s: group %+v result %+v", want, g, res[g])
+		}
 		if _, ok := probed.Load(want); !ok {
 			t.Errorf("expected a TLS probe of %s", want)
 		}
 	}
-	if _, ok := probed.Load("allowed.example.net:443"); ok {
-		t.Error("a host seen in traffic was probed although targets are fixed")
+	if g := tt.relays["allowed.example.net"]; g == nil || res[g].RelayOK != 1 {
+		t.Error("a host seen in traffic gets its own group and probe")
 	}
 	nine := make([]string, 9)
 	for i := range nine {
@@ -486,14 +489,14 @@ func TestTunnelFailuresMarkItUnhealthy(t *testing.T) {
 	c, _ := socksConnect(t, tt.Addr(), "u", "p", "relay.example.org:993")
 	c.Close()
 	tt.mu.Lock()
-	fails := tt.groups[GroupMail].tunnelFails
+	fails := tt.relays["relay.example.org"].tunnelFails
 	tt.mu.Unlock()
 	if fails != 1 {
 		t.Fatalf("tunnel failures since the switch: %d", fails)
 	}
 	tt.SetMode(ModeAuto) // route change resets the count
 	tt.mu.Lock()
-	fails = tt.groups[GroupMail].tunnelFails
+	fails = tt.relays["relay.example.org"].tunnelFails
 	tt.mu.Unlock()
 	if fails != 0 {
 		t.Fatalf("count must reset on a route change: %d", fails)
@@ -517,10 +520,9 @@ func TestRelaysDownThroughTheTunnelKeepTheRoute(t *testing.T) {
 func relayDownTunnel(t *testing.T, viaTunnel error, session bool) (*Tunnel, *atomic.Int32) {
 	var n atomic.Int32
 	tt := newTestTunnel(t, ModeAuto, echoDialer("D:", &n), echoDialer("T:", &n))
+	mail := tt.testGroup("relay.example.org:993")
 	tt.mu.Lock()
-	tt.groups[GroupMail].hosts["relay.example.org"] = time.Now()
-	tt.groups[GroupMail].ports["relay.example.org"] = "993"
-	tt.groups[GroupMail].failStreak = blockedAfter - 1
+	mail.failStreak = blockedAfter - 1
 	tt.mu.Unlock()
 	tt.probeTLS = func(_ context.Context, hostport, _ string) error {
 		if hostport == DefaultCanaries[0] {
@@ -571,7 +573,7 @@ func TestNoTunnelSessionSwitchesAnyway(t *testing.T) {
 func TestTunnelCheckedOnlyBeforeASwitch(t *testing.T) {
 	tt, probes := relayDownTunnel(t, nil, true)
 	tt.mu.Lock()
-	tt.groups[GroupMail].failStreak = 0
+	tt.relays["relay.example.org"].failStreak = 0
 	tt.mu.Unlock()
 	tt.check()
 	if probes.Load() != 0 {
@@ -601,12 +603,10 @@ func probeLog(ok ...string) (func(context.Context, string, string) error, func()
 func TestCanariesSkippedWhenARelayAnswers(t *testing.T) {
 	var n atomic.Int32
 	tt := newTestTunnel(t, ModeAuto, echoDialer("D:", &n), echoDialer("T:", &n))
-	tt.mu.Lock()
-	tt.groups[GroupMail].hosts["relay.example.org"] = time.Now()
-	tt.mu.Unlock()
+	mail := tt.testGroup("relay.example.org:443")
 	probe, seen := probeLog("relay.example.org:443")
 	tt.probeTLS = probe
-	res := tt.probe()[GroupMail]
+	res := tt.probe()[mail]
 	if res.RelayOK != 1 || res.CanaryChecked || res.CanaryOK {
 		t.Fatalf("relay answered, canaries must be left alone: %+v", res)
 	}
@@ -620,22 +620,25 @@ func TestCanariesSkippedWithoutRelays(t *testing.T) {
 	tt := newTestTunnel(t, ModeAuto, echoDialer("D:", &n), echoDialer("T:", &n))
 	probe, seen := probeLog(DefaultCanaries...)
 	tt.probeTLS = probe
-	if res := tt.probe()[GroupMail]; res.CanaryChecked || len(seen()) != 0 {
-		t.Fatalf("nothing to compare the canaries with: %+v, probed %v", res, seen())
+	for g, res := range tt.probe() {
+		if res.CanaryChecked {
+			t.Fatalf("%s: nothing to compare the canaries with: %+v", g.name, res)
+		}
+	}
+	if len(seen()) != 0 {
+		t.Fatalf("probed %v", seen())
 	}
 }
 
 func TestCanariesOneAtATimeLastGoodFirst(t *testing.T) {
 	var n atomic.Int32
 	tt := newTestTunnel(t, ModeAuto, echoDialer("D:", &n), echoDialer("T:", &n))
-	tt.mu.Lock()
-	tt.groups[GroupMail].hosts["relay.example.org"] = time.Now()
-	tt.mu.Unlock()
+	mail := tt.testGroup("relay.example.org:443")
 
 	// Every canary answers: the first one is enough.
 	probe, seen := probeLog(DefaultCanaries...)
 	tt.probeTLS = probe
-	if res := tt.probe()[GroupMail]; !res.CanaryChecked || !res.CanaryOK {
+	if res := tt.probe()[mail]; !res.CanaryChecked || !res.CanaryOK {
 		t.Fatalf("canary must answer: %+v", res)
 	}
 	if got := seen(); !slices.Equal(got, []string{"relay.example.org:443", DefaultCanaries[0]}) {
@@ -645,7 +648,7 @@ func TestCanariesOneAtATimeLastGoodFirst(t *testing.T) {
 	// The first fails at once, the second answers and becomes the first next time.
 	probe, seen = probeLog(DefaultCanaries[1])
 	tt.probeTLS = probe
-	if res := tt.probe()[GroupMail]; !res.CanaryOK {
+	if res := tt.probe()[mail]; !res.CanaryOK {
 		t.Fatalf("second canary must count: %+v", res)
 	}
 	if got := seen(); !slices.Equal(got, []string{"relay.example.org:443", DefaultCanaries[0], DefaultCanaries[1]}) {
@@ -662,9 +665,7 @@ func TestCanariesOneAtATimeLastGoodFirst(t *testing.T) {
 func TestSilentCanaryDoesNotHoldUpTheNext(t *testing.T) {
 	var n atomic.Int32
 	tt := newTestTunnel(t, ModeAuto, echoDialer("D:", &n), echoDialer("T:", &n))
-	tt.mu.Lock()
-	tt.groups[GroupMail].hosts["relay.example.org"] = time.Now()
-	tt.mu.Unlock()
+	mail := tt.testGroup("relay.example.org:443")
 	// The first canary hangs until cancelled (a dropped SYN), the second answers.
 	var cancelled atomic.Bool
 	tt.probeTLS = func(ctx context.Context, hostport, _ string) error {
@@ -679,7 +680,7 @@ func TestSilentCanaryDoesNotHoldUpTheNext(t *testing.T) {
 		return errors.New("refused")
 	}
 	start := time.Now()
-	if res := tt.probe()[GroupMail]; !res.CanaryOK {
+	if res := tt.probe()[mail]; !res.CanaryOK {
 		t.Fatalf("second canary must count: %+v", res)
 	}
 	if d := time.Since(start); d >= probeTimeout {
@@ -705,7 +706,7 @@ func TestDialFallsThroughRoutesInOrder(t *testing.T) {
 	tt := newTestTunnel(t, ModeAuto, fail("direct"), fail("tunnel"))
 	defer tt.Close()
 
-	_, r, err := tt.dial(GroupMail, "relay.example.org:993")
+	_, r, err := tt.dial(tt.testGroup("relay.example.org:993"), "relay.example.org:993")
 	if err == nil || r != RouteTunnel || strings.Join(tried, ",") != "direct,tunnel" {
 		t.Fatalf("auto: route %v err %v tried %v", r, err, tried)
 	}
@@ -715,7 +716,7 @@ func TestDialFallsThroughRoutesInOrder(t *testing.T) {
 
 	tried = nil
 	tt.SetMode(ModeOff)
-	if _, r, _ := tt.dial(GroupMail, "relay.example.org:993"); r != RouteDirect || strings.Join(tried, ",") != "direct" {
+	if _, r, _ := tt.dial(tt.testGroup("relay.example.org:993"), "relay.example.org:993"); r != RouteDirect || strings.Join(tried, ",") != "direct" {
 		t.Fatalf("off: never falls through to the tunnel, route %v tried %v", r, tried)
 	}
 }
@@ -724,7 +725,7 @@ func TestRouteWithoutDialerIsSkipped(t *testing.T) {
 	down := func(context.Context, string, string) (net.Conn, error) { return nil, errors.New("down") }
 	tt := newTestTunnel(t, ModeAuto, down, nil)
 	defer tt.Close()
-	if _, r, err := tt.dial(GroupMail, "relay.example.org:993"); err == nil || r != RouteDirect {
+	if _, r, err := tt.dial(tt.testGroup("relay.example.org:993"), "relay.example.org:993"); err == nil || r != RouteDirect {
 		t.Fatalf("with no tunnel set up the direct error comes back: route %v err %v", r, err)
 	}
 	s := tt.Status(0)
@@ -928,9 +929,19 @@ func TestBlockedWithoutTunnelStaysDirect(t *testing.T) {
 	tt := newTestTunnel(t, ModeAuto, down, nil)
 	defer tt.Close()
 	blocked := probeResult{Relays: 1, CanaryOK: true, CanaryChecked: true}
-	tt.applyProbe(GroupMail, blocked)
-	tt.applyProbe(GroupMail, blocked)
+	mail := tt.testGroup("relay.example.org:993")
+	tt.applyProbe(mail, blocked)
+	tt.applyProbe(mail, blocked)
 	if s := tt.Status(0); s.Route != "direct" || s.State != "blocked" {
 		t.Fatalf("with no tunnel the route stays direct: %s %s", s.Route, s.State)
 	}
+}
+
+// testGroup returns addr's group the way a CONNECT to addr makes and marks it.
+func (t *Tunnel) testGroup(addr string) *group {
+	t.mu.Lock()
+	g := t.groupForLocked(addr)
+	t.mu.Unlock()
+	t.learn(g, addr)
+	return g
 }

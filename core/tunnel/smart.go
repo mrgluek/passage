@@ -149,7 +149,11 @@ func (t *Tunnel) findStrategy(list []strategy, hosts []string) *strategy {
 		for _, hp := range hosts {
 			host, _, _ := net.SplitHostPort(hp)
 			ctx, cancel := context.WithTimeout(t.ctx, probeTimeout)
-			err := probeTLSVia(ctx, s.dial, hp, host)
+			probe := t.smartProbe
+			if probe == nil {
+				probe = probeTLSVia
+			}
+			err := probe(ctx, s.dial, hp, host)
 			cancel()
 			if err != nil {
 				ok = false

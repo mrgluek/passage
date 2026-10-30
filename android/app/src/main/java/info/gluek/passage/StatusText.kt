@@ -22,18 +22,37 @@ object StatusText {
     }
 
     /**
-     * "Route: direct", or "Mail: direct · Telegram: tunnel" once Telegram has
-     * been used (its group then has probe targets). The top-level route is mail's.
+     * The routes in one line: "Route: direct" until relays have been seen,
+     * then "Mail: direct" (or "Mail: direct (2), tunnel (1)" when relays
+     * differ), plus "Telegram: tunnel" once Telegram has been used.
      */
     private fun routes(c: Context, s: JSONObject): String {
-        val route = routeName(c, s.optString("route"))
-        val telegram = s.optJSONObject("groups")?.optJSONObject("telegram")
-        if ((telegram?.optJSONArray("targets")?.length() ?: 0) == 0) {
-            return c.getString(R.string.notification_route, route)
+        val groups = s.optJSONObject("groups") ?: JSONObject()
+        val counts = linkedMapOf<String, Int>()
+        for (route in listOf("direct", "smart", "tunnel")) {
+            val n = relays(groups).count { it.second.optString("route") == route }
+            if (n > 0) counts[route] = n
         }
-        return c.getString(R.string.group_mail, route) + " · " +
-            c.getString(R.string.group_telegram, routeName(c, telegram!!.optString("route")))
+        val telegram = groups.optJSONObject("telegram")?.takeIf { (it.optJSONArray("targets")?.length() ?: 0) > 0 }
+        if (counts.isEmpty() && telegram == null) {
+            return c.getString(R.string.notification_route, routeName(c, s.optString("route")))
+        }
+        val parts = mutableListOf<String>()
+        if (counts.isNotEmpty()) {
+            val mail = if (counts.size == 1) routeName(c, counts.keys.first())
+            else counts.entries.joinToString(", ") { "${routeName(c, it.key)} (${it.value})" }
+            parts += c.getString(R.string.group_mail, mail)
+        }
+        if (telegram != null) parts += c.getString(R.string.group_telegram, routeName(c, telegram.optString("route")))
+        return parts.joinToString(" · ")
     }
+
+    /** The relay groups (host name, status), sorted by name. */
+    private fun relays(groups: JSONObject): List<Pair<String, JSONObject>> =
+        groups.keys().asSequence()
+            .mapNotNull { name -> groups.optJSONObject(name)?.takeIf { it.optString("kind") == "relay" }?.let { name to it } }
+            .sortedBy { it.first }
+            .toList()
 
     /** up / down, or "no link" when the router runs without a tunnel. */
     private fun tunnelState(c: Context, s: JSONObject): String = c.getString(when {
@@ -60,8 +79,16 @@ object StatusText {
             sb.append(c.getString(R.string.status_last_check, clock(probe), r.optInt("relay_ok"), r.optInt("relays"), canary))
                 .append('\n')
         }
-        sb.append(c.getString(R.string.status_probe_hosts,
-            list(s.optJSONArray("relays")).ifEmpty { c.getString(R.string.none_yet) })).append('\n')
+        val relays = relays(s.optJSONObject("groups") ?: JSONObject())
+        if (relays.isEmpty()) {
+            sb.append(c.getString(R.string.status_probe_hosts, c.getString(R.string.none_yet))).append('\n')
+        } else {
+            sb.append(c.getString(R.string.status_relays)).append('\n')
+            for ((name, g) in relays) {
+                sb.append(c.getString(R.string.status_relay, name, routeName(c, g.optString("route")),
+                    stateName(c, g.optString("state")))).append('\n')
+            }
+        }
         if (s.optString("zone").isEmpty()) {
             sb.append(c.getString(R.string.status_no_tunnel)).append('\n')
         } else {
