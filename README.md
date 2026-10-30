@@ -17,6 +17,25 @@ available connection for them automatically.
 3. Tap **Copy proxy link** and paste it into the proxy settings of the other
    app (SOCKS5).
 
+### Verify the APK
+
+The package name and the SHA-256 of the signing certificate:
+
+```
+info.gluek.passage
+C3:C9:73:50:37:FF:A5:00:6D:D9:88:AB:29:D6:11:D6:A4:41:31:E5:3F:D8:1D:FA:CF:06:49:4C:33:61:41:FA
+```
+
+- With [AppVerifier](https://github.com/soupslurpr/AppVerifier): copy the two
+  lines above, then in AppVerifier pick Passage and tap
+  **Verify from clipboard**.
+- With `apksigner`: `apksigner verify --print-certs passage-<version>-arm64.apk`
+  shows the same SHA-256.
+- With the GitHub CLI, against the release's attestation:
+  `gh release verify-asset v<version> passage-<version>-arm64.apk -R mrgluek/passage`.
+
+Passage shows the same fingerprint in Settings → About.
+
 ### Updates with Obtainium
 
 [Obtainium](https://github.com/ImranR98/Obtainium) installs Passage from
