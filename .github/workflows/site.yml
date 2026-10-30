@@ -1,0 +1,84 @@
+name: Website
+
+# Builds the website with a release's APKs and deploys it. release.yml calls
+# it for each new release; run it by hand to republish between releases.
+on:
+  workflow_dispatch:
+  workflow_call:
+    inputs:
+      tag:
+        description: Release tag; the latest release if empty.
+        type: string
+        default: ""
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    # The F-Droid repository key lives in this environment, apart from the
+    # APK signing key in "release".
+    environment: website
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@be39fa834029ff78f1a44aa3bb0819b8fc2bd8fd # v4
+        with:
+          cmdline-tools-version: 11076708
+          packages: "build-tools;35.0.0"
+
+      - name: Download the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ inputs.tag }}
+        run: |
+          tag=${TAG:-$(gh release view --json tagName -q .tagName)}
+          gh release download "$tag" --pattern 'passage-*.apk' --dir dist
+          echo "TAG=$tag" >> "$GITHUB_ENV"
+
+      - name: Install fdroidserver
+        run: |
+          python3 -m venv "$RUNNER_TEMP/fdroidserver"
+          "$RUNNER_TEMP/fdroidserver/bin/pip" install --quiet fdroidserver==2.4.5
+          echo "$RUNNER_TEMP/fdroidserver/bin" >> "$GITHUB_PATH"
+
+      - name: Build the website and F-Droid repository
+        env:
+          KEYSTORE_B64: ${{ secrets.FDROID_KEYSTORE_B64 }}
+          FDROID_KEYSTORE_PASS: ${{ secrets.FDROID_KEYSTORE_PASS }}
+          FDROID_KEY_ALIAS: ${{ secrets.FDROID_KEY_ALIAS }}
+          FDROID_MIRRORS: ${{ secrets.FDROID_MIRRORS }}
+        run: |
+          test -n "$KEYSTORE_B64" || { echo "repository key missing" >&2; exit 1; }
+          export FDROID_KEYSTORE="$RUNNER_TEMP/fdroid.p12"
+          echo "$KEYSTORE_B64" | base64 -d > "$FDROID_KEYSTORE"
+          scripts/build-site.sh "${TAG#v}" dist "$RUNNER_TEMP/site"
+          rm -f "$FDROID_KEYSTORE"
+
+      - name: Upload the website
+        uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
+        with:
+          path: ${{ runner.temp }}/site
+
+  pages:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - name: Deploy the website
+        id: deploy
+        uses: actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346 # v5.0.1

@@ -75,3 +75,13 @@ jobs:
           awk -v v="## ${TAG#v}" '$0 == v {on=1; next} /^## / {on=0} on' CHANGELOG.md > "$RUNNER_TEMP/notes.md"
           test -s "$RUNNER_TEMP/notes.md" || { echo "no CHANGELOG.md section for ${TAG#v}" >&2; exit 1; }
           gh release create "$TAG" dist/* --title "Passage ${TAG#v}" --notes-file "$RUNNER_TEMP/notes.md" --verify-tag
+
+  website:
+    needs: release
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    uses: ./.github/workflows/site.yml
+    with:
+      tag: ${{ github.ref_name }}

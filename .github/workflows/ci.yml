@@ -1,9 +1,19 @@
 name: CI
 
+# Changes to the website, store listing and docs alone don't need a build.
 on:
   push:
     branches: [main]
+    paths-ignore: &docs
+      - "site/**"
+      - "fastlane/**"
+      - "fdroid/**"
+      - "scripts/build-site.sh"
+      - ".github/workflows/site.yml"
+      - "**/*.md"
+      - "LICENSE"
   pull_request:
+    paths-ignore: *docs
   workflow_dispatch:
 
 permissions:

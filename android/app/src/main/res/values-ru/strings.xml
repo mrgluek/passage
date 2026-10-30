@@ -92,6 +92,7 @@
     <string name="about_version">Passage %1$s (сборка %2$d), soar %3$s</string>
     <string name="about_cert">Сертификат подписи, SHA-256 (нажмите, чтобы скопировать для AppVerifier):</string>
     <string name="about_source">Исходный код: %1$s</string>
+    <string name="about_site">Сайт: %1$s</string>
     <string name="open_proxy_link">Открыть ссылку на прокси</string>
     <string name="no_app_for_link">На телефоне нет приложения, которое открывает ссылки на прокси. Скопируйте ссылку.</string>
     <string name="about_cert_copied">Имя пакета и сертификат скопированы</string>
