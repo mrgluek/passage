@@ -368,7 +368,12 @@ func TestBytesCountedWhileOpen(t *testing.T) {
 	defer c.Close()
 	c.Write([]byte("hello"))
 	io.ReadFull(c, make([]byte, 5))
+	// The proxy counts after it writes, so the echo can arrive first.
 	st := tt.Status(0).Stats["tunnel"]
+	for i := 0; i < 100 && st.Down != 5; i++ {
+		time.Sleep(10 * time.Millisecond)
+		st = tt.Status(0).Stats["tunnel"]
+	}
 	if st.Up != 5 || st.Down != 5 || st.Conns != 1 {
 		t.Fatalf("live counters on an open connection: %+v", st)
 	}
