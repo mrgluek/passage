@@ -823,3 +823,46 @@ func TestSilentConnectionTriggersAProbe(t *testing.T) {
 		t.Fatal("a connection with no answer must kick a probe")
 	}
 }
+
+func TestKnownStrategySwitchesOnFirstBlockedProbe(t *testing.T) {
+	known := probeResult{Relays: 1, CanaryOK: true, SmartChecked: true, SmartOK: true, SmartKnown: true}
+	if r, _, _, _ := decide(RouteDirect, known, 0, 0, true); r != RouteSmart {
+		t.Fatalf("a strategy known on this network switches at once, got %v", r)
+	}
+}
+
+func TestStrategyIsRememberedPerNetwork(t *testing.T) {
+	down := func(context.Context, string, string) (net.Conn, error) { return nil, errors.New("down") }
+	var d net.Dialer
+	mk := func(resolvers ...string) *Tunnel {
+		tt := newTestTunnel(t, ModeAuto, down, down)
+		tt.cfg.SystemResolvers = resolvers
+		tt.strategies = []strategy{{"a", down}, {"b", d.DialContext}}
+		return tt
+	}
+	knownStrategies.Lock()
+	knownStrategies.m = map[string]string{}
+	knownStrategies.Unlock()
+
+	first := mk("192.0.2.53:53")
+	first.mu.Lock()
+	first.strategy, first.ways[RouteSmart] = &first.strategies[1], way{d.DialContext, time.Second}
+	first.mu.Unlock()
+	knownStrategies.Lock()
+	knownStrategies.m[networkKey(first.cfg)] = "b"
+	knownStrategies.Unlock()
+	first.Close()
+
+	again := mk("192.0.2.53:53")
+	defer again.Close()
+	again.useKnownStrategy()
+	if s := again.Status(0); s.Strategy != "b" {
+		t.Fatalf("same network: strategy %q, want b", s.Strategy)
+	}
+	other := mk("198.51.100.53:53")
+	defer other.Close()
+	other.useKnownStrategy()
+	if s := other.Status(0); s.Strategy != "" {
+		t.Fatalf("another network starts without one, got %q", s.Strategy)
+	}
+}

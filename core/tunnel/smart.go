@@ -3,6 +3,7 @@ package tunnel
 import (
 	"context"
 	"net"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -11,6 +12,34 @@ import (
 	"golang.getoutline.org/sdk/transport/split"
 	"golang.getoutline.org/sdk/transport/tlsfrag"
 )
+
+// knownStrategies remembers, per network, the strategy that worked last. It
+// lives as long as the process: the router restarts on network changes.
+var knownStrategies = struct {
+	sync.Mutex
+	m map[string]string
+}{m: map[string]string{}}
+
+// networkKey identifies the network by what the app passes in at start.
+func networkKey(c Config) string {
+	return strings.Join(c.SystemResolvers, ",") + "|" + c.Operator
+}
+
+// useKnownStrategy sets up the smart route with the strategy that worked on
+// this network before, if any. Called at start, before the monitor runs.
+func (t *Tunnel) useKnownStrategy() {
+	knownStrategies.Lock()
+	name := knownStrategies.m[networkKey(t.cfg)]
+	knownStrategies.Unlock()
+	for _, s := range t.strategies {
+		if s.name == name {
+			t.strategy = &s
+			t.ways[RouteSmart] = way{s.dial, directDialTimeout}
+			t.log.add("smart route: %s worked on this network before", name)
+			return
+		}
+	}
+}
 
 // strategy is one way to send a connection's first bytes on the smart route.
 type strategy struct {
@@ -145,6 +174,9 @@ func (t *Tunnel) smartCheck(hosts []string) bool {
 	cur := t.strategy
 	t.mu.Unlock()
 	if cur != nil && t.findStrategy([]strategy{*cur}, hosts) != nil {
+		knownStrategies.Lock()
+		knownStrategies.m[networkKey(t.cfg)] = cur.name
+		knownStrategies.Unlock()
 		return true
 	}
 	start := time.Now()
@@ -152,6 +184,9 @@ func (t *Tunnel) smartCheck(hosts []string) bool {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	if found == nil {
+		knownStrategies.Lock()
+		delete(knownStrategies.m, networkKey(t.cfg))
+		knownStrategies.Unlock()
 		if t.strategy != nil {
 			t.log.add("smart route: %s stopped working, none found", t.strategy.name)
 		}
@@ -164,5 +199,8 @@ func (t *Tunnel) smartCheck(hosts []string) bool {
 	}
 	t.strategy = found
 	t.ways[RouteSmart] = way{found.dial, directDialTimeout}
+	knownStrategies.Lock()
+	knownStrategies.m[networkKey(t.cfg)] = found.name
+	knownStrategies.Unlock()
 	return true
 }

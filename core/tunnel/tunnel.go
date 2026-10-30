@@ -151,9 +151,12 @@ type probeResult struct {
 	CanaryChecked bool `json:"canary_checked,omitempty"`
 	// SmartChecked: the probe hosts were tried on the smart route (they
 	// failed directly while a canary answered); SmartOK: a strategy works.
-	SmartChecked bool   `json:"smart_checked,omitempty"`
-	SmartOK      bool   `json:"smart_ok,omitempty"`
-	Strategy     string `json:"strategy,omitempty"`
+	SmartChecked bool `json:"smart_checked,omitempty"`
+	SmartOK      bool `json:"smart_ok,omitempty"`
+	// SmartKnown: the strategy had worked on this network before this probe,
+	// so one blocked probe is enough to switch to it.
+	SmartKnown bool   `json:"smart_known,omitempty"`
+	Strategy   string `json:"strategy,omitempty"`
 	// Set by confirmViaTunnel before a switch to the tunnel: the same relays
 	// probed through a live tunnel session.
 	TunnelChecked bool `json:"tunnel_checked,omitempty"`
@@ -214,6 +217,7 @@ func Start(cfg Config) (*Tunnel, error) {
 	t.ways[RouteDirect] = way{d.DialContext, directDialTimeout}
 	t.ways[RouteTunnel] = way{client.DialContext, tunnelDialTimeout}
 	t.strategies = smartStrategies()
+	t.useKnownStrategy()
 	t.probeTLS = probeTLS
 	t.probeTunnel = func(ctx context.Context, hostport, sni string) error {
 		return probeTLSVia(ctx, t.ways[RouteTunnel].dial, hostport, sni)
@@ -648,6 +652,9 @@ func (t *Tunnel) probe() probeResult {
 	}
 	t.mu.Unlock()
 	if res.CanaryOK && auto && len(t.strategies) > 0 {
+		t.mu.Lock()
+		res.SmartKnown = t.strategy != nil
+		t.mu.Unlock()
 		res.SmartChecked = true
 		res.SmartOK = t.smartCheck(hostports)
 		if res.SmartOK {
@@ -806,7 +813,7 @@ func decide(route Route, res probeResult, failStreak, okStreak int, tunnelHealth
 	case res.CanaryOK:
 		failStreak++
 		switch {
-		case res.SmartOK && (route != RouteDirect || failStreak >= blockedAfter):
+		case res.SmartOK && (route != RouteDirect || failStreak >= blockedAfter || res.SmartKnown):
 			route = RouteSmart
 		case route == RouteDirect && failStreak >= blockedAfter:
 			if res.TunnelChecked && !res.TunnelOK {

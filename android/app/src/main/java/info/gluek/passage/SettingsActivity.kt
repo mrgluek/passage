@@ -2,11 +2,13 @@ package info.gluek.passage
 
 import android.annotation.SuppressLint
 import android.app.Activity
+import android.app.AlertDialog
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.graphics.Paint
+import android.graphics.Typeface
 import android.os.Build
 import android.os.Bundle
-import android.graphics.Typeface
 import android.text.InputType
 import android.text.util.Linkify
 import android.view.MenuItem
@@ -17,6 +19,7 @@ import android.widget.EditText
 import android.widget.LinearLayout
 import android.widget.RadioButton
 import android.widget.RadioGroup
+import android.widget.ScrollView
 import android.widget.TextView
 import android.widget.Toast
 import java.security.MessageDigest
@@ -187,6 +190,12 @@ class SettingsActivity : Activity() {
             setPadding(0, Ui.dp(this@SettingsActivity, 12), 0, 0)
             Linkify.addLinks(this, Linkify.WEB_URLS)
         })
+        col.addView(Ui.hint(this, getString(R.string.about_licenses)).apply {
+            setPadding(0, Ui.dp(this@SettingsActivity, 12), 0, 0)
+            setTextColor(linkTextColors)
+            paintFlags = paintFlags or Paint.UNDERLINE_TEXT_FLAG
+            setOnClickListener { showLicenses() }
+        })
         worker.execute {
             val text = about()
             runOnUiThread { aboutView.text = text }
@@ -263,6 +272,24 @@ class SettingsActivity : Activity() {
                 if (!ok) setLinkOpen(true)
             }
         }
+    }
+
+    /** The licenses of the open-source code built into the app (res/raw/licenses.txt). */
+    private fun showLicenses() {
+        val text = resources.openRawResource(R.raw.licenses).bufferedReader().use { it.readText() }
+        val view = TextView(this).apply {
+            this.text = text
+            typeface = Typeface.MONOSPACE
+            textSize = 11f
+            setTextIsSelectable(true)
+            val pad = Ui.dp(this@SettingsActivity, 16)
+            setPadding(pad, pad, pad, pad)
+        }
+        AlertDialog.Builder(this)
+            .setTitle(R.string.about_licenses)
+            .setView(ScrollView(this).apply { addView(view) })
+            .setPositiveButton(android.R.string.ok, null)
+            .show()
     }
 
     /** Version and soar version, so a tester can say what they run. */

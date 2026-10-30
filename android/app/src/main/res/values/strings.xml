@@ -99,4 +99,5 @@
     <string name="about_cert_help">To check this APK, compare it with the fingerprint on the project page, not with this copy: a modified app would show its own.</string>
     <string name="route_smart">direct (tuned)</string>
     <string name="status_smart">Direct (tuned)</string>
+    <string name="about_licenses">Open-source licenses</string>
 </resources>
