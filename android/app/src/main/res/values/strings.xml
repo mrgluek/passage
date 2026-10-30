@@ -35,7 +35,7 @@
 
     <string name="not_running">not running</string>
     <string name="proxy_not_running">Proxy is not running.</string>
-    <string name="one_line">%1$s · tunnel: %2$s</string>
+    <string name="one_line">%1$s · %2$s · tunnel: %3$s</string>
     <string name="group_mail">Mail: %1$s</string>
     <string name="group_telegram">Telegram: %1$s</string>
     <string name="route_direct">direct</string>

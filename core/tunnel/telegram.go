@@ -12,8 +12,8 @@ import (
 	"time"
 )
 
-// telegramRanges: https://core.telegram.org/resources/cidr.txt (copied 2026-10-30
-// without a fresh fetch; re-check against the file).
+// telegramRanges: https://core.telegram.org/resources/cidr.txt, checked
+// against the file on 2026-10-30.
 var telegramRanges = mustPrefixes(
 	"91.108.56.0/22",
 	"91.108.4.0/22",
@@ -32,7 +32,7 @@ var telegramRanges = mustPrefixes(
 )
 
 // telegramDCs are production data centers 1-5, as in Telegram Desktop's
-// built-in list.
+// built-in list; each answered the probe on 2026-10-30.
 var telegramDCs = []string{
 	"149.154.175.53:443",
 	"149.154.167.41:443",
