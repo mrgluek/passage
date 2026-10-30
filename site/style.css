@@ -43,6 +43,8 @@ a { color: var(--accent); }
 
 .top {
   display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
   align-items: center;
   justify-content: space-between;
   padding-top: 20px;
@@ -58,6 +60,17 @@ a { color: var(--accent); }
   font-size: 1.15rem;
   text-decoration: none;
 }
+
+.side {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  margin-left: auto;
+}
+
+.langs { display: flex; gap: 6px; }
+
+.meta { font-size: 0.85rem; white-space: nowrap; }
 
 .langs button {
   border: 1px solid var(--line);
@@ -150,4 +163,4 @@ code.block {
   .repo { flex-direction: column; }
 }
 
-footer { padding-top: 24px; padding-bottom: 32px; }
+main { padding-bottom: 32px; }
