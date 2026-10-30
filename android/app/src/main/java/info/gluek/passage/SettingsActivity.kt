@@ -183,8 +183,11 @@ class SettingsActivity : Activity() {
         }
         col.addView(certView)
         col.addView(Ui.hint(this, getString(R.string.about_cert_help)))
-        col.addView(Ui.hint(this, getString(R.string.about_source, SOURCE_URL)).apply {
+        col.addView(Ui.hint(this, getString(R.string.about_site, SITE_URL)).apply {
             setPadding(0, Ui.dp(this@SettingsActivity, 12), 0, 0)
+            Linkify.addLinks(this, Linkify.WEB_URLS)
+        })
+        col.addView(Ui.hint(this, getString(R.string.about_source, SOURCE_URL)).apply {
             Linkify.addLinks(this, Linkify.WEB_URLS)
         })
         worker.execute {
@@ -304,6 +307,7 @@ class SettingsActivity : Activity() {
     }
 
     companion object {
+        private const val SITE_URL = "https://passage.gluek.info"
         private const val SOURCE_URL = "https://github.com/mrgluek/passage"
         private val MODES = listOf("auto", "always", "off")
         private val MODE_LABELS = listOf(R.string.mode_auto, R.string.mode_always, R.string.mode_off)

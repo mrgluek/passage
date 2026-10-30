@@ -1,0 +1,106 @@
+<!doctype html>
+<html lang="en" data-l="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Passage</title>
+<meta name="description" content="A local SOCKS5 proxy for messaging apps on Android.">
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="style.css">
+<script>
+  // Russian for Russian-language browsers unless the visitor picked a language.
+  (function () {
+    var l = null;
+    try { l = localStorage.getItem("lang"); } catch (e) {}
+    if (!l) l = /^ru\b/i.test(navigator.language || "") ? "ru" : "en";
+    document.documentElement.dataset.l = l;
+    document.documentElement.lang = l;
+  })();
+</script>
+</head>
+<body>
+<header class="wrap top">
+  <a class="brand" href="./"><img src="icon.svg" alt="" width="36" height="36"> Passage</a>
+  <nav class="langs" aria-label="Language">
+    <button type="button" data-set="en">EN</button>
+    <button type="button" data-set="ru">RU</button>
+  </nav>
+</header>
+
+<main class="wrap">
+  <section class="hero">
+    <h1>You shall pass.</h1>
+    <p class="en">A local SOCKS5 proxy for messaging apps on Android. Apps on the phone connect to it on <code>127.0.0.1</code>, and Passage picks the best available connection for them automatically.</p>
+    <p class="ru">Локальный SOCKS5-прокси для мессенджеров на Android. Приложения на телефоне подключаются к нему на <code>127.0.0.1</code>, а Passage сам выбирает для них лучшее доступное соединение.</p>
+  </section>
+
+  <section id="download">
+    <h2><span class="en">Download</span><span class="ru">Скачать</span></h2>
+    <p class="muted"><span class="en">Version</span><span class="ru">Версия</span> {{VERSION}} · Android 7.0+</p>
+    <div class="buttons">
+      <a class="button primary" href="{{RELEASE}}/passage-{{VERSION}}-arm64.apk">arm64 <small class="en">most phones</small><small class="ru">большинство телефонов</small></a>
+      <a class="button" href="{{RELEASE}}/passage-{{VERSION}}-armv7.apk">armv7 <small class="en">older 32-bit</small><small class="ru">старые 32-битные</small></a>
+      <a class="button" href="{{RELEASE}}/passage-{{VERSION}}-universal.apk">universal <small class="en">if unsure</small><small class="ru">если не уверены</small></a>
+    </div>
+    <p class="muted"><a href="{{RELEASE}}/SHA256SUMS">SHA256SUMS</a> · <a href="https://github.com/mrgluek/passage/releases"><span class="en">All releases</span><span class="ru">Все версии</span></a></p>
+  </section>
+
+  <section id="fdroid">
+    <h2><span class="en">Updates with F-Droid</span><span class="ru">Обновления через F-Droid</span></h2>
+    <div class="repo">
+      <img class="qr" src="fdroid/qr.svg" alt="QR code of the repository address" width="160" height="160">
+      <div>
+        <p class="en">Add the Passage repository to F-Droid, Droid-ify or Neo Store: tap the button on the phone, or scan the code. The app then updates like any other.</p>
+        <p class="ru">Добавьте репозиторий Passage в F-Droid, Droid-ify или Neo Store: нажмите кнопку на телефоне или отсканируйте код. Дальше приложение обновляется как любое другое.</p>
+        <p><a class="button primary" href="{{REPO_LINK}}"><span class="en">Add repository</span><span class="ru">Добавить репозиторий</span></a></p>
+        <p class="muted"><span class="en">Or add it by hand:</span><span class="ru">Или вручную:</span></p>
+        <code class="block">{{REPO_URL}}</code>
+        <p class="muted"><span class="en">Repository fingerprint:</span><span class="ru">Отпечаток репозитория:</span></p>
+        <code class="block">{{REPO_FINGERPRINT}}</code>
+      </div>
+    </div>
+  </section>
+
+  <section id="obtainium">
+    <h2><span class="en">Updates with Obtainium</span><span class="ru">Обновления через Obtainium</span></h2>
+    <p class="en"><a href="https://github.com/ImranR98/Obtainium">Obtainium</a> installs Passage from the GitHub releases. Open <a href="obtainium://add/https://github.com/mrgluek/passage">this link</a> on the phone, and under <b>Filter APKs by regular expression</b> enter <code>arm64</code> (or <code>armv7</code> for a 32-bit phone).</p>
+    <p class="ru"><a href="https://github.com/ImranR98/Obtainium">Obtainium</a> ставит Passage из релизов на GitHub. Откройте <a href="obtainium://add/https://github.com/mrgluek/passage">эту ссылку</a> на телефоне и в поле <b>Filter APKs by regular expression</b> введите <code>arm64</code> (или <code>armv7</code> для 32-битного телефона).</p>
+  </section>
+
+  <section id="use">
+    <h2><span class="en">Use</span><span class="ru">Как пользоваться</span></h2>
+    <ol class="en">
+      <li>Open the <code>passage://</code> link you received, or paste it in Settings, and tap the start button. Allow notifications and running in the background.</li>
+      <li>Tap <b>Copy proxy link</b> and paste it into the proxy settings of the other app, or tap <b>Open proxy link</b> if the app adds proxies from links.</li>
+    </ol>
+    <ol class="ru">
+      <li>Откройте полученную ссылку <code>passage://</code> или вставьте её в настройках и нажмите кнопку запуска. Разрешите уведомления и работу в фоне.</li>
+      <li>Нажмите <b>Скопировать ссылку на прокси</b> и вставьте её в настройки прокси другого приложения или нажмите <b>Открыть ссылку на прокси</b>, если приложение добавляет прокси по ссылке.</li>
+    </ol>
+  </section>
+
+  <section id="verify">
+    <h2><span class="en">Verify the APK</span><span class="ru">Проверка APK</span></h2>
+    <p class="en">The package name and the SHA-256 of the signing certificate. Passage shows the same fingerprint in Settings → About; check it with <a href="https://github.com/soupslurpr/AppVerifier">AppVerifier</a> or <code>apksigner</code>.</p>
+    <p class="ru">Имя пакета и SHA-256 сертификата подписи. Passage показывает тот же отпечаток в Настройки → О приложении; проверить можно через <a href="https://github.com/soupslurpr/AppVerifier">AppVerifier</a> или <code>apksigner</code>.</p>
+    <code class="block">info.gluek.passage
+C3:C9:73:50:37:FF:A5:00:6D:D9:88:AB:29:D6:11:D6:A4:41:31:E5:3F:D8:1D:FA:CF:06:49:4C:33:61:41:FA</code>
+  </section>
+</main>
+
+<footer class="wrap muted">
+  <a href="https://github.com/mrgluek/passage"><span class="en">Source code</span><span class="ru">Исходный код</span></a> · MIT
+</footer>
+
+<script>
+  document.querySelectorAll("[data-set]").forEach(function (b) {
+    b.addEventListener("click", function () {
+      var l = b.dataset.set;
+      document.documentElement.dataset.l = l;
+      document.documentElement.lang = l;
+      try { localStorage.setItem("lang", l); } catch (e) {}
+    });
+  });
+</script>
+</body>
+</html>

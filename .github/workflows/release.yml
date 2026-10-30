@@ -75,3 +75,42 @@ jobs:
           awk -v v="## ${TAG#v}" '$0 == v {on=1; next} /^## / {on=0} on' CHANGELOG.md > "$RUNNER_TEMP/notes.md"
           test -s "$RUNNER_TEMP/notes.md" || { echo "no CHANGELOG.md section for ${TAG#v}" >&2; exit 1; }
           gh release create "$TAG" dist/* --title "Passage ${TAG#v}" --notes-file "$RUNNER_TEMP/notes.md" --verify-tag
+
+      - name: Install fdroidserver
+        run: |
+          python3 -m venv "$RUNNER_TEMP/fdroidserver"
+          "$RUNNER_TEMP/fdroidserver/bin/pip" install --quiet fdroidserver==2.4.5
+          echo "$RUNNER_TEMP/fdroidserver/bin" >> "$GITHUB_PATH"
+
+      - name: Build the website and F-Droid repository
+        env:
+          KEYSTORE_B64: ${{ secrets.FDROID_KEYSTORE_B64 }}
+          FDROID_KEYSTORE_PASS: ${{ secrets.FDROID_KEYSTORE_PASS }}
+          FDROID_KEY_ALIAS: ${{ secrets.FDROID_KEY_ALIAS }}
+          FDROID_MIRRORS: ${{ secrets.FDROID_MIRRORS }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          test -n "$KEYSTORE_B64" || { echo "repository key missing" >&2; exit 1; }
+          export FDROID_KEYSTORE="$RUNNER_TEMP/fdroid.p12"
+          echo "$KEYSTORE_B64" | base64 -d > "$FDROID_KEYSTORE"
+          scripts/build-site.sh "${TAG#v}" dist "$RUNNER_TEMP/site"
+          rm -f "$FDROID_KEYSTORE"
+
+      - name: Upload the website
+        uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
+        with:
+          path: ${{ runner.temp }}/site
+
+  pages:
+    needs: release
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - name: Deploy the website
+        id: deploy
+        uses: actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346 # v5.0.1

@@ -67,4 +67,15 @@ CI (`ci.yml`) runs the same steps on every push and pull request.
 1. Bump `versionCode` and `versionName` in `android/app/build.gradle.kts`.
 2. Add a `## <version>` section to `CHANGELOG.md`: short, user-facing.
 3. Tag `v<version>` on `main` and push the tag; `release.yml` builds, signs
-   and publishes the APK with `SHA256SUMS`.
+   and publishes the APK with `SHA256SUMS`, then deploys the website.
+
+## Website and F-Droid repository
+
+`scripts/build-site.sh` builds the website (`site/`) together with an
+F-Droid repository of the release APKs, and `release.yml` deploys it to
+GitHub Pages at `https://passage.gluek.info`. The listing text and icon come
+from `fastlane/metadata/android/`, the app metadata from `fdroid/metadata/`.
+The repository index is signed with its own key, from the `release`
+environment secrets `FDROID_KEYSTORE_B64` (PKCS12), `FDROID_KEYSTORE_PASS`
+and `FDROID_KEY_ALIAS`; the optional `FDROID_MIRRORS` lists mirrors, one URL
+per line, each ending in `/fdroid`.
