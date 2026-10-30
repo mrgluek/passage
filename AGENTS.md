@@ -78,7 +78,7 @@ GitHub Pages at `https://passage.gluek.info`. To publish website changes
 between releases, run `site.yml` by hand: it rebuilds the site with the
 latest release's APKs. The listing text and icon come
 from `fastlane/metadata/android/`, the app metadata from `fdroid/metadata/`.
-The repository index is signed with its own key, from the `release`
+The repository index is signed with its own key, from the `website`
 environment secrets `FDROID_KEYSTORE_B64` (PKCS12), `FDROID_KEYSTORE_PASS`
 and `FDROID_KEY_ALIAS`; the optional `FDROID_MIRRORS` lists mirrors, one URL
 per line, each ending in `/fdroid`.

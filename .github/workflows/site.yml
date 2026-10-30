@@ -1,9 +1,15 @@
 name: Website
 
-# Rebuilds the website from the chosen branch with the latest release's APKs.
-# release.yml does the same for each new release.
+# Builds the website with a release's APKs and deploys it. release.yml calls
+# it for each new release; run it by hand to republish between releases.
 on:
   workflow_dispatch:
+  workflow_call:
+    inputs:
+      tag:
+        description: Release tag; the latest release if empty.
+        type: string
+        default: ""
 
 permissions:
   contents: read
@@ -11,8 +17,9 @@ permissions:
 jobs:
   build:
     runs-on: ubuntu-latest
-    # The F-Droid repository key lives in this environment.
-    environment: release
+    # The F-Droid repository key lives in this environment, apart from the
+    # APK signing key in "release".
+    environment: website
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -29,11 +36,12 @@ jobs:
           cmdline-tools-version: 11076708
           packages: "build-tools;35.0.0"
 
-      - name: Download the latest release
+      - name: Download the release
         env:
           GH_TOKEN: ${{ github.token }}
+          TAG: ${{ inputs.tag }}
         run: |
-          tag=$(gh release view --json tagName -q .tagName)
+          tag=${TAG:-$(gh release view --json tagName -q .tagName)}
           gh release download "$tag" --pattern 'passage-*.apk' --dir dist
           echo "TAG=$tag" >> "$GITHUB_ENV"
 
