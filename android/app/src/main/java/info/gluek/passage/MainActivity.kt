@@ -50,6 +50,11 @@ class MainActivity : Activity() {
         super.onCreate(savedInstanceState)
         settings = Settings(this)
         setContentView(buildUi())
+        // The proxy was on and is not now: an app update or the system
+        // stopped it. Opening the app turns it back on.
+        if (settings.running && !PassageService.active) {
+            PassageService.start(this)
+        }
     }
 
     override fun onResume() {
