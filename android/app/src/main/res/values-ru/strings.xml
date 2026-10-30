@@ -96,4 +96,6 @@
     <string name="no_app_for_link">На телефоне нет приложения, которое открывает ссылки на прокси. Скопируйте ссылку.</string>
     <string name="about_cert_copied">Имя пакета и сертификат скопированы</string>
     <string name="about_cert_help">Чтобы проверить этот APK, сверяйте его с отпечатком на странице проекта, а не с этой копией: изменённое приложение покажет свой.</string>
+    <string name="route_smart">напрямую (с подстройкой)</string>
+    <string name="status_smart">Напрямую (с подстройкой)</string>
 </resources>

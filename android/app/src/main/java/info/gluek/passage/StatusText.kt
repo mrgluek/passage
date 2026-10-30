@@ -46,9 +46,11 @@ object StatusText {
                 else c.getString(R.string.status_intercepted)).append('\n')
         }
         val active = s.optJSONObject("active") ?: JSONObject()
-        sb.append(c.getString(R.string.status_open_conns, active.optInt("direct"), active.optInt("tunnel"))).append('\n')
+        sb.append(c.getString(R.string.status_open_conns, active.optInt("direct") + active.optInt("smart"), active.optInt("tunnel"))).append('\n')
         val stats = s.optJSONObject("stats") ?: JSONObject()
-        for ((route, label) in listOf("direct" to R.string.status_direct, "tunnel" to R.string.status_tunnel)) {
+        for ((route, label) in listOf(
+            "direct" to R.string.status_direct, "smart" to R.string.status_smart, "tunnel" to R.string.status_tunnel,
+        )) {
             val r = stats.optJSONObject(route) ?: continue
             sb.append(c.getString(R.string.status_route_stats, c.getString(label), r.optLong("conns"), r.optLong("fails"),
                 bytes(r.optLong("up")), bytes(r.optLong("down")))).append('\n')
@@ -129,6 +131,7 @@ object StatusText {
     private fun routeName(c: Context, route: String): String = when (route) {
         "direct" -> c.getString(R.string.route_direct)
         "tunnel" -> c.getString(R.string.route_tunnel)
+        "smart" -> c.getString(R.string.route_smart)
         else -> route
     }
 

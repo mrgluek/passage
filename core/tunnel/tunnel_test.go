@@ -3,11 +3,14 @@ package tunnel
 import (
 	"bytes"
 	"context"
+	"crypto/x509"
 	"encoding/base64"
 	"errors"
 	"fmt"
 	"io"
 	"net"
+	"net/http"
+	"net/http/httptest"
 	"slices"
 	"strings"
 	"sync"
@@ -111,7 +114,7 @@ func newTestTunnel(t *testing.T, mode string, direct, tun dialFunc) *Tunnel {
 	}
 	tt := &Tunnel{cfg: cfg, log: newEventLog(100), kick: make(chan struct{}, 1), mode: mode,
 		conns: map[*tracked]struct{}{}, relays: map[string]time.Time{}, relayPorts: map[string]string{}, state: "unknown",
-		ways:     [numRoutes]way{{direct, time.Second}, {tun, time.Second}},
+		ways:     [numRoutes]way{RouteDirect: {direct, time.Second}, RouteTunnel: {tun, time.Second}},
 		probeTLS: func(context.Context, string, string) error { return errors.New("no probes in tests") }}
 	tt.ctx, tt.cancel = context.WithCancel(context.Background())
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
@@ -727,5 +730,96 @@ func TestRouteWithoutDialerIsSkipped(t *testing.T) {
 	}
 	if _, ok := s.Stats["tunnel"]; !ok {
 		t.Errorf("stats keep every route's key for the app: %v", s.Stats)
+	}
+}
+
+func TestDecideUsesTheSmartRoute(t *testing.T) {
+	smart := probeResult{Relays: 1, CanaryOK: true, CanaryChecked: true, SmartChecked: true, SmartOK: true}
+	noSmart := probeResult{Relays: 1, CanaryOK: true, CanaryChecked: true, SmartChecked: true}
+
+	if r, _, _, _ := decide(RouteDirect, smart, 0, 0, true); r != RouteDirect {
+		t.Fatalf("one blocked probe must not switch yet, got %v", r)
+	}
+	if r, _, _, s := decide(RouteDirect, smart, blockedAfter-1, 0, true); r != RouteSmart || s != "blocked" {
+		t.Fatalf("blocked with a working strategy goes smart, got %v %s", r, s)
+	}
+	if r, _, _, _ := decide(RouteTunnel, smart, 5, 0, true); r != RouteSmart {
+		t.Fatalf("from the tunnel a working strategy is preferred, got %v", r)
+	}
+	if r, _, _, _ := decide(RouteSmart, noSmart, 5, 0, true); r != RouteTunnel {
+		t.Fatalf("a strategy that stopped working falls back to the tunnel, got %v", r)
+	}
+	ok := probeResult{Relays: 1, RelayOK: 1}
+	r := RouteSmart
+	for i := 0; i < recoveredAfter; i++ {
+		r, _, _, _ = decide(r, ok, 0, i, true)
+	}
+	if r != RouteDirect {
+		t.Fatalf("direct answering again for recoveredAfter probes leaves smart, got %v", r)
+	}
+}
+
+func TestSmartCheckFindsAndKeepsAStrategy(t *testing.T) {
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+	defer srv.Close()
+	pool := x509.NewCertPool()
+	pool.AddCert(srv.Certificate())
+	probeRoots = pool
+	defer func() { probeRoots = nil }()
+
+	down := func(context.Context, string, string) (net.Conn, error) { return nil, errors.New("blocked") }
+	tt := newTestTunnel(t, ModeAuto, down, down)
+	defer tt.Close()
+	var d net.Dialer
+	tt.strategies = []strategy{{"broken", down}, {"works", d.DialContext}}
+
+	// httptest's certificate is for example.com and 127.0.0.1.
+	host := net.JoinHostPort("example.com", srv.Listener.Addr().(*net.TCPAddr).AddrPort().String()[len("127.0.0.1:"):])
+	tt.strategies[1].dial = func(ctx context.Context, n, _ string) (net.Conn, error) {
+		return d.DialContext(ctx, n, srv.Listener.Addr().String())
+	}
+	if !tt.smartCheck([]string{host}) {
+		t.Fatal("no strategy found")
+	}
+	if s := tt.Status(0); s.Strategy != "works" || strings.Join(s.Routes, ",") != "direct,smart,tunnel" {
+		t.Fatalf("strategy %q routes %v", s.Strategy, s.Routes)
+	}
+	tt.strategies = []strategy{{"broken", down}}
+	if !tt.smartCheck([]string{host}) {
+		t.Fatal("the working strategy must be kept while it still works")
+	}
+	tt.mu.Lock()
+	tt.strategy.dial = down
+	tt.mu.Unlock()
+	if tt.smartCheck([]string{host}) {
+		t.Fatal("with nothing working the smart route must go away")
+	}
+	if s := tt.Status(0); s.Strategy != "" || strings.Join(s.Routes, ",") != "direct,tunnel" {
+		t.Fatalf("after failure: strategy %q routes %v", s.Strategy, s.Routes)
+	}
+}
+
+func TestSilentConnectionTriggersAProbe(t *testing.T) {
+	saved := firstResponseTimeout
+	firstResponseTimeout = 100 * time.Millisecond
+	defer func() { firstResponseTimeout = saved }()
+
+	silent := func(context.Context, string, string) (net.Conn, error) {
+		a, b := net.Pipe()
+		go io.Copy(io.Discard, b) // reads everything, answers nothing
+		return a, nil
+	}
+	tt := newTestTunnel(t, ModeAuto, silent, nil)
+	defer tt.Close()
+	c, code := socksConnect(t, tt.Addr(), "u", "p", "relay.example.org:993")
+	if code != repSucceeded {
+		t.Fatalf("socks reply %d", code)
+	}
+	defer c.Close()
+	c.Write([]byte("hello"))
+	select {
+	case <-tt.kick:
+	case <-time.After(2 * time.Second):
+		t.Fatal("a connection with no answer must kick a probe")
 	}
 }

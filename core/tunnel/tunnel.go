@@ -6,6 +6,7 @@ import (
 	"crypto/ed25519"
 	"crypto/rand"
 	"crypto/tls"
+	"crypto/x509"
 	"encoding/base64"
 	"encoding/hex"
 	"errors"
@@ -31,11 +32,12 @@ type Route int
 
 const (
 	RouteDirect Route = iota
+	RouteSmart        // direct, with the first bytes reshaped (smart.go)
 	RouteTunnel
 	numRoutes
 )
 
-var routeNames = [numRoutes]string{"direct", "tunnel"}
+var routeNames = [numRoutes]string{"direct", "smart", "tunnel"}
 
 func (r Route) String() string { return routeNames[r] }
 
@@ -71,6 +73,10 @@ const (
 	canaryStagger = 2 * time.Second
 )
 
+// firstResponseTimeout: a connection that has sent bytes and got none back
+// for this long triggers a probe (it stays open). A var for tests.
+var firstResponseTimeout = 5 * time.Second
+
 type dialFunc func(ctx context.Context, network, addr string) (net.Conn, error)
 
 // Tunnel is a running local proxy.
@@ -85,9 +91,11 @@ type Tunnel struct {
 	kick      chan struct{}
 	wg        sync.WaitGroup
 
-	// Swappable for tests.
-	ways     [numRoutes]way
-	probeTLS func(ctx context.Context, hostport, sni string) error
+	// Swappable for tests. ways[RouteSmart] is set while a strategy works;
+	// guarded by mu.
+	ways       [numRoutes]way
+	strategies []strategy
+	probeTLS   func(ctx context.Context, hostport, sni string) error
 	// probeTunnel is probeTLS through the tunnel. established reports a live
 	// soar session: only then does a relay failing through the tunnel prove
 	// the relay is down (see confirmViaTunnel).
@@ -111,7 +119,8 @@ type Tunnel struct {
 	state       string
 	lastProbe   time.Time
 	lastResult  probeResult
-	lastCanary  string // the canary that answered last; tried first next time
+	lastCanary  string    // the canary that answered last; tried first next time
+	strategy    *strategy // the smart route's working strategy, if any
 	stats       [numRoutes]routeStats
 	// Bytes per route, counted as they flow: IMAP IDLE connections live for
 	// hours, so totals taken at close would show nothing for them.
@@ -140,6 +149,11 @@ type probeResult struct {
 	// answers directly (the network is open whatever they say) or when
 	// there is no relay to probe yet.
 	CanaryChecked bool `json:"canary_checked,omitempty"`
+	// SmartChecked: the probe hosts were tried on the smart route (they
+	// failed directly while a canary answered); SmartOK: a strategy works.
+	SmartChecked bool   `json:"smart_checked,omitempty"`
+	SmartOK      bool   `json:"smart_ok,omitempty"`
+	Strategy     string `json:"strategy,omitempty"`
 	// Set by confirmViaTunnel before a switch to the tunnel: the same relays
 	// probed through a live tunnel session.
 	TunnelChecked bool `json:"tunnel_checked,omitempty"`
@@ -199,6 +213,7 @@ func Start(cfg Config) (*Tunnel, error) {
 	d := &net.Dialer{Timeout: directDialTimeout}
 	t.ways[RouteDirect] = way{d.DialContext, directDialTimeout}
 	t.ways[RouteTunnel] = way{client.DialContext, tunnelDialTimeout}
+	t.strategies = smartStrategies()
 	t.probeTLS = probeTLS
 	t.probeTunnel = func(ctx context.Context, hostport, sni string) error {
 		return probeTLSVia(ctx, t.ways[RouteTunnel].dial, hostport, sni)
@@ -418,6 +433,14 @@ func (t *Tunnel) handle(c net.Conn) {
 
 	start := time.Now()
 	var up, down atomic.Int64
+	if route != RouteTunnel {
+		stall := time.AfterFunc(firstResponseTimeout, func() {
+			if up.Load() > 0 && down.Load() == 0 {
+				t.kickProbe()
+			}
+		})
+		defer stall.Stop()
+	}
 	var wg sync.WaitGroup
 	wg.Add(2)
 	go func() { defer wg.Done(); pipe(remote, c, &up, &t.upBytes[route]) }()
@@ -442,13 +465,23 @@ func (t *Tunnel) dial(addr string) (net.Conn, Route, error) {
 	route, mode := t.route, t.mode
 	t.mu.Unlock()
 	for r := route; ; {
-		ctx, cancel := context.WithTimeout(t.ctx, t.ways[r].timeout)
-		c, err := t.ways[r].dial(ctx, "tcp", addr)
+		t.mu.Lock()
+		w := t.ways[r]
+		next := t.nextRouteLocked(r)
+		t.mu.Unlock()
+		if w.dial == nil { // the smart route went away since the route was chosen
+			if next == r {
+				return nil, r, errors.New(r.String() + " route not available")
+			}
+			r = next
+			continue
+		}
+		ctx, cancel := context.WithTimeout(t.ctx, w.timeout)
+		c, err := w.dial(ctx, "tcp", addr)
 		cancel()
 		if err == nil {
 			return c, r, nil
 		}
-		next := t.nextRoute(r)
 		if next == r {
 			return nil, r, err
 		}
@@ -464,8 +497,9 @@ func (t *Tunnel) dial(addr string) (net.Conn, Route, error) {
 	}
 }
 
-// nextRoute is the next set-up route after r, or r itself if there is none.
-func (t *Tunnel) nextRoute(r Route) Route {
+// nextRouteLocked is the next set-up route after r, or r itself if there
+// is none. Caller holds t.mu.
+func (t *Tunnel) nextRouteLocked(r Route) Route {
 	for n := r + 1; n < numRoutes; n++ {
 		if t.ways[n].dial != nil {
 			return n
@@ -474,7 +508,14 @@ func (t *Tunnel) nextRoute(r Route) Route {
 	return r
 }
 
-// routes lists the set-up routes in order.
+func (t *Tunnel) strategyNameLocked() string {
+	if t.strategy == nil {
+		return ""
+	}
+	return t.strategy.name
+}
+
+// routes lists the set-up routes in order. Caller holds t.mu.
 func (t *Tunnel) routes() []string {
 	var out []string
 	for r := Route(0); r < numRoutes; r++ {
@@ -542,7 +583,7 @@ func (t *Tunnel) nextProbeIn() time.Duration {
 		return time.Hour
 	case t.state == "offline":
 		return 30 * time.Second
-	case t.route == RouteTunnel:
+	case t.route != RouteDirect:
 		return 30 * time.Second
 	case t.state == stateRelaysDown:
 		return time.Minute // each check costs a TLS handshake through the tunnel
@@ -594,6 +635,26 @@ func (t *Tunnel) probe() probeResult {
 	if res.Relays > 0 && res.RelayOK == 0 {
 		res.CanaryChecked = true
 		res.CanaryOK = t.probeCanaries()
+	}
+	t.mu.Lock()
+	auto := t.mode == ModeAuto
+	var hostports []string
+	for _, h := range hosts {
+		port := t.relayPorts[h]
+		if port == "" {
+			port = "443"
+		}
+		hostports = append(hostports, net.JoinHostPort(h, port))
+	}
+	t.mu.Unlock()
+	if res.CanaryOK && auto && len(t.strategies) > 0 {
+		res.SmartChecked = true
+		res.SmartOK = t.smartCheck(hostports)
+		if res.SmartOK {
+			t.mu.Lock()
+			res.Strategy = t.strategyNameLocked()
+			t.mu.Unlock()
+		}
 	}
 	return res
 }
@@ -664,7 +725,7 @@ func (t *Tunnel) probeCanaries() bool {
 // a failure proves nothing, and the switch goes ahead.
 func (t *Tunnel) confirmViaTunnel(res probeResult) probeResult {
 	t.mu.Lock()
-	switching := t.mode == ModeAuto && t.route == RouteDirect &&
+	switching := t.mode == ModeAuto && t.route == RouteDirect && !res.SmartOK &&
 		res.Relays > 0 && res.RelayOK == 0 && res.CanaryOK && t.failStreak+1 >= blockedAfter
 	t.mu.Unlock()
 	if !switching || t.probeTunnel == nil || t.established == nil {
@@ -708,6 +769,9 @@ func (t *Tunnel) applyProbe(res probeResult) {
 		if res.CanaryChecked {
 			via = fmt.Sprintf(", canary ok=%v", res.CanaryOK)
 		}
+		if res.SmartChecked {
+			via += fmt.Sprintf(", smart ok=%v", res.SmartOK)
+		}
 		if res.TunnelChecked {
 			via += fmt.Sprintf(", via tunnel ok=%v", res.TunnelOK)
 		}
@@ -722,9 +786,10 @@ func (t *Tunnel) applyProbe(res probeResult) {
 // decide is the monitor's state machine, kept pure for tests.
 //   - any probe host answering directly means the network is open; leaving
 //     the tunnel takes recoveredAfter such probes, or one if it is failing;
-//   - every relay failing while the canary answers means "blocked", unless
-//     the relays fail through a live tunnel too: then they are down
-//     ("relays-down") and the route stays;
+//   - every relay failing while the canary answers means "blocked": the
+//     smart route if a strategy works, else the tunnel, unless the relays
+//     fail through a live tunnel too: then they are down ("relays-down")
+//     and the route stays;
 //   - everything failing means "offline": change nothing.
 func decide(route Route, res probeResult, failStreak, okStreak int, tunnelHealthy bool) (Route, int, int, string) {
 	switch {
@@ -732,18 +797,23 @@ func decide(route Route, res probeResult, failStreak, okStreak int, tunnelHealth
 		return route, failStreak, okStreak, "unknown"
 	case res.RelayOK > 0:
 		okStreak++
-		// A working tunnel waits for recoveredAfter good probes (no
-		// flapping); a failing one is left after the first.
-		if route == RouteTunnel && (okStreak >= recoveredAfter || !tunnelHealthy) {
+		// Leaving smart or a working tunnel waits for recoveredAfter good
+		// probes (no flapping); a failing tunnel is left after the first.
+		if route != RouteDirect && (okStreak >= recoveredAfter || route == RouteTunnel && !tunnelHealthy) {
 			route = RouteDirect
 		}
 		return route, 0, okStreak, "direct"
 	case res.CanaryOK:
 		failStreak++
-		if route == RouteDirect && failStreak >= blockedAfter {
+		switch {
+		case res.SmartOK && (route != RouteDirect || failStreak >= blockedAfter):
+			route = RouteSmart
+		case route == RouteDirect && failStreak >= blockedAfter:
 			if res.TunnelChecked && !res.TunnelOK {
 				return route, failStreak, 0, stateRelaysDown
 			}
+			route = RouteTunnel
+		case route == RouteSmart: // its strategy stopped working
 			route = RouteTunnel
 		}
 		return route, failStreak, 0, "blocked"
@@ -776,13 +846,16 @@ func probeTLSVia(ctx context.Context, dial dialFunc, hostport, sni string) error
 		return err
 	}
 	defer c.Close()
-	return tls.Client(c, &tls.Config{ServerName: sni, MinVersion: tls.VersionTLS12}).HandshakeContext(ctx)
+	return tls.Client(c, &tls.Config{ServerName: sni, MinVersion: tls.VersionTLS12, RootCAs: probeRoots}).HandshakeContext(ctx)
 }
+
+// probeRoots verifies probe handshakes; nil means the system roots. Tests set it.
+var probeRoots *x509.CertPool
 
 func probeTLS(ctx context.Context, hostport, sni string) error {
 	d := &tls.Dialer{
 		NetDialer: &net.Dialer{Timeout: probeTimeout},
-		Config:    &tls.Config{ServerName: sni, MinVersion: tls.VersionTLS12},
+		Config:    &tls.Config{ServerName: sni, MinVersion: tls.VersionTLS12, RootCAs: probeRoots},
 	}
 	c, err := d.DialContext(ctx, "tcp", hostport)
 	if err != nil {
@@ -886,7 +959,8 @@ type Status struct {
 	Zone       string                `json:"zone"`
 	Mode       string                `json:"mode"`
 	Route      string                `json:"route"`
-	Routes     []string              `json:"routes"` // set-up routes, in fallback order
+	Strategy   string                `json:"strategy,omitempty"` // the smart route's, when it works
+	Routes     []string              `json:"routes"`             // set-up routes, in fallback order
 	RouteSince time.Time             `json:"route_since"`
 	State      string                `json:"state"`
 	Resolvers  int                   `json:"resolvers"`
@@ -927,6 +1001,7 @@ func (t *Tunnel) Status(n int) Status {
 		LastProbe:      t.lastProbe.UTC(),
 		LastResult:     t.lastResult,
 		Routes:         t.routes(),
+		Strategy:       t.strategyNameLocked(),
 		Active:         map[string]int{},
 		Stats:          map[string]routeStats{},
 		Soar:           SoarVersion(),

@@ -97,4 +97,6 @@
     <string name="no_app_for_link">No app on this phone opens proxy links. Copy the link instead.</string>
     <string name="about_cert_copied">Package name and certificate copied</string>
     <string name="about_cert_help">To check this APK, compare it with the fingerprint on the project page, not with this copy: a modified app would show its own.</string>
+    <string name="route_smart">direct (tuned)</string>
+    <string name="status_smart">Direct (tuned)</string>
 </resources>
