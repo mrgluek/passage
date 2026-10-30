@@ -60,7 +60,8 @@ releases.
 `release.yml` signs tagged builds with `PASSAGE_KEYSTORE` (PKCS12),
 `PASSAGE_KEYSTORE_PASS` and `PASSAGE_KEY_ALIAS`.
 
-CI (`ci.yml`) runs the same steps on every push and pull request.
+CI (`ci.yml`) runs the same steps on every push and pull request, except
+those that only touch the website, store listing or docs.
 
 ## Release
 
@@ -73,7 +74,9 @@ CI (`ci.yml`) runs the same steps on every push and pull request.
 
 `scripts/build-site.sh` builds the website (`site/`) together with an
 F-Droid repository of the release APKs, and `release.yml` deploys it to
-GitHub Pages at `https://passage.gluek.info`. The listing text and icon come
+GitHub Pages at `https://passage.gluek.info`. To publish website changes
+between releases, run `site.yml` by hand: it rebuilds the site with the
+latest release's APKs. The listing text and icon come
 from `fastlane/metadata/android/`, the app metadata from `fdroid/metadata/`.
 The repository index is signed with its own key, from the `release`
 environment secrets `FDROID_KEYSTORE_B64` (PKCS12), `FDROID_KEYSTORE_PASS`
