@@ -74,7 +74,7 @@
     <string name="open_settings">Open settings</string>
     <string name="need_link_first">Add a link in settings first</string>
     <string name="connect_label">Connect an app</string>
-    <string name="connect_help">In Delta Chat or ArcaneChat: Settings → Advanced → Proxy → Add proxy, then paste the proxy link.</string>
+    <string name="connect_help">Copy the proxy link and paste it into the app\'s proxy settings (Delta Chat, ArcaneChat: Settings → Advanced → Proxy → Add proxy). If the app adds proxies from links, Open proxy link is quicker.</string>
     <string name="copy_proxy_link">Copy proxy link</string>
     <string name="proxy_link_copied">Proxy link copied</string>
     <string name="proxy_details">Host %1$s, port %2$d\nUsername %3$s\nPassword %4$s</string>
@@ -93,4 +93,6 @@
     <string name="about_version">Passage %1$s (build %2$d), soar %3$s</string>
     <string name="about_cert">Signing certificate, SHA-256:</string>
     <string name="about_source">Source code: github.com/mrgluek/passage</string>
+    <string name="open_proxy_link">Open proxy link</string>
+    <string name="no_app_for_link">No app on this phone opens proxy links. Copy the link instead.</string>
 </resources>

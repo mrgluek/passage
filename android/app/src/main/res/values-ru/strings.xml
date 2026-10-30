@@ -73,7 +73,7 @@
     <string name="open_settings">Открыть настройки</string>
     <string name="need_link_first">Сначала добавьте ссылку в настройках</string>
     <string name="connect_label">Подключить приложение</string>
-    <string name="connect_help">В Delta Chat или ArcaneChat: Настройки → Дополнительно → Прокси → Добавить прокси, затем вставьте ссылку на прокси.</string>
+    <string name="connect_help">Скопируйте ссылку на прокси и вставьте её в настройки прокси приложения (Delta Chat, ArcaneChat: Настройки → Дополнительно → Прокси → Добавить прокси). Если приложение умеет добавлять прокси по ссылке, быстрее нажать «Открыть ссылку на прокси».</string>
     <string name="copy_proxy_link">Скопировать ссылку на прокси</string>
     <string name="proxy_link_copied">Ссылка на прокси скопирована</string>
     <string name="proxy_details">Хост %1$s, порт %2$d\nЛогин %3$s\nПароль %4$s</string>
@@ -92,4 +92,6 @@
     <string name="about_version">Passage %1$s (сборка %2$d), soar %3$s</string>
     <string name="about_cert">Сертификат подписи, SHA-256:</string>
     <string name="about_source">Исходный код: github.com/mrgluek/passage</string>
+    <string name="open_proxy_link">Открыть ссылку на прокси</string>
+    <string name="no_app_for_link">На телефоне нет приложения, которое открывает ссылки на прокси. Скопируйте ссылку.</string>
 </resources>

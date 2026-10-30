@@ -2,9 +2,11 @@ package info.gluek.passage
 
 import android.Manifest
 import android.app.Activity
+import android.content.ActivityNotFoundException
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.graphics.Typeface
+import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.os.Handler
@@ -121,6 +123,10 @@ class MainActivity : Activity() {
                 Ui.copy(this@MainActivity, "Passage proxy", settings.proxyLink(), getString(R.string.proxy_link_copied))
             }
         })
+        connectBox.addView(Button(this).apply {
+            text = getString(R.string.open_proxy_link)
+            setOnClickListener { openProxyLink() }
+        })
         detailsView = TextView(this).apply {
             typeface = Typeface.MONOSPACE
             textSize = 12f
@@ -144,6 +150,15 @@ class MainActivity : Activity() {
         col.addView(statusView)
 
         return Ui.scroll(this, col)
+    }
+
+    /** Hands the proxy to an app that handles tg://socks links; it asks before adding it. */
+    private fun openProxyLink() {
+        try {
+            startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(settings.proxyLink("tg://socks"))))
+        } catch (_: ActivityNotFoundException) {
+            Toast.makeText(this, getString(R.string.no_app_for_link), Toast.LENGTH_LONG).show()
+        }
     }
 
     private fun onStartClicked() {

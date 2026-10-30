@@ -15,7 +15,7 @@ available connection for them automatically.
 2. Open the `passage://` link you received, or paste it in Settings, and tap
    the start button. Allow notifications and running in the background.
 3. Tap **Copy proxy link** and paste it into the proxy settings of the other
-   app (SOCKS5).
+   app, or tap **Open proxy link** if the app adds proxies from links.
 
 ### Verify the APK
 
