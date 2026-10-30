@@ -11,9 +11,22 @@ import java.util.Locale
 object StatusText {
     fun oneLine(c: Context, s: JSONObject): String {
         if (!s.optBoolean("running")) return c.getString(R.string.not_running)
-        val session = c.getString(if (s.optBoolean("session")) R.string.session_up else R.string.session_down)
-        return c.getString(R.string.one_line, routeName(c, s.optString("route")), stateName(c, s.optString("state")), session)
+        return c.getString(R.string.one_line, routeName(c, s.optString("route")), stateName(c, s.optString("state")), tunnelState(c, s))
     }
+
+    /** Notification title and text: the route, then the network and the tunnel. */
+    fun notification(c: Context, s: JSONObject): Pair<String, String> {
+        if (!s.optBoolean("running")) return c.getString(R.string.app_name) to c.getString(R.string.not_running)
+        return c.getString(R.string.notification_route, routeName(c, s.optString("route"))) to
+            c.getString(R.string.notification_state, stateName(c, s.optString("state")), tunnelState(c, s))
+    }
+
+    /** up / down, or "no link" when the router runs without a tunnel. */
+    private fun tunnelState(c: Context, s: JSONObject): String = c.getString(when {
+        s.optString("zone").isEmpty() -> R.string.tunnel_no_link
+        s.optBoolean("session") -> R.string.session_up
+        else -> R.string.session_down
+    })
 
     fun full(c: Context, s: JSONObject): String {
         if (!s.optBoolean("running")) return c.getString(R.string.proxy_not_running)
@@ -35,9 +48,13 @@ object StatusText {
         }
         sb.append(c.getString(R.string.status_probe_hosts,
             list(s.optJSONArray("relays")).ifEmpty { c.getString(R.string.none_yet) })).append('\n')
-        val session = c.getString(if (s.optBoolean("session")) R.string.session_up else R.string.session_down)
-        sb.append(c.getString(R.string.status_session, session, s.optInt("resolvers"),
-            s.optString("operator").ifEmpty { "?" })).append('\n')
+        if (s.optString("zone").isEmpty()) {
+            sb.append(c.getString(R.string.status_no_tunnel)).append('\n')
+        } else {
+            val session = c.getString(if (s.optBoolean("session")) R.string.session_up else R.string.session_down)
+            sb.append(c.getString(R.string.status_session, session, s.optInt("resolvers"),
+                s.optString("operator").ifEmpty { "?" })).append('\n')
+        }
         sb.append(c.getString(R.string.status_network_resolvers,
             list(s.optJSONArray("network_resolvers")).ifEmpty { c.getString(R.string.none) })).append('\n')
         if (s.optBoolean("dns_intercepted")) {

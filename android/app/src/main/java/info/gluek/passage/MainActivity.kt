@@ -2,6 +2,7 @@ package info.gluek.passage
 
 import android.Manifest
 import android.app.Activity
+import android.app.AlertDialog
 import android.content.ActivityNotFoundException
 import android.content.Intent
 import android.content.pm.PackageManager
@@ -162,18 +163,37 @@ class MainActivity : Activity() {
     }
 
     private fun onStartClicked() {
-        if (settings.link.isEmpty()) {
-            Toast.makeText(this, getString(R.string.need_link_first), Toast.LENGTH_SHORT).show()
-            startActivity(Intent(this, SettingsActivity::class.java))
-            return
-        }
-        if (Build.VERSION.SDK_INT >= 33 &&
-            checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
-        ) {
-            requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), 1)
-        }
         PassageService.start(this)
         main.postDelayed({ refresh() }, 500)
+        askNotifications()
+    }
+
+    override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        if (grantResults.firstOrNull() == PackageManager.PERMISSION_GRANTED) PassageService.refreshNotification(this)
+    }
+
+    /**
+     * Android 13+ asks before an app may show notifications. The proxy runs
+     * without it, but its notification (route, Stop button) stays hidden, so
+     * say why first; once, since Android stops asking after two refusals.
+     */
+    private fun askNotifications() {
+        if (Build.VERSION.SDK_INT < 33 ||
+            checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED ||
+            settings.askedNotifications
+        ) {
+            return
+        }
+        settings.askedNotifications = true
+        AlertDialog.Builder(this)
+            .setTitle(R.string.notifications_title)
+            .setMessage(R.string.notifications_why)
+            .setPositiveButton(R.string.notifications_continue) { _, _ ->
+                requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), 1)
+            }
+            .setNegativeButton(R.string.notifications_not_now, null)
+            .show()
     }
 
     private fun refresh() {
@@ -184,7 +204,6 @@ class MainActivity : Activity() {
         }
         val hasLink = settings.link.isNotEmpty()
         noLinkBox.visibility = if (hasLink) View.GONE else View.VISIBLE
-        connectBox.visibility = if (hasLink) View.VISIBLE else View.GONE
         detailsView.text = if (settings.auth) {
             getString(R.string.proxy_details, Settings.HOST, settings.port, settings.user, settings.pass)
         } else {

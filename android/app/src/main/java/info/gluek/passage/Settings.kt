@@ -34,6 +34,11 @@ class Settings(context: Context) {
         get() = prefs.getBoolean("running", false)
         set(v) = prefs.edit().putBoolean("running", v).apply()
 
+    /** The notification explainer was shown (Android 13+ asks at most twice). */
+    var askedNotifications: Boolean
+        get() = prefs.getBoolean("asked_notifications", false)
+        set(v) = prefs.edit().putBoolean("asked_notifications", v).apply()
+
     /**
      * Require the SOCKS5 username and password. Off ("open mode") is for
      * clients that can't send them: then any app on the phone can use the port.

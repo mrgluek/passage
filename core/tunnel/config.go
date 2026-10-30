@@ -131,14 +131,17 @@ func ParseLink(link string) (Config, error) {
 // Normalize validates the config and fills defaults.
 func (c Config) Normalize() (Config, error) {
 	c.Zone = strings.TrimSuffix(strings.ToLower(strings.TrimSpace(c.Zone)), ".")
-	if err := checkZone(c.Zone); err != nil {
-		return Config{}, err
+	// Without a zone and key (no link yet) the router runs without the tunnel.
+	if c.Zone != "" || strings.TrimSpace(c.Key) != "" {
+		if err := checkZone(c.Zone); err != nil {
+			return Config{}, err
+		}
+		key, err := decodeKey(c.Key)
+		if err != nil {
+			return Config{}, err
+		}
+		c.Key = base64.StdEncoding.EncodeToString(key)
 	}
-	key, err := decodeKey(c.Key)
-	if err != nil {
-		return Config{}, err
-	}
-	c.Key = base64.StdEncoding.EncodeToString(key)
 
 	var rs []string
 	seen := map[string]bool{}
@@ -191,11 +194,17 @@ func (c Config) Normalize() (Config, error) {
 	default:
 		return Config{}, fmt.Errorf("unknown mode %q", c.Mode)
 	}
+	if c.Mode == ModeAlways && !c.HasTunnel() {
+		c.Mode = ModeAuto
+	}
 	if c.Listen == "" {
 		c.Listen = "127.0.0.1:0"
 	}
 	return c, nil
 }
+
+// HasTunnel reports whether the config carries a tunnel (a link was given).
+func (c Config) HasTunnel() bool { return c.Zone != "" }
 
 // Effective is the resolver list the tunnel uses: the network's resolvers,
 // then the SIM operator's known resolvers, then the link's extra resolvers,

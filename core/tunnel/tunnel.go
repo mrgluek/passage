@@ -171,20 +171,6 @@ func Start(cfg Config) (*Tunnel, error) {
 	if err != nil {
 		return nil, err
 	}
-	key, _ := base64.StdEncoding.DecodeString(cfg.Key)
-	resolvers, skippedPrivate := withoutForeignPrivate(cfg.Effective(), cfg.SystemResolvers)
-	resolvers = ipv4First(resolvers)
-	skipped6 := 0
-	// On a network that redirects port 53, lead with the DoT paths.
-	intercepted := detectInterception(context.Background(), interceptProbeTimeout)
-	if intercepted {
-		resolvers = dotFirst(resolvers)
-	}
-	if !hasIPv6Route() {
-		// Without an IPv6 route these paths can only fail. A network change
-		// restarts the tunnel and re-checks.
-		resolvers, skipped6 = withoutIPv6(resolvers)
-	}
 	t := &Tunnel{
 		cfg:        cfg,
 		log:        newEventLog(500),
@@ -196,48 +182,72 @@ func Start(cfg Config) (*Tunnel, error) {
 		state:      "unknown",
 	}
 	t.ctx, t.cancel = context.WithCancel(context.Background())
-	client, err := soar.NewClient(soar.Config{
-		Zone:          cfg.Zone,
-		ServerKey:     ed25519.PublicKey(key),
-		Resolvers:     resolvers,
-		TCP:           "auto",
-		SafeQName:     cmp.Or(cfg.SafeQName, soarSafeQName),
-		MaxPathWindow: soarPathWindow,
-		DialTCP:       dialResolver,
-		StreamOnly:    isDoT, // DoT resolvers get their TCP (TLS) path at once, no doomed UDP probe
-		Logger:        slog.New(&logHandler{log: t.log}),
-	})
-	if err != nil {
-		return nil, err
+	var skipped6, skippedPrivate int
+	if cfg.HasTunnel() {
+		key, _ := base64.StdEncoding.DecodeString(cfg.Key)
+		var resolvers []string
+		resolvers, skippedPrivate = withoutForeignPrivate(cfg.Effective(), cfg.SystemResolvers)
+		resolvers = ipv4First(resolvers)
+		// On a network that redirects port 53, lead with the DoT paths.
+		t.intercepted = detectInterception(context.Background(), interceptProbeTimeout)
+		if t.intercepted {
+			resolvers = dotFirst(resolvers)
+		}
+		if !hasIPv6Route() {
+			// Without an IPv6 route these paths can only fail. A network change
+			// restarts the tunnel and re-checks.
+			resolvers, skipped6 = withoutIPv6(resolvers)
+		}
+		client, err := soar.NewClient(soar.Config{
+			Zone:          cfg.Zone,
+			ServerKey:     ed25519.PublicKey(key),
+			Resolvers:     resolvers,
+			TCP:           "auto",
+			SafeQName:     cmp.Or(cfg.SafeQName, soarSafeQName),
+			MaxPathWindow: soarPathWindow,
+			DialTCP:       dialResolver,
+			StreamOnly:    isDoT, // DoT resolvers get their TCP (TLS) path at once, no doomed UDP probe
+			Logger:        slog.New(&logHandler{log: t.log}),
+		})
+		if err != nil {
+			return nil, err
+		}
+		t.client = client
+		t.resolvers = resolvers
 	}
-	t.client = client
-	t.resolvers = resolvers
-	t.intercepted = intercepted
 	d := &net.Dialer{Timeout: directDialTimeout}
 	t.ways[RouteDirect] = way{d.DialContext, directDialTimeout}
-	t.ways[RouteTunnel] = way{client.DialContext, tunnelDialTimeout}
 	t.strategies = smartStrategies()
 	t.useKnownStrategy()
 	t.probeTLS = probeTLS
-	t.probeTunnel = func(ctx context.Context, hostport, sni string) error {
-		return probeTLSVia(ctx, t.ways[RouteTunnel].dial, hostport, sni)
+	if t.client != nil {
+		t.ways[RouteTunnel] = way{t.client.DialContext, tunnelDialTimeout}
+		t.probeTunnel = func(ctx context.Context, hostport, sni string) error {
+			return probeTLSVia(ctx, t.ways[RouteTunnel].dial, hostport, sni)
+		}
+		t.established = t.client.Established
 	}
-	t.established = client.Established
 
 	ln, err := net.Listen("tcp", cfg.Listen)
 	if err != nil {
-		client.Close()
+		if t.client != nil {
+			t.client.Close()
+		}
 		return nil, err
 	}
 	t.ln = ln
 	t.useProbeTargets()
 	t.setRouteLocked(initialRoute(cfg.Mode), "start")
-	t.log.add("started: mode=%s resolvers=%d (network %d, operator %s +%d) soar=%s", cfg.Mode, len(resolvers),
-		len(cfg.SystemResolvers), cfg.Operator, len(OperatorResolvers[cfg.Operator]), SoarVersion())
+	if t.client == nil {
+		t.log.add("started: mode=%s, no tunnel (no link)", cfg.Mode)
+	} else {
+		t.log.add("started: mode=%s resolvers=%d (network %d, operator %s +%d) soar=%s", cfg.Mode, len(t.resolvers),
+			len(cfg.SystemResolvers), cfg.Operator, len(OperatorResolvers[cfg.Operator]), SoarVersion())
+	}
 	if skipped6 > 0 {
 		t.log.add("no IPv6 route: skipped %d IPv6 resolvers", skipped6)
 	}
-	if intercepted {
+	if t.intercepted {
 		t.log.add("this network intercepts DNS (port 53): plain-DNS paths all reach one resolver; DoT paths moved first")
 		go t.learnDNSEgress()
 	}
@@ -328,6 +338,10 @@ func (t *Tunnel) SetMode(mode string) error {
 	t.mu.Lock()
 	t.mode = mode
 	t.failStreak, t.okStreak = 0, 0
+	if mode == ModeAlways && t.ways[RouteTunnel].dial == nil {
+		mode = ModeAuto
+		t.mode = mode
+	}
 	switch mode {
 	case ModeAlways:
 		t.setRouteLocked(RouteTunnel, "mode always")
@@ -771,6 +785,9 @@ func (t *Tunnel) applyProbe(res probeResult) {
 	t.lastResult = res
 	healthy := t.tunnelFails == 0 && (t.client == nil || t.client.Established())
 	route, fail, ok, state := decide(t.route, res, t.failStreak, t.okStreak, healthy)
+	if t.ways[route].dial == nil { // no tunnel without a link, no smart without a strategy
+		route = RouteDirect
+	}
 	if state != t.state {
 		via := ""
 		if res.CanaryChecked {

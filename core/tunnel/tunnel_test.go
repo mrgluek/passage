@@ -898,3 +898,36 @@ func TestParseWebLink(t *testing.T) {
 		}
 	}
 }
+
+func TestStartWithoutLink(t *testing.T) {
+	tt, err := Start(Config{Mode: ModeAlways, Listen: "127.0.0.1:0"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tt.Close()
+	s := tt.Status(0)
+	if strings.Join(s.Routes, ",") != "direct" || s.Mode != ModeAuto || s.Route != "direct" || s.Zone != "" {
+		t.Fatalf("without a link: routes %v mode %s route %s zone %q", s.Routes, s.Mode, s.Route, s.Zone)
+	}
+	if err := tt.SetMode(ModeAlways); err != nil || tt.Status(0).Mode != ModeAuto {
+		t.Fatalf("always without a tunnel must fall back to auto: %v %s", err, tt.Status(0).Mode)
+	}
+	if _, err := (Config{Zone: "t.example.org"}).Normalize(); err == nil {
+		t.Error("a zone without a key is still an error")
+	}
+	if _, err := (Config{Key: testKey}).Normalize(); err == nil {
+		t.Error("a key without a zone is still an error")
+	}
+}
+
+func TestBlockedWithoutTunnelStaysDirect(t *testing.T) {
+	down := func(context.Context, string, string) (net.Conn, error) { return nil, errors.New("down") }
+	tt := newTestTunnel(t, ModeAuto, down, nil)
+	defer tt.Close()
+	blocked := probeResult{Relays: 1, CanaryOK: true, CanaryChecked: true}
+	tt.applyProbe(blocked)
+	tt.applyProbe(blocked)
+	if s := tt.Status(0); s.Route != "direct" || s.State != "blocked" {
+		t.Fatalf("with no tunnel the route stays direct: %s %s", s.Route, s.State)
+	}
+}
