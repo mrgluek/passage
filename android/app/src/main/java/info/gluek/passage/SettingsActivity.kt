@@ -22,8 +22,8 @@ import java.util.concurrent.Executors
 
 /**
  * The link (pasted or opened once, kept in app-private storage), probe hosts,
- * routing mode, proxy access and startup. A valid link stays folded so its
- * key is not on screen.
+ * routing mode, proxy access and background running. A valid link stays
+ * folded so its key is not on screen.
  */
 class SettingsActivity : Activity() {
     private val worker = Executors.newSingleThreadExecutor()
@@ -158,12 +158,7 @@ class SettingsActivity : Activity() {
         })
         col.addView(Ui.hint(this, getString(R.string.new_access_help)))
 
-        col.addView(Ui.heading(this, getString(R.string.startup_label)))
-        col.addView(CheckBox(this).apply {
-            text = getString(R.string.start_on_boot)
-            isChecked = settings.startOnBoot
-            setOnCheckedChangeListener { _, on -> settings.startOnBoot = on }
-        })
+        col.addView(Ui.heading(this, getString(R.string.background_label)))
         batteryButton = Button(this).apply {
             text = getString(R.string.battery)
             setOnClickListener { Ui.askBatteryExemption(this@SettingsActivity) }

@@ -10,7 +10,6 @@ First public version.
 - Picks the connection automatically, or set it by hand: Auto, Always
   tunnel, Never tunnel.
 - Set up with a `passage://` link: paste it, or tap it to open the app.
-- Optional start after the phone restarts.
 - Status screen, **Check now**, and a report you can send from the app.
 - About shows the version and the signing certificate fingerprint.
 - English and Russian.

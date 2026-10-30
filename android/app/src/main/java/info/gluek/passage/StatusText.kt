@@ -106,7 +106,6 @@ object StatusText {
             .put("version", version)
             .put("listen", settings.listen)
             .put("auth", settings.auth)
-            .put("start_on_boot", settings.startOnBoot)
             .put("mode_setting", settings.mode)
             .put("probe_hosts", JSONArray(settings.probeTargets()))
             .put("last_error", PassageService.lastError ?: JSONObject.NULL))

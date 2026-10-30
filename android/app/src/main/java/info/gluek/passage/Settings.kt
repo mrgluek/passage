@@ -34,11 +34,6 @@ class Settings(context: Context) {
         get() = prefs.getBoolean("running", false)
         set(v) = prefs.edit().putBoolean("running", v).apply()
 
-    /** Start the proxy after the phone boots, if it was running before. */
-    var startOnBoot: Boolean
-        get() = prefs.getBoolean("start_on_boot", false)
-        set(v) = prefs.edit().putBoolean("start_on_boot", v).apply()
-
     /**
      * Require the SOCKS5 username and password. Off ("open mode") is for
      * clients that can't send them: then any app on the phone can use the port.

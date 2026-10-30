@@ -88,8 +88,7 @@
     <string name="new_access">New port and password</string>
     <string name="new_access_help">Apps set up with the old proxy link stop connecting until you paste the new one.</string>
     <string name="new_access_done">New port and password set</string>
-    <string name="startup_label">Startup</string>
-    <string name="start_on_boot">Start after the phone restarts, if the proxy was running</string>
+    <string name="background_label">Background</string>
     <string name="about_label">About</string>
     <string name="about_version">Passage %1$s (build %2$d), soar %3$s</string>
     <string name="about_cert">Signing certificate, SHA-256:</string>
