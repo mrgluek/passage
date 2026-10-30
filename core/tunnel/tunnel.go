@@ -24,19 +24,25 @@ import (
 	"github.com/getlantern/soar"
 )
 
-// Route is where new connections go.
+// Route is one way to open connections. Routes are ordered from the most
+// direct to the last resort; in auto mode a connection that fails on one
+// route falls through to the next.
 type Route int
 
 const (
 	RouteDirect Route = iota
 	RouteTunnel
+	numRoutes
 )
 
-func (r Route) String() string {
-	if r == RouteTunnel {
-		return "tunnel"
-	}
-	return "direct"
+var routeNames = [numRoutes]string{"direct", "tunnel"}
+
+func (r Route) String() string { return routeNames[r] }
+
+// way is how a route dials; a nil dial means the route isn't set up here.
+type way struct {
+	dial    dialFunc
+	timeout time.Duration
 }
 
 // soar tuning: full-length query names and a wider per-path window.
@@ -80,9 +86,8 @@ type Tunnel struct {
 	wg        sync.WaitGroup
 
 	// Swappable for tests.
-	dialDirect dialFunc
-	dialTunnel dialFunc
-	probeTLS   func(ctx context.Context, hostport, sni string) error
+	ways     [numRoutes]way
+	probeTLS func(ctx context.Context, hostport, sni string) error
 	// probeTunnel is probeTLS through the tunnel. established reports a live
 	// soar session: only then does a relay failing through the tunnel prove
 	// the relay is down (see confirmViaTunnel).
@@ -107,11 +112,11 @@ type Tunnel struct {
 	lastProbe   time.Time
 	lastResult  probeResult
 	lastCanary  string // the canary that answered last; tried first next time
-	stats       [2]routeStats
+	stats       [numRoutes]routeStats
 	// Bytes per route, counted as they flow: IMAP IDLE connections live for
 	// hours, so totals taken at close would show nothing for them.
-	upBytes   [2]atomic.Int64
-	downBytes [2]atomic.Int64
+	upBytes   [numRoutes]atomic.Int64
+	downBytes [numRoutes]atomic.Int64
 }
 
 type tracked struct {
@@ -192,11 +197,11 @@ func Start(cfg Config) (*Tunnel, error) {
 	t.resolvers = resolvers
 	t.intercepted = intercepted
 	d := &net.Dialer{Timeout: directDialTimeout}
-	t.dialDirect = d.DialContext
-	t.dialTunnel = client.DialContext
+	t.ways[RouteDirect] = way{d.DialContext, directDialTimeout}
+	t.ways[RouteTunnel] = way{client.DialContext, tunnelDialTimeout}
 	t.probeTLS = probeTLS
 	t.probeTunnel = func(ctx context.Context, hostport, sni string) error {
-		return probeTLSVia(ctx, t.dialTunnel, hostport, sni)
+		return probeTLSVia(ctx, t.ways[RouteTunnel].dial, hostport, sni)
 	}
 	t.established = client.Established
 
@@ -429,32 +434,55 @@ func (t *Tunnel) handle(c net.Conn) {
 	}
 }
 
-// dial opens addr on the current route. In auto mode a failed direct dial
-// falls back to the tunnel for this connection and triggers a probe.
+// dial opens addr on the current route. In auto mode a failed dial falls
+// through to the next set-up route for this connection and triggers a probe.
+// The error of the last route tried is returned for the caller to count.
 func (t *Tunnel) dial(addr string) (net.Conn, Route, error) {
 	t.mu.Lock()
 	route, mode := t.route, t.mode
 	t.mu.Unlock()
-	if route == RouteDirect {
-		ctx, cancel := context.WithTimeout(t.ctx, directDialTimeout)
-		c, err := t.dialDirect(ctx, "tcp", addr)
+	for r := route; ; {
+		ctx, cancel := context.WithTimeout(t.ctx, t.ways[r].timeout)
+		c, err := t.ways[r].dial(ctx, "tcp", addr)
 		cancel()
 		if err == nil {
-			return c, RouteDirect, nil
+			return c, r, nil
+		}
+		next := t.nextRoute(r)
+		if next == r {
+			return nil, r, err
 		}
 		t.kickProbe()
 		if mode != ModeAuto {
-			return nil, RouteDirect, err // counted by the caller
+			return nil, r, err
 		}
 		t.mu.Lock()
-		t.stats[RouteDirect].Fails++
+		t.stats[r].Fails++
 		t.mu.Unlock()
-		t.log.add("direct dial %s failed (%v); trying the tunnel", addr, err)
+		t.log.add("%s dial %s failed (%v); trying %s", r, addr, err, next)
+		r = next
 	}
-	ctx, cancel := context.WithTimeout(t.ctx, tunnelDialTimeout)
-	defer cancel()
-	c, err := t.dialTunnel(ctx, "tcp", addr)
-	return c, RouteTunnel, err
+}
+
+// nextRoute is the next set-up route after r, or r itself if there is none.
+func (t *Tunnel) nextRoute(r Route) Route {
+	for n := r + 1; n < numRoutes; n++ {
+		if t.ways[n].dial != nil {
+			return n
+		}
+	}
+	return r
+}
+
+// routes lists the set-up routes in order.
+func (t *Tunnel) routes() []string {
+	var out []string
+	for r := Route(0); r < numRoutes; r++ {
+		if t.ways[r].dial != nil {
+			out = append(out, r.String())
+		}
+	}
+	return out
 }
 
 // pipe copies src to dst, counting bytes into conn and route as they flow,
@@ -858,6 +886,7 @@ type Status struct {
 	Zone       string                `json:"zone"`
 	Mode       string                `json:"mode"`
 	Route      string                `json:"route"`
+	Routes     []string              `json:"routes"` // set-up routes, in fallback order
 	RouteSince time.Time             `json:"route_since"`
 	State      string                `json:"state"`
 	Resolvers  int                   `json:"resolvers"`
@@ -897,9 +926,14 @@ func (t *Tunnel) Status(n int) Status {
 		Operator:       t.cfg.Operator,
 		LastProbe:      t.lastProbe.UTC(),
 		LastResult:     t.lastResult,
-		Active:         map[string]int{"direct": 0, "tunnel": 0},
-		Stats:          map[string]routeStats{"direct": t.routeStatsLocked(RouteDirect), "tunnel": t.routeStatsLocked(RouteTunnel)},
+		Routes:         t.routes(),
+		Active:         map[string]int{},
+		Stats:          map[string]routeStats{},
 		Soar:           SoarVersion(),
+	}
+	for r := Route(0); r < numRoutes; r++ {
+		s.Active[r.String()] = 0
+		s.Stats[r.String()] = t.routeStatsLocked(r)
 	}
 	for h := range t.relays {
 		s.Relays = append(s.Relays, h)

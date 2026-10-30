@@ -111,7 +111,7 @@ func newTestTunnel(t *testing.T, mode string, direct, tun dialFunc) *Tunnel {
 	}
 	tt := &Tunnel{cfg: cfg, log: newEventLog(100), kick: make(chan struct{}, 1), mode: mode,
 		conns: map[*tracked]struct{}{}, relays: map[string]time.Time{}, relayPorts: map[string]string{}, state: "unknown",
-		dialDirect: direct, dialTunnel: tun,
+		ways:     [numRoutes]way{{direct, time.Second}, {tun, time.Second}},
 		probeTLS: func(context.Context, string, string) error { return errors.New("no probes in tests") }}
 	tt.ctx, tt.cancel = context.WithCancel(context.Background())
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
@@ -685,5 +685,47 @@ func TestSilentCanaryDoesNotHoldUpTheNext(t *testing.T) {
 	}
 	if !cancelled.Load() {
 		t.Fatal("the silent canary's probe must be cancelled once another answers")
+	}
+}
+
+func TestDialFallsThroughRoutesInOrder(t *testing.T) {
+	var tried []string
+	fail := func(name string) dialFunc {
+		return func(context.Context, string, string) (net.Conn, error) {
+			tried = append(tried, name)
+			return nil, errors.New(name + " down")
+		}
+	}
+	tt := newTestTunnel(t, ModeAuto, fail("direct"), fail("tunnel"))
+	defer tt.Close()
+
+	_, r, err := tt.dial("relay.example.org:993")
+	if err == nil || r != RouteTunnel || strings.Join(tried, ",") != "direct,tunnel" {
+		t.Fatalf("auto: route %v err %v tried %v", r, err, tried)
+	}
+	if got := tt.Status(0).Stats["direct"].Fails; got != 1 {
+		t.Errorf("the direct failure before falling through counts once, got %d", got)
+	}
+
+	tried = nil
+	tt.SetMode(ModeOff)
+	if _, r, _ := tt.dial("relay.example.org:993"); r != RouteDirect || strings.Join(tried, ",") != "direct" {
+		t.Fatalf("off: never falls through to the tunnel, route %v tried %v", r, tried)
+	}
+}
+
+func TestRouteWithoutDialerIsSkipped(t *testing.T) {
+	down := func(context.Context, string, string) (net.Conn, error) { return nil, errors.New("down") }
+	tt := newTestTunnel(t, ModeAuto, down, nil)
+	defer tt.Close()
+	if _, r, err := tt.dial("relay.example.org:993"); err == nil || r != RouteDirect {
+		t.Fatalf("with no tunnel set up the direct error comes back: route %v err %v", r, err)
+	}
+	s := tt.Status(0)
+	if strings.Join(s.Routes, ",") != "direct" {
+		t.Errorf("routes %v, want only direct", s.Routes)
+	}
+	if _, ok := s.Stats["tunnel"]; !ok {
+		t.Errorf("stats keep every route's key for the app: %v", s.Stats)
 	}
 }
