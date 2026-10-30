@@ -57,8 +57,9 @@ This builds one APK per ABI plus a universal one; `versionCode` becomes
 Without signing variables the release APKs are unsigned, so they can't be
 installed by mistake: a debug-signed build could not be updated by real
 releases.
-`release.yml` signs tagged builds with `PASSAGE_KEYSTORE` (PKCS12),
-`PASSAGE_KEYSTORE_PASS` and `PASSAGE_KEY_ALIAS`.
+`release.yml` signs tagged builds with `PASSAGE_KEYSTORE` (PKCS12, from the
+`PASSAGE_KEYSTORE_B64` secret), `PASSAGE_KEYSTORE_PASS` and the key alias
+`passage`.
 
 CI (`ci.yml`) runs the same steps on every push and pull request, except
 those that only touch the website, store listing or docs.

@@ -1,6 +1,8 @@
 Passage runs a local SOCKS5 proxy on 127.0.0.1. Messaging apps on the phone that support a SOCKS5 proxy connect to it, and Passage picks the best available connection for them automatically.
 
-* Set up with a passage:// link: paste it, or tap it to open the app.
+* Works on its own, without any setup; a link (https://passage.gluek.info/link#… or passage://…) adds a tunnel.
+* Each mail server, and Telegram, gets its own route, and what works is remembered per network.
 * Copy proxy link sets up another app in one paste.
 * The proxy uses a random port, username and password made on the phone.
+* Test network checks every server and every way at once; the result can be shared.
 * Status screen, Check now, and a report you can send from the app.
