@@ -11,23 +11,19 @@ class Settings(context: Context) {
         get() = prefs.getString("link", "") ?: ""
         set(v) = prefs.edit().putString("link", v.trim()).apply()
 
+    var routesConfig: String
+        get() = prefs.getString("routes_config", "") ?: ""
+        private set(v) { prefs.edit().putString("routes_config", v).apply() }
+
+    fun saveRoutes(link: String, config: String) {
+        prefs.edit().putString("link", link).putString("routes_config", config).apply()
+    }
+
     /** auto, always or off. */
     var mode: String
         get() = prefs.getString("mode", "auto") ?: "auto"
         set(v) = prefs.edit().putString("mode", v).apply()
 
-    /** Hosts probed to decide the route. */
-    var probeHosts: String
-        get() = prefs.getString("probe", "") ?: ""
-        set(v) = prefs.edit().putString("probe", v.trim()).apply()
-
-    /**
-     * Start every resolver path at soar's short 101-char query names and let
-     * soar grow them to 253, instead of starting at 253.
-     */
-    var shortNames: Boolean
-        get() = prefs.getBoolean("short_names", false)
-        set(v) = prefs.edit().putBoolean("short_names", v).apply()
 
     /** The user wants the proxy on: a system restart of the service resumes it. */
     var running: Boolean
@@ -91,8 +87,6 @@ class Settings(context: Context) {
         if (prefs.getInt("port", 0) == 0) newAccess()
     }
 
-    fun probeTargets(): List<String> = splitHosts(probeHosts)
-
     companion object {
         const val HOST = "127.0.0.1"
         private const val MIN_PORT = 20000
@@ -104,8 +98,5 @@ class Settings(context: Context) {
             random.nextBytes(b)
             return b.joinToString("") { "%02x".format(it) }
         }
-
-        fun splitHosts(s: String): List<String> =
-            s.split(',', ' ', '\n', ';').map { it.trim() }.filter { it.isNotEmpty() }
     }
 }

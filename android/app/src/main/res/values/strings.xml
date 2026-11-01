@@ -2,8 +2,8 @@
 <resources>
     <string name="app_name" translatable="false">Passage</string>
     <string name="link_label">Link</string>
-    <string name="link_hint" translatable="false">passage://tunnel?v=1&amp;zone=…&amp;key=…</string>
-    <string name="link_empty">Paste the passage://tunnel link you received.</string>
+    <string name="link_hint" translatable="false">https://passage.gluek.info/link#…</string>
+    <string name="link_empty">Paste the link you received.</string>
     <string name="link_ok_zone">Link OK: zone %1$s</string>
     <string name="server_ipv6_on">Server IPv6: enabled</string>
     <string name="server_ipv6_off">Server IPv6: disabled</string>
@@ -15,10 +15,6 @@
     <string name="link_error_toast">Link: %1$s</string>
     <string name="native_broken">Native library missing or broken: %1$s</string>
 
-    <string name="probe_label">Probe hosts</string>
-    <string name="probe_help">Hosts that stop answering when the network is restricted, e.g. your relay (host or host:port, comma-separated). Empty = learn them from traffic, which only works if nothing but a mail app uses the proxy.</string>
-    <string name="probe_hint" translatable="false">relay.example.org</string>
-    <string name="short_names">Short names first (start at 101 chars, grow to 253)</string>
     <string name="save">Save</string>
 
     <string name="route_label">Route</string>
@@ -37,13 +33,11 @@
 
     <string name="not_running">not running</string>
     <string name="proxy_not_running">Proxy is not running.</string>
-    <string name="one_line">%1$s · %2$s · tunnel: %3$s</string>
+    <string name="one_line">%1$s · %2$s · %3$s</string>
     <string name="group_mail">Mail: %1$s</string>
     <string name="group_telegram">Telegram: %1$s</string>
     <string name="route_direct">direct</string>
     <string name="route_tunnel">tunnel</string>
-    <string name="session_up">up</string>
-    <string name="session_down">down</string>
 
     <string name="state_direct">open (probe hosts answer directly)</string>
     <string name="state_blocked">restricted (probe hosts fail, other sites answer)</string>
@@ -59,7 +53,7 @@
     <string name="status_probe_hosts">Probe hosts: %1$s</string>
     <string name="none_yet">none yet</string>
     <string name="none">none</string>
-    <string name="status_session">Tunnel session: %1$s, resolvers: %2$d, operator %3$s</string>
+    <string name="status_session">Tunnel: %1$s; resolvers: %2$d, operator %3$s</string>
     <string name="status_network_resolvers">Network resolvers: %1$s</string>
     <string name="status_intercepted">This network intercepts DNS</string>
     <string name="status_intercepted_via">This network intercepts DNS (answered via %1$s)</string>
@@ -105,9 +99,14 @@
     <string name="status_smart">Direct (tuned)</string>
     <string name="about_licenses">Open-source licenses</string>
     <string name="tunnel_no_link">no link</string>
+    <string name="tunnel_label">tunnel: %1$s</string>
+    <string name="tunnel_route">%1$s: %2$s</string>
+    <string name="route_state_up">up</string>
+    <string name="route_state_failed">failed</string>
+    <string name="route_state_idle">idle</string>
     <string name="status_no_tunnel">Tunnel: no link (add one in settings)</string>
     <string name="notification_route">Route: %1$s</string>
-    <string name="notification_state">%1$s · tunnel: %2$s</string>
+    <string name="notification_state">%1$s · %2$s</string>
     <string name="background_help">Passage has to keep running while the screen is off. Otherwise Android may stop it after a while to save battery, and your messaging apps lose their connection.</string>
     <string name="background_allowed">Allowed: Android won\'t stop Passage to save battery.</string>
     <string name="notifications_title">Notification while running</string>
@@ -121,4 +120,13 @@
     <string name="test_target">target</string>
     <string name="test_time">Network test at %1$s</string>
     <string name="share">Share</string>
+    <string name="import_title">Import routes</string>
+    <string name="import_trusted">Signed by the trusted author.</string>
+    <string name="import_untrusted">The author is not verified. Import only from someone you trust.</string>
+    <string name="import_replace">Replace all saved routes with this set.</string>
+    <string name="import_merge">Add these routes. Existing IDs will be updated; other routes stay saved.</string>
+    <string name="import_personal">This link contains access credentials. Forwarding it shares access.</string>
+    <string name="import_route_count">Saved routes: %1$d (%2$s)</string>
+    <string name="import_collision">Routes with the same ID will be overwritten.</string>
+    <string name="import_clear">Remove all saved routes.</string>
 </resources>

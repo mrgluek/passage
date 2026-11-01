@@ -11,6 +11,11 @@ case "$(uname -s)" in
 esac
 ndk="$ANDROID_HOME/ndk/27.2.12479018/toolchains/llvm/prebuilt/$host"
 libs="$root/android/app/src/main/nativeLibs"
+link_flags=""
+if [[ -n "${PASSAGE_LINK_AUTHOR_KEY:-}" ]]; then
+  [[ "$PASSAGE_LINK_AUTHOR_KEY" =~ ^[A-Za-z0-9_-]{43}$ ]] || { echo "invalid author public key" >&2; exit 1; }
+  link_flags="-X github.com/mrgluek/passage/core/tunnel.AuthorKey=$PASSAGE_LINK_AUTHOR_KEY"
+fi
 
 build() { # abi goarch clang-triple
   local abi=$1 arch=$2 cc=$3
@@ -18,11 +23,12 @@ build() { # abi goarch clang-triple
   # 16 KB page alignment: required for 64-bit native libraries on Android 15+.
   CGO_ENABLED=1 GOOS=android GOARCH="$arch" GOARM=7 CC="$ndk/bin/${cc}24-clang" \
     go build -trimpath -buildvcs=false -buildmode=c-shared \
-    -ldflags="-s -w -buildid= -extldflags=-Wl,-z,max-page-size=16384" \
+    -ldflags="$link_flags -s -w -buildid= -extldflags=-Wl,-z,max-page-size=16384" \
     -o "$libs/$abi/libpassage.so" ./cmd/libpassage
   rm -f "$libs/$abi/libpassage.h"
 }
 
+python3 "$root/scripts/prepare-iroh.py"
 cd "$root/core"
 build arm64-v8a arm64 aarch64-linux-android
 build armeabi-v7a arm armv7a-linux-androideabi

@@ -77,6 +77,23 @@ func Java_info_gluek_passage_Native_parseLink(env *C.JNIEnv, cls C.jclass, link 
 	return result(env, cfg)
 }
 
+//export Java_info_gluek_passage_Native_importLink
+func Java_info_gluek_passage_Native_importLink(env *C.JNIEnv, cls C.jclass, request C.jbyteArray) C.jbyteArray {
+	var in struct {
+		Existing tunnel.Config `json:"existing"`
+		Link     string        `json:"link"`
+		Replace  bool          `json:"replace"`
+	}
+	if err := json.Unmarshal([]byte(goString(env, request)), &in); err != nil {
+		return fail(env, errors.New("invalid import request"))
+	}
+	out, err := tunnel.ImportLink(in.Existing, in.Link, in.Replace)
+	if err != nil {
+		return fail(env, err)
+	}
+	return result(env, out)
+}
+
 // start (re)starts the proxy from a config JSON and returns {"addr": "…"}.
 //
 //export Java_info_gluek_passage_Native_start

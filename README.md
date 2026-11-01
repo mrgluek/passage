@@ -75,6 +75,18 @@ send one, or make a new port and password.
 
 See [AGENTS.md](AGENTS.md).
 
+The native build also needs Python 3.12+ and Rust 1.99.1 with rustup.
+It builds the pinned iroh helper for both Android ABIs from source.
+Set `PASSAGE_LINK_AUTHOR_KEY` to the author’s raw Ed25519 public key
+(base64url without padding) to recognize signed v2 links. CI and releases
+read it from the repository variable of the same name. Without it,
+imports require the unverified-author confirmation.
+
+V2 links add routes or replace the saved set after confirmation. Connections
+try routes in priority order. Importing while running restarts the proxy.
+The shared link codec is copied from `passage-link` with
+`scripts/sync-link-codec.sh`; builds do not need that checkout.
+
 ## License
 
 [MIT](LICENSE)

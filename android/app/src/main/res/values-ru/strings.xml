@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="link_label">Ссылка</string>
-    <string name="link_empty">Вставьте полученную ссылку passage://tunnel.</string>
+    <string name="link_empty">Вставьте полученную ссылку.</string>
     <string name="link_ok_zone">Ссылка в порядке: зона %1$s</string>
     <string name="server_ipv6_on">IPv6 сервера: включён</string>
     <string name="server_ipv6_off">IPv6 сервера: выключен</string>
@@ -15,9 +15,6 @@
     <string name="link_error_toast">Ссылка: %1$s</string>
     <string name="native_broken">Нативная библиотека не найдена или повреждена: %1$s</string>
 
-    <string name="probe_label">Проверочные хосты</string>
-    <string name="probe_help">Хосты, которые перестают отвечать, когда сеть ограничена, например ваш релей (host или host:port через запятую). Пусто — узнавать их из трафика; это работает, только если прокси пользуется одно почтовое приложение.</string>
-    <string name="short_names">Сначала короткие имена (начать со 101 символа, расти до 253)</string>
     <string name="save">Сохранить</string>
 
     <string name="route_label">Маршрут</string>
@@ -36,13 +33,11 @@
 
     <string name="not_running">не запущен</string>
     <string name="proxy_not_running">Прокси не запущен.</string>
-    <string name="one_line">%1$s · %2$s · туннель: %3$s</string>
+    <string name="one_line">%1$s · %2$s · %3$s</string>
     <string name="group_mail">Почта: %1$s</string>
     <string name="group_telegram">Telegram: %1$s</string>
     <string name="route_direct">напрямую</string>
     <string name="route_tunnel">туннель</string>
-    <string name="session_up">есть</string>
-    <string name="session_down">нет</string>
 
     <string name="state_direct">открыта (проверочные хосты отвечают напрямую)</string>
     <string name="state_blocked">ограничена (проверочные хосты не отвечают, другие сайты отвечают)</string>
@@ -58,7 +53,7 @@
     <string name="status_probe_hosts">Проверочные хосты: %1$s</string>
     <string name="none_yet">пока нет</string>
     <string name="none">нет</string>
-    <string name="status_session">Сессия туннеля: %1$s, резолверов: %2$d, оператор %3$s</string>
+    <string name="status_session">Туннель: %1$s; резолверов: %2$d, оператор %3$s</string>
     <string name="status_network_resolvers">Резолверы сети: %1$s</string>
     <string name="status_intercepted">Эта сеть перехватывает DNS</string>
     <string name="status_intercepted_via">Эта сеть перехватывает DNS (отвечает %1$s)</string>
@@ -104,9 +99,14 @@
     <string name="status_smart">Напрямую (с подстройкой)</string>
     <string name="about_licenses">Лицензии открытого ПО</string>
     <string name="tunnel_no_link">нет ссылки</string>
+    <string name="tunnel_label">туннель: %1$s</string>
+    <string name="tunnel_route">%1$s: %2$s</string>
+    <string name="route_state_up">работает</string>
+    <string name="route_state_failed">сбой</string>
+    <string name="route_state_idle">не активен</string>
     <string name="status_no_tunnel">Туннель: нет ссылки (добавьте в настройках)</string>
     <string name="notification_route">Маршрут: %1$s</string>
-    <string name="notification_state">%1$s · туннель: %2$s</string>
+    <string name="notification_state">%1$s · %2$s</string>
     <string name="background_help">Passage должен работать и при выключенном экране. Иначе Android через какое-то время остановит его ради экономии заряда, и мессенджеры потеряют связь.</string>
     <string name="background_allowed">Разрешено: Android не будет останавливать Passage ради экономии заряда.</string>
     <string name="notifications_title">Уведомление во время работы</string>
@@ -120,4 +120,13 @@
     <string name="test_target">цель</string>
     <string name="test_time">Проверка сети в %1$s</string>
     <string name="share">Отправить</string>
+    <string name="import_title">Импорт маршрутов</string>
+    <string name="import_trusted">Подписано доверенным автором.</string>
+    <string name="import_untrusted">Автор не подтверждён. Импортируйте только из доверенного источника.</string>
+    <string name="import_replace">Заменить все сохранённые маршруты этим набором.</string>
+    <string name="import_merge">Добавить маршруты. Совпадающие ID будут обновлены, остальные маршруты сохранятся.</string>
+    <string name="import_personal">Ссылка содержит данные доступа. Пересылка ссылки передаёт доступ.</string>
+    <string name="import_route_count">Сохранено маршрутов: %1$d (%2$s)</string>
+    <string name="import_collision">Маршруты с совпадающими ID будут перезаписаны.</string>
+    <string name="import_clear">Удалить все сохранённые маршруты.</string>
 </resources>

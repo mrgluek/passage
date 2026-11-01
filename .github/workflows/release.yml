@@ -44,7 +44,14 @@ jobs:
         working-directory: ./core
         run: go test ./...
 
+      - name: Set up Rust
+        run: |
+          rustup toolchain install 1.99.1 --profile minimal
+          rustup default 1.99.1
+
       - name: Build libpassage.so
+        env:
+          PASSAGE_LINK_AUTHOR_KEY: ${{ vars.PASSAGE_LINK_AUTHOR_KEY }}
         run: scripts/build-native.sh
 
       - name: Build signed APK

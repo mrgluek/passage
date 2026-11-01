@@ -28,22 +28,26 @@ object StatusText {
      */
     private fun routes(c: Context, s: JSONObject): String {
         val groups = s.optJSONObject("groups") ?: JSONObject()
+        // Counted by name, so relays on iroh and on soar show apart.
         val counts = linkedMapOf<String, Int>()
-        for (route in listOf("direct", "smart", "tunnel")) {
-            val n = relays(groups).count { it.second.optString("route") == route }
-            if (n > 0) counts[route] = n
+        for ((_, g) in relays(groups)) {
+            val name = routeName(c, g.optString("route"), g.optString("via"))
+            counts[name] = (counts[name] ?: 0) + 1
         }
         val telegram = groups.optJSONObject("telegram")?.takeIf { (it.optJSONArray("targets")?.length() ?: 0) > 0 }
         if (counts.isEmpty() && telegram == null) {
-            return c.getString(R.string.notification_route, routeName(c, s.optString("route")))
+            return c.getString(R.string.notification_route, routeName(c, s.optString("route"), s.optString("via")))
         }
         val parts = mutableListOf<String>()
         if (counts.isNotEmpty()) {
-            val mail = if (counts.size == 1) routeName(c, counts.keys.first())
-            else counts.entries.joinToString(", ") { "${routeName(c, it.key)} (${it.value})" }
+            val mail = if (counts.size == 1) counts.keys.first()
+            else counts.entries.joinToString(", ") { "${it.key} (${it.value})" }
             parts += c.getString(R.string.group_mail, mail)
         }
-        if (telegram != null) parts += c.getString(R.string.group_telegram, routeName(c, telegram.optString("route")))
+        if (telegram != null) {
+            parts += c.getString(R.string.group_telegram,
+                routeName(c, telegram.optString("route"), telegram.optString("via")))
+        }
         return parts.joinToString(" · ")
     }
 
@@ -81,17 +85,39 @@ object StatusText {
         return sb.toString()
     }
 
-    /** up / down, or "no link" when the router runs without a tunnel. */
-    private fun tunnelState(c: Context, s: JSONObject): String = c.getString(when {
-        s.optString("zone").isEmpty() -> R.string.tunnel_no_link
-        s.optBoolean("session") -> R.string.session_up
-        else -> R.string.session_down
-    })
+    /** Each tunnel route's state ("iroh: up, soar: idle"), or "tunnel: no link". */
+    private fun tunnelState(c: Context, s: JSONObject): String {
+        val rows = tunnels(c, s)
+        if (rows.isEmpty()) return c.getString(R.string.tunnel_label, c.getString(R.string.tunnel_no_link))
+        return rows.joinToString(", ") { c.getString(R.string.tunnel_route, it.first, it.second) }
+    }
+
+    /**
+     * The tunnel routes as (name, state). The name is the route type, or the
+     * route ID when two routes share a type.
+     */
+    private fun tunnels(c: Context, s: JSONObject): List<Pair<String, String>> {
+        val list = s.optJSONArray("tunnels") ?: return emptyList()
+        val rows = (0 until list.length()).map { list.getJSONObject(it) }
+        val types = rows.groupingBy { it.optString("type") }.eachCount()
+        return rows.map { r ->
+            val type = r.optString("type")
+            val name = if ((types[type] ?: 0) > 1) r.optString("id") else type
+            name to routeStateName(c, r.optString("state"))
+        }
+    }
+
+    private fun routeStateName(c: Context, state: String): String = when (state) {
+        "up" -> c.getString(R.string.route_state_up)
+        "failed" -> c.getString(R.string.route_state_failed)
+        "idle" -> c.getString(R.string.route_state_idle)
+        else -> state
+    }
 
     fun full(c: Context, s: JSONObject): String {
         if (!s.optBoolean("running")) return c.getString(R.string.proxy_not_running)
         val sb = StringBuilder()
-        sb.append(c.getString(R.string.status_route, routeName(c, s.optString("route")).uppercase(),
+        sb.append(c.getString(R.string.status_route, routeName(c, s.optString("route"), s.optString("via")).uppercase(),
             clock(s.optString("route_since")), s.optString("mode"))).append('\n')
         sb.append(c.getString(R.string.status_network, stateName(c, s.optString("state")))).append('\n')
         val probe = s.optString("last_probe")
@@ -112,15 +138,14 @@ object StatusText {
         } else {
             sb.append(c.getString(R.string.status_relays)).append('\n')
             for ((name, g) in relays) {
-                sb.append(c.getString(R.string.status_relay, name, routeName(c, g.optString("route")),
+                sb.append(c.getString(R.string.status_relay, name, routeName(c, g.optString("route"), g.optString("via")),
                     stateName(c, g.optString("state")))).append('\n')
             }
         }
-        if (s.optString("zone").isEmpty()) {
+        if ((s.optString("zone").isEmpty() && s.optInt("route_count") == 0)) {
             sb.append(c.getString(R.string.status_no_tunnel)).append('\n')
         } else {
-            val session = c.getString(if (s.optBoolean("session")) R.string.session_up else R.string.session_down)
-            sb.append(c.getString(R.string.status_session, session, s.optInt("resolvers"),
+            sb.append(c.getString(R.string.status_session, tunnelState(c, s), s.optInt("resolvers"),
                 s.optString("operator").ifEmpty { "?" })).append('\n')
             sb.append(c.getString(if (s.optBoolean("tunnel_ipv6")) R.string.server_ipv6_on else R.string.server_ipv6_off)).append('\n')
         }
@@ -195,7 +220,6 @@ object StatusText {
             .put("listen", settings.listen)
             .put("auth", settings.auth)
             .put("mode_setting", settings.mode)
-            .put("probe_hosts", JSONArray(settings.probeTargets()))
             .put("last_error", PassageService.lastError ?: JSONObject.NULL))
         r.put("device_network", JSONObject()
             .put("transport", net.transport)
@@ -214,9 +238,10 @@ object StatusText {
         else -> state
     }
 
-    private fun routeName(c: Context, route: String): String = when (route) {
+    /** The route for people; a tunnel shows the route type that carries it (iroh, soar), when known. */
+    private fun routeName(c: Context, route: String, via: String = ""): String = when (route) {
         "direct" -> c.getString(R.string.route_direct)
-        "tunnel" -> c.getString(R.string.route_tunnel)
+        "tunnel" -> via.ifEmpty { c.getString(R.string.route_tunnel) }
         "smart" -> c.getString(R.string.route_smart)
         else -> route
     }

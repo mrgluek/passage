@@ -16,8 +16,8 @@ android {
         applicationId = "info.gluek.passage"
         minSdk = 24
         targetSdk = 36
-        versionCode = 3
-        versionName = "0.2.1"
+        versionCode = 5
+        versionName = "0.3.0"
     }
 
     // One APK per ABI plus a universal one.
@@ -54,6 +54,8 @@ android {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
     }
+
+    packaging { jniLibs.useLegacyPackaging = true }
 
     // libpassage.so, built from core/cmd/libpassage.
     sourceSets.getByName("main").jniLibs.srcDir("src/main/nativeLibs")
