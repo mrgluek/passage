@@ -26,7 +26,7 @@ import java.security.MessageDigest
 import java.util.concurrent.Executors
 
 /**
- * The link (pasted or opened once, kept in app-private storage), probe hosts,
+ * The link (pasted or opened once, kept in app-private storage),
  * routing mode, proxy access and background running. A valid link stays
  * folded so its key is not on screen.
  */
@@ -38,7 +38,6 @@ class SettingsActivity : Activity() {
     private lateinit var changeButton: Button
     private lateinit var linkBox: LinearLayout
     private lateinit var linkEdit: EditText
-    private lateinit var probeEdit: EditText
     private lateinit var batteryButton: Button
     private lateinit var backgroundState: TextView
     private var alwaysButton: RadioButton? = null
@@ -50,7 +49,6 @@ class SettingsActivity : Activity() {
         actionBar?.setDisplayHomeAsUpEnabled(true)
         setContentView(buildUi())
         linkEdit.setText(settings.link)
-        probeEdit.setText(settings.probeHosts)
         // Folded at once when a link is saved, so the key never flashes on
         // screen while describeLink checks it (a bad link unfolds).
         setLinkOpen(settings.link.isEmpty())
@@ -117,22 +115,6 @@ class SettingsActivity : Activity() {
             textSize = 13f
         }
         linkBox.addView(linkEdit)
-        linkBox.addView(Ui.heading(this, getString(R.string.probe_label)))
-        linkBox.addView(Ui.hint(this, getString(R.string.probe_help)))
-        probeEdit = EditText(this).apply {
-            hint = getString(R.string.probe_hint)
-            inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS or
-                InputType.TYPE_TEXT_VARIATION_URI
-            isSingleLine = true
-            textSize = 13f
-        }
-        linkBox.addView(probeEdit)
-        linkBox.addView(CheckBox(this).apply {
-            text = getString(R.string.short_names)
-            textSize = 13f
-            isChecked = settings.shortNames
-            setOnCheckedChangeListener { _, on -> settings.shortNames = on }
-        })
         linkBox.addView(Button(this).apply {
             text = getString(R.string.save)
             setOnClickListener { onSave() }
@@ -220,28 +202,44 @@ class SettingsActivity : Activity() {
         return Ui.scroll(this, col)
     }
 
-    /** Stores link and probe hosts, folds them if the link is valid, and restarts a running proxy. */
+    /** Imports the link after confirmation, folds it if valid, and restarts a running proxy. */
     private fun onSave() {
-        settings.link = linkEdit.text.toString()
-        settings.probeHosts = probeEdit.text.toString()
-        val link = settings.link
+        val incoming = linkEdit.text.toString().trim()
+        val previous = settings.routesConfig
+        val previousLink = settings.link
         worker.execute {
-            val err = try {
-                Native.parse(link).optString("error")
-            } catch (e: Throwable) {
-                getString(R.string.native_broken, e.message ?: e.toString())
-            }
-            runOnUiThread {
-                describeLink()
-                if (err.isNotEmpty()) {
-                    Toast.makeText(this, getString(R.string.link_error_toast, err), Toast.LENGTH_LONG).show()
-                } else {
-                    setLinkOpen(false)
-                    showTunnelChoice()
-                    restartIfRunning()
-                    Toast.makeText(this, getString(R.string.saved), Toast.LENGTH_SHORT).show()
+            try {
+                val existing = if (previous.isNotEmpty()) org.json.JSONObject(previous)
+                    else if (previousLink.isNotEmpty()) Native.parse(previousLink) else org.json.JSONObject()
+                fun prepare(replace: Boolean): org.json.JSONObject {
+                    val request = org.json.JSONObject().put("existing", existing).put("link", incoming).put("replace", replace)
+                    return Native.json(Native.importLink(request.toString().toByteArray(Charsets.UTF_8)))
                 }
-            }
+                val preview = prepare(false)
+                if (preview.has("error")) throw IllegalArgumentException(preview.optString("error"))
+                runOnUiThread {
+                    val trust = if (preview.optString("signature") == "trusted_author") getString(R.string.import_trusted)
+                        else getString(R.string.import_untrusted)
+                    val collision = if (preview.optBoolean("collision")) "\n" + getString(R.string.import_collision) else ""
+                    val operation = if (incoming.isEmpty()) getString(R.string.import_clear)
+                        else if (preview.optString("mode") == "replace") getString(R.string.import_replace)
+                        else getString(R.string.import_merge)
+                    AlertDialog.Builder(this).setTitle(R.string.import_title)
+                        .setMessage(trust + "\n\n" + operation + collision + "\n" + (preview.optJSONArray("route_ids")?.join(", ") ?: "") + "\n\n" + getString(R.string.import_personal))
+                        .setNegativeButton(android.R.string.cancel, null)
+                        .setPositiveButton(R.string.save) { _, _ ->
+                            worker.execute {
+                                try {
+                                    if (settings.routesConfig != previous || settings.link != previousLink) throw IllegalStateException("Settings changed; retry import")
+                                    val result = prepare(true)
+                                    if (result.has("error")) throw IllegalArgumentException(result.optString("error"))
+                                    settings.saveRoutes(incoming, result.getJSONObject("config").toString())
+                                    runOnUiThread { describeLink(); setLinkOpen(false); showTunnelChoice(); restartIfRunning() }
+                                } catch (e: Throwable) { runOnUiThread { Toast.makeText(this, getString(R.string.link_error_toast, e.message), Toast.LENGTH_LONG).show() } }
+                            }
+                        }.show()
+                }
+            } catch (e: Throwable) { runOnUiThread { Toast.makeText(this, getString(R.string.link_error_toast, e.message), Toast.LENGTH_LONG).show() } }
         }
     }
 
@@ -272,15 +270,21 @@ class SettingsActivity : Activity() {
         worker.execute {
             var ok = false
             val text = try {
-                val cfg = Native.parse(link)
+                val cfg = if (settings.routesConfig.isNotEmpty()) org.json.JSONObject(settings.routesConfig) else Native.parse(link)
                 val err = cfg.optString("error")
                 if (err.isNotEmpty()) getString(R.string.link_invalid, err)
                 else {
                     ok = true
+                    val routes = cfg.optJSONArray("routes")
+                    if (routes != null && routes.length() > 0) {
+                        getString(R.string.import_route_count, routes.length(),
+                            (0 until routes.length()).joinToString(", ") { routes.getJSONObject(it).optString("type") })
+                    } else {
                     val n = cfg.optJSONArray("resolvers")?.length() ?: 0
                     val extra = if (n > 0) resources.getQuantityString(R.plurals.link_extra_resolvers, n, n) else ""
                     val ipv6 = getString(if (cfg.optBoolean("tunnel_ipv6")) R.string.server_ipv6_on else R.string.server_ipv6_off)
                     getString(R.string.link_ok_zone, cfg.optString("zone")) + extra + "\n" + ipv6
+                    }
                 }
             } catch (e: Throwable) {
                 getString(R.string.native_broken, e.message ?: e.toString())

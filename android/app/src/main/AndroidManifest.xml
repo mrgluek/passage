@@ -40,6 +40,7 @@
                 <category android:name="android.intent.category.DEFAULT" />
                 <category android:name="android.intent.category.BROWSABLE" />
                 <data android:scheme="passage" android:host="tunnel" />
+                <data android:scheme="passage" android:host="add" />
             </intent-filter>
             <!-- The web form https://passage.gluek.info/link#v=1&zone=…, verified
                  through the site's .well-known/assetlinks.json. Only /link, so

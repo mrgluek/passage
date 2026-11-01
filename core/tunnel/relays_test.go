@@ -136,7 +136,7 @@ func TestDiagnoseChecksEveryWay(t *testing.T) {
 	tt.probeMT = probeMTProto
 
 	r := tt.Diagnose(context.Background())
-	if !slices.Equal(r.Ways, []string{"direct", "bad", "good", "tunnel"}) {
+	if !slices.Equal(r.Ways, []string{"direct", "bad", "good", "soar"}) {
 		t.Fatalf("ways %v", r.Ways)
 	}
 	if len(r.Rows) != 2 || r.Rows[0].Target != "example.com:443" || r.Rows[1].Kind != "telegram" {

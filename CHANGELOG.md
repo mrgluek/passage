@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.3.0
+
+- One link can carry several connections. Passage tries them in order and
+  moves to the next when one doesn't get through.
+- Links signed by the author are marked as verified; others ask before
+  import.
+- The status shows which connection mail and Telegram use, and the state of
+  each one.
+- Test network checks each connection separately.
+- Simpler settings: probe hosts and the query-length option are gone.
+- Links from earlier versions keep working.
+
 ## 0.2.1
 
 - Improves automatic connection checks.

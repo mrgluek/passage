@@ -64,6 +64,7 @@ type group struct {
 	used        time.Time // last CONNECT, for dropping the least recently used relay
 	route       Route
 	routeSince  time.Time
+	via         string               // route type of the last tunnel connection: iroh, soar
 	tunnelFails int                  // tunnel dial failures since the route last changed
 	hosts       map[string]time.Time // probe host -> last seen in a CONNECT
 	ports       map[string]string    // probe host -> port to probe
@@ -73,6 +74,14 @@ type group struct {
 	state       string
 	lastProbe   time.Time
 	lastResult  probeResult
+}
+
+// viaLocked is the route type behind the tunnel while the group uses it.
+func (g *group) viaLocked() string {
+	if g.route != RouteTunnel {
+		return ""
+	}
+	return g.via
 }
 
 func newGroup(name string, kind groupKind, route Route) *group {
@@ -94,10 +103,10 @@ type way struct {
 	timeout time.Duration
 }
 
-// soar tuning: full-length query names and a wider per-path window.
-// Config.SafeQName overrides the starting length.
+// soar tuning: query names start short and soar grows them to the 253
+// maximum; a wider per-path window. Config.SafeQName overrides the start.
 const (
-	soarSafeQName  = 253
+	soarSafeQName  = 101
 	soarPathWindow = 64
 )
 
@@ -131,7 +140,7 @@ type Tunnel struct {
 	cfg       Config
 	resolvers []string // the paths handed to soar (IPv6 dropped without a route)
 	ln        net.Listener
-	client    *lazySoar
+	client    soarClient
 	log       *eventLog
 	ctx       context.Context
 	cancel    context.CancelFunc
@@ -229,7 +238,7 @@ func Start(cfg Config) (*Tunnel, error) {
 	t.other = newGroup("other", kindOther, initialRoute(cfg.Mode))
 	t.ctx, t.cancel = context.WithCancel(context.Background())
 	var skipped6, skippedPrivate int
-	if cfg.HasTunnel() {
+	if cfg.Zone != "" {
 		key, _ := base64.StdEncoding.DecodeString(cfg.Key)
 		var resolvers []string
 		resolvers, skippedPrivate = withoutForeignPrivate(cfg.Effective(), cfg.SystemResolvers)
@@ -256,6 +265,12 @@ func Start(cfg Config) (*Tunnel, error) {
 			Logger:        slog.New(&logHandler{log: t.log}),
 		})
 		t.resolvers = resolvers
+	}
+	if len(cfg.Routes) > 0 {
+		t.client, err = newRoutePool(cfg)
+		if err != nil {
+			return nil, err
+		}
 	}
 	d := &net.Dialer{Timeout: directDialTimeout}
 	t.ways[RouteDirect] = way{d.DialContext, directDialTimeout}
@@ -584,6 +599,12 @@ func (t *Tunnel) handle(c net.Conn) {
 	t.mu.Lock()
 	t.conns[tr] = struct{}{}
 	t.stats[route].Conns++
+	if route == RouteTunnel {
+		g.via = connVia(remote)
+		if g.via == "" && t.cfg.Zone != "" {
+			g.via = "soar"
+		}
+	}
 	t.mu.Unlock()
 
 	start := time.Now()
@@ -1315,10 +1336,12 @@ func dialResolver(ctx context.Context, network, addr string) (net.Conn, error) {
 
 // Status is the diagnostics snapshot shown in the app and sent in reports.
 type Status struct {
+	RouteCount int                   `json:"route_count"`
 	Zone       string                `json:"zone"`
 	TunnelIPv6 bool                  `json:"tunnel_ipv6"`
 	Mode       string                `json:"mode"`
 	Route      string                `json:"route"`
+	Via        string                `json:"via,omitempty"`      // route type under "tunnel": iroh, soar
 	Strategy   string                `json:"strategy,omitempty"` // the smart route's, when it works
 	Routes     []string              `json:"routes"`             // set-up routes, in fallback order
 	RouteSince time.Time             `json:"route_since"`
@@ -1332,6 +1355,8 @@ type Status struct {
 	Active     map[string]int        `json:"active"`
 	Stats      map[string]routeStats `json:"stats"`
 	Soar       string                `json:"soar"`
+	// Tunnels has one row per configured tunnel route, in priority order.
+	Tunnels []RouteState `json:"tunnels"`
 	// Session is whether the soar session with the server is up; Paths is
 	// one row per resolver path (which resolvers carry the tunnel here).
 	Session bool `json:"session"`
@@ -1351,6 +1376,7 @@ type Status struct {
 type GroupStatus struct {
 	Kind       string      `json:"kind"` // relay or telegram
 	Route      string      `json:"route"`
+	Via        string      `json:"via,omitempty"`
 	RouteSince time.Time   `json:"route_since"`
 	State      string      `json:"state"`
 	LastProbe  time.Time   `json:"last_probe"`
@@ -1371,9 +1397,11 @@ func (t *Tunnel) Status(n int) Status {
 	}
 	s := Status{
 		Zone:           t.cfg.Zone,
+		RouteCount:     len(t.cfg.Routes),
 		TunnelIPv6:     t.cfg.HasTunnel() && t.cfg.TunnelIPv6,
 		Mode:           t.mode,
 		Route:          mail.route.String(),
+		Via:            mail.viaLocked(),
 		RouteSince:     mail.routeSince.UTC(),
 		State:          mail.state,
 		Resolvers:      len(t.resolvers),
@@ -1397,6 +1425,7 @@ func (t *Tunnel) Status(n int) Status {
 		s.Groups[gs.name] = GroupStatus{
 			Kind:       gs.kind.String(),
 			Route:      gs.route.String(),
+			Via:        gs.viaLocked(),
 			RouteSince: gs.routeSince.UTC(),
 			State:      gs.state,
 			LastProbe:  gs.lastProbe.UTC(),
@@ -1416,6 +1445,15 @@ func (t *Tunnel) Status(n int) Status {
 		s.Active[c.route.String()]++
 	}
 	s.Events = t.log.last(n)
+	s.Tunnels = []RouteState{}
+	if p, ok := t.client.(*routePool); ok {
+		s.Tunnels = p.states()
+	} else if t.client != nil {
+		s.Tunnels = append(s.Tunnels, RouteState{ID: "dns", Type: "soar", State: routeIdle})
+		if t.client.Established() {
+			s.Tunnels[0].State = routeUp
+		}
+	}
 	if t.client != nil {
 		s.Session = t.client.Established()
 		s.Paths = t.client.PathStats()

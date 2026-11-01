@@ -13,6 +13,8 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+
+	links "github.com/mrgluek/passage-link/link"
 )
 
 // Modes. Auto routes directly and switches to the tunnel when the probe
@@ -52,11 +54,14 @@ const maxResolvers = 64
 
 // Config combines server settings from the link with local app state.
 type Config struct {
-	Zone       string   `json:"zone"`
-	Key        string   `json:"key"` // server Ed25519 public key, standard base64
-	Resolvers  []string `json:"resolvers"`
-	Canaries   []string `json:"canaries,omitempty"`
-	TunnelIPv6 bool     `json:"tunnel_ipv6,omitempty"` // IPv6 destinations allowed by the server
+	Routes     []links.Route `json:"routes,omitempty"`
+	IrohBinary string        `json:"iroh_binary,omitempty"`
+	PrivateDir string        `json:"private_dir,omitempty"`
+	Zone       string        `json:"zone"`
+	Key        string        `json:"key"` // server Ed25519 public key, standard base64
+	Resolvers  []string      `json:"resolvers"`
+	Canaries   []string      `json:"canaries,omitempty"`
+	TunnelIPv6 bool          `json:"tunnel_ipv6,omitempty"` // IPv6 destinations allowed by the server
 	// ProbeTargets fixes the hosts the monitor TLS-probes to decide the route
 	// (host:port, bare host = :443). Empty = learn them from the hostnames
 	// that pass through the proxy.
@@ -71,7 +76,7 @@ type Config struct {
 	User            string   `json:"user,omitempty"`   // SOCKS5 credentials; empty = no auth
 	Pass            string   `json:"pass,omitempty"`
 	// SafeQName is the query-name length every resolver path starts at; soar
-	// grows it to the 253 maximum. 0 = soarSafeQName; 101 = soar's default.
+	// grows it to the 253 maximum. 0 = soarSafeQName (101).
 	SafeQName int `json:"safe_qname,omitempty"`
 	// StateFile keeps what the router learned across restarts (the smart
 	// route's strategy per network), in the app's private storage.
@@ -140,6 +145,26 @@ func ParseLink(link string) (Config, error) {
 
 // Normalize validates the config and fills defaults.
 func (c Config) Normalize() (Config, error) {
+	if len(c.Routes) > 0 {
+		if len(c.Routes) > 32 {
+			return Config{}, errors.New("too many installed routes")
+		}
+		seen := map[string]bool{}
+		for _, r := range c.Routes {
+			supported, err := links.ValidateRoute(r)
+			if err != nil {
+				return Config{}, err
+			}
+			if !supported || seen[r.ID] {
+				return Config{}, errors.New("unsupported or duplicate installed route")
+			}
+			seen[r.ID] = true
+		}
+		c.TunnelIPv6 = false
+		for _, r := range c.Routes {
+			c.TunnelIPv6 = c.TunnelIPv6 || r.IPv6
+		}
+	}
 	c.Zone = strings.TrimSuffix(strings.ToLower(strings.TrimSpace(c.Zone)), ".")
 	// Without a zone and key (no link yet) the router runs without the tunnel.
 	if c.Zone != "" || strings.TrimSpace(c.Key) != "" {
@@ -214,7 +239,7 @@ func (c Config) Normalize() (Config, error) {
 }
 
 // HasTunnel reports whether the config carries a tunnel (a link was given).
-func (c Config) HasTunnel() bool { return c.Zone != "" }
+func (c Config) HasTunnel() bool { return c.Zone != "" || len(c.Routes) > 0 }
 
 // Effective is the resolver list the tunnel uses: the network's resolvers,
 // then the SIM operator's known resolvers, then the link's extra resolvers,

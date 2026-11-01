@@ -13,7 +13,7 @@ import (
 // Diagnosis is one network test: every target checked on every way.
 type Diagnosis struct {
 	Time   time.Time `json:"time"`
-	Ways   []string  `json:"ways"` // column names: direct, each strategy, tunnel
+	Ways   []string  `json:"ways"` // column names: direct, each strategy, each tunnel route
 	Rows   []DiagRow `json:"rows"`
 	Routes []string  `json:"routes"` // set-up routes
 }
@@ -61,7 +61,12 @@ func (t *Tunnel) Diagnose(ctx context.Context) Diagnosis {
 		targets = append(targets, target{dc, "telegram"})
 	}
 	strategies := t.strategies
-	tunnel := t.ways[RouteTunnel].dial
+	var tunnels []tunnelWay
+	if p, ok := t.client.(*routePool); ok {
+		tunnels = p.ways()
+	} else if dial := t.ways[RouteTunnel].dial; dial != nil {
+		tunnels = []tunnelWay{{"soar", dial, t.cfg.TunnelIPv6}}
+	}
 	direct, directMT := t.probeTLS, t.probeMT
 	via := t.smartProbe
 	if via == nil {
@@ -74,8 +79,9 @@ func (t *Tunnel) Diagnose(ctx context.Context) Diagnosis {
 	for _, s := range strategies {
 		d.Ways = append(d.Ways, s.name)
 	}
-	if tunnel != nil {
-		d.Ways = append(d.Ways, "tunnel")
+	tunnelCol := len(d.Ways)
+	for _, w := range tunnels {
+		d.Ways = append(d.Ways, w.name)
 	}
 	d.Rows = make([]DiagRow, len(targets))
 	var wg sync.WaitGroup
@@ -113,14 +119,14 @@ func (t *Tunnel) Diagnose(ctx context.Context) Diagnosis {
 			}
 			check(1+j, probeTimeout, func(c context.Context) error { return via(c, s.dial, tg.addr, host) })
 		}
-		if tunnel != nil {
-			col := len(d.Ways) - 1
-			if isIPv6Address(tg.addr) && !t.cfg.TunnelIPv6 {
+		for k, w := range tunnels {
+			col := tunnelCol + k
+			if isIPv6Address(tg.addr) && !w.ipv6 {
 				d.Rows[i].Results[col] = DiagResult{Skip: true}
 			} else if telegram {
-				check(col, 15*time.Second, func(c context.Context) error { return probeMTProtoVia(c, tunnel, tg.addr) })
+				check(col, 15*time.Second, func(c context.Context) error { return probeMTProtoVia(c, w.dial, tg.addr) })
 			} else {
-				check(col, 15*time.Second, func(c context.Context) error { return probeTLSVia(c, tunnel, tg.addr, host) })
+				check(col, 15*time.Second, func(c context.Context) error { return probeTLSVia(c, w.dial, tg.addr, host) })
 			}
 		}
 	}

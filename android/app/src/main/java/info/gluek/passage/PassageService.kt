@@ -36,7 +36,6 @@ class PassageService : Service() {
         private const val TICK_MS = 15_000L
         private const val NET_SETTLE_MS = 2_000L
         /** soar's own starting name length (Config.SafeQName default). */
-        private const val SHORT_QNAME = 101
 
         /** The service is up (the proxy may still be starting or retrying). */
         @Volatile
@@ -189,7 +188,7 @@ class PassageService : Service() {
         val s = Settings(this)
         try {
             // Without a link the router runs direct and smart routes only.
-            val cfg = if (s.link.isEmpty()) JSONObject() else Native.parse(s.link)
+            val cfg = if (s.routesConfig.isNotEmpty()) JSONObject(s.routesConfig) else if (s.link.isEmpty()) JSONObject() else Native.parse(s.link)
             cfg.optString("error").takeIf { it.isNotEmpty() }?.let { throw IllegalArgumentException("link: $it") }
             val net = NetInfo.snapshot(this)
             cfg.put("listen", s.listen)
@@ -198,10 +197,10 @@ class PassageService : Service() {
                 cfg.put("pass", s.pass)
             }
             cfg.put("mode", s.mode)
-            cfg.put("probe_targets", JSONArray(s.probeTargets()))
-            if (s.shortNames) cfg.put("safe_qname", SHORT_QNAME)
             cfg.put("system_resolvers", JSONArray(net.dns))
             cfg.put("operator", net.operator)
+            cfg.put("iroh_binary", java.io.File(applicationInfo.nativeLibraryDir, "libpassage_iroh.so").path)
+            cfg.put("private_dir", java.io.File(filesDir, "iroh").path)
             cfg.put("state_file", java.io.File(filesDir, "router-state.json").path)
             val out = Native.json(Native.start(cfg.toString().toByteArray(Charsets.UTF_8)))
             out.optString("error").takeIf { it.isNotEmpty() }?.let { throw IllegalStateException(it) }
