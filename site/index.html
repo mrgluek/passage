@@ -39,10 +39,18 @@
     <h2><span class="en">Your connection link</span><span class="ru">Ваша ссылка для подключения</span></h2>
     <p class="en">If Passage is installed, open the link in it. If not, install Passage below, then open this link again.</p>
     <p class="ru">Если Passage уже установлен, откройте ссылку в нём. Если нет, установите Passage ниже и откройте эту ссылку ещё раз.</p>
+    <p id="link-v2" hidden><span class="en">Requires Passage 0.3.0 or newer. Review the routes in the app before adding them.</span><span class="ru">Нужен Passage 0.3.0 или новее. Перед добавлением проверьте маршруты в приложении.</span></p>
     <div class="buttons">
       <a class="button primary" id="open-link" href="#"><span class="en">Open in Passage</span><span class="ru">Открыть в Passage</span></a>
     </div>
+    <p><span class="en">This is a personal link: forwarding it shares your access.</span><span class="ru">Это личная ссылка: пересылая её, вы передаёте свой доступ.</span></p>
     <p class="muted"><span class="en">Everything after # in the address stays in your browser: it is never sent to this site.</span><span class="ru">Всё, что в адресе после #, остаётся в браузере и на этот сайт не отправляется.</span></p>
+  </section>
+
+  <section id="invalid-link" hidden>
+    <h2><span class="en">Cannot open this link</span><span class="ru">Не удалось открыть ссылку</span></h2>
+    <p class="en">The connection link is incomplete or unsupported. Ask the sender for a new copy.</p>
+    <p class="ru">Ссылка неполная или не поддерживается. Попросите отправителя прислать её заново.</p>
   </section>
 
   <section id="download">
@@ -78,6 +86,12 @@
     <p class="ru"><a href="https://github.com/ImranR98/Obtainium">Obtainium</a> ставит Passage из релизов на GitHub. Откройте <a href="obtainium://add/https://github.com/mrgluek/passage">эту ссылку</a> на телефоне и в поле <b>Filter APKs by regular expression</b> введите <code>arm64</code> (или <code>armv7</code> для 32-битного телефона).</p>
   </section>
 
+  <section id="routes">
+    <h2><span class="en">Connection links</span><span class="ru">Ссылки подключения</span></h2>
+    <p class="en">Since 0.3.0, one link can include several routes in priority order. A later link can add routes or replace the saved set: Passage shows the action and asks for confirmation. Earlier links still work.</p>
+    <p class="ru">Начиная с 0.3.0, одна ссылка может содержать несколько маршрутов с приоритетами. Следующая ссылка может добавить маршруты или заменить сохранённый набор: Passage покажет действие и запросит подтверждение. Старые ссылки продолжают работать.</p>
+  </section>
+
   <section id="use">
     <h2><span class="en">Use</span><span class="ru">Как пользоваться</span></h2>
     <ol class="en">
@@ -101,13 +115,23 @@ C3:C9:73:50:37:FF:A5:00:6D:D9:88:AB:29:D6:11:D6:A4:41:31:E5:3F:D8:1D:FA:CF:06:49
 
 
 <script>
-  // A connection link: https://passage.gluek.info/link#v=1&zone=…. The fields
-  // after # never leave the browser; the button hands them to the app.
+  // The fragment stays in the browser. Passage validates the imported link.
   (function () {
-    var f = location.hash.slice(1);
-    if (!/(^|&)zone=/.test(f)) return;
-    document.getElementById("open-link").href = "passage://tunnel?" + f;
-    document.getElementById("connect").hidden = false;
+    function showLink() {
+      var f = location.hash.slice(1);
+      var v2 = /^v2\.[A-Za-z0-9_-]+$/.test(f) && f.length + "passage://add#".length <= 16384;
+      var v1 = !/^v2\./.test(f) && /(^|&)zone=[^&]+/.test(f);
+      var connection = /^v[0-9]+[.=]/.test(f) || /(^|&)zone=/.test(f);
+      var link = document.getElementById("open-link");
+      if (v2) link.href = "passage://add#" + f;
+      else if (v1) link.href = "passage://tunnel?" + f;
+      else link.removeAttribute("href");
+      document.getElementById("connect").hidden = !v1 && !v2;
+      document.getElementById("link-v2").hidden = !v2;
+      document.getElementById("invalid-link").hidden = !connection || v1 || v2;
+    }
+    showLink();
+    window.addEventListener("hashchange", showLink);
   })();
   document.querySelectorAll("[data-set]").forEach(function (b) {
     b.addEventListener("click", function () {
