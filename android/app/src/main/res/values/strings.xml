@@ -5,6 +5,8 @@
     <string name="link_hint" translatable="false">passage://tunnel?v=1&amp;zone=…&amp;key=…</string>
     <string name="link_empty">Paste the passage://tunnel link you received.</string>
     <string name="link_ok_zone">Link OK: zone %1$s</string>
+    <string name="server_ipv6_on">Server IPv6: enabled</string>
+    <string name="server_ipv6_off">Server IPv6: disabled</string>
     <plurals name="link_extra_resolvers">
         <item quantity="one">, %d extra resolver</item>
         <item quantity="other">, %d extra resolvers</item>

@@ -122,6 +122,7 @@ object StatusText {
             val session = c.getString(if (s.optBoolean("session")) R.string.session_up else R.string.session_down)
             sb.append(c.getString(R.string.status_session, session, s.optInt("resolvers"),
                 s.optString("operator").ifEmpty { "?" })).append('\n')
+            sb.append(c.getString(if (s.optBoolean("tunnel_ipv6")) R.string.server_ipv6_on else R.string.server_ipv6_off)).append('\n')
         }
         sb.append(c.getString(R.string.status_network_resolvers,
             list(s.optJSONArray("network_resolvers")).ifEmpty { c.getString(R.string.none) })).append('\n')

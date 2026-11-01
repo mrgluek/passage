@@ -12,11 +12,12 @@ import (
 
 // SOCKS5 reply codes (RFC 1928 §6).
 const (
-	repSucceeded       = 0x00
-	repGeneralFailure  = 0x01
-	repHostUnreachable = 0x04
-	repCmdUnsupported  = 0x07
-	repAtypUnsupported = 0x08
+	repSucceeded          = 0x00
+	repGeneralFailure     = 0x01
+	repNetworkUnreachable = 0x03
+	repHostUnreachable    = 0x04
+	repCmdUnsupported     = 0x07
+	repAtypUnsupported    = 0x08
 )
 
 // socksHandshake reads a SOCKS5 greeting and CONNECT request from c and

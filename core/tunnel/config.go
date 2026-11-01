@@ -50,13 +50,13 @@ var DefaultCanaries = []string{"ya.ru:443", "max.ru:443", "gosuslugi.ru:443"}
 
 const maxResolvers = 64
 
-// Config is the tunnel configuration. Zone, Key and Resolvers come from the
-// link; the rest is local state the app keeps next to it.
+// Config combines server settings from the link with local app state.
 type Config struct {
-	Zone      string   `json:"zone"`
-	Key       string   `json:"key"` // server Ed25519 public key, standard base64
-	Resolvers []string `json:"resolvers"`
-	Canaries  []string `json:"canaries,omitempty"`
+	Zone       string   `json:"zone"`
+	Key        string   `json:"key"` // server Ed25519 public key, standard base64
+	Resolvers  []string `json:"resolvers"`
+	Canaries   []string `json:"canaries,omitempty"`
+	TunnelIPv6 bool     `json:"tunnel_ipv6,omitempty"` // IPv6 destinations allowed by the server
 	// ProbeTargets fixes the hosts the monitor TLS-probes to decide the route
 	// (host:port, bare host = :443). Empty = learn them from the hostnames
 	// that pass through the proxy.
@@ -90,6 +90,7 @@ const (
 // The web form https://passage.gluek.info/link#v=1&zone=… and the older
 // velta://tunnel form carry the same fields.
 // r adds resolvers to the defaults; c replaces the default canaries.
+// ipv6=1 enables IPv6 destinations through the server; omitted or 0 disables them.
 // The key may be standard or URL-safe base64, padded or not.
 func ParseLink(link string) (Config, error) {
 	u, err := url.Parse(strings.TrimSpace(link))
@@ -113,6 +114,12 @@ func ParseLink(link string) (Config, error) {
 		return Config{}, fmt.Errorf("unsupported link version %q", v)
 	}
 	cfg := Config{Zone: q.Get("zone"), Key: q.Get("key")}
+	if values, ok := q["ipv6"]; ok {
+		if len(values) != 1 || values[0] != "0" && values[0] != "1" {
+			return Config{}, errors.New("ipv6 must be 0 or 1")
+		}
+		cfg.TunnelIPv6 = values[0] == "1"
+	}
 	if r := q.Get("r"); r != "" {
 		cfg.Resolvers = strings.Split(r, ",")
 	}

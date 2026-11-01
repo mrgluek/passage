@@ -279,7 +279,8 @@ class SettingsActivity : Activity() {
                     ok = true
                     val n = cfg.optJSONArray("resolvers")?.length() ?: 0
                     val extra = if (n > 0) resources.getQuantityString(R.plurals.link_extra_resolvers, n, n) else ""
-                    getString(R.string.link_ok_zone, cfg.optString("zone")) + extra
+                    val ipv6 = getString(if (cfg.optBoolean("tunnel_ipv6")) R.string.server_ipv6_on else R.string.server_ipv6_off)
+                    getString(R.string.link_ok_zone, cfg.optString("zone")) + extra + "\n" + ipv6
                 }
             } catch (e: Throwable) {
                 getString(R.string.native_broken, e.message ?: e.toString())

@@ -156,7 +156,7 @@ func TestTelegramBlockedKeepsMailDirect(t *testing.T) {
 	if s.Route != "direct" || mail.Route != "direct" || mail.State != "direct" {
 		t.Fatalf("mail must stay direct: %s / %+v", s.Route, mail)
 	}
-	if tg.Route != "tunnel" || tg.State != "blocked" || !tg.LastResult.CanaryOK {
+	if tg.Route != "tunnel" || tg.State != "blocked" || !tg.LastResult.NetworkOK || tg.LastResult.CanaryChecked {
 		t.Fatalf("telegram must move to the tunnel: %+v", tg)
 	}
 	if !slices.Contains(tg.Targets, "149.154.167.50:443") || !slices.Contains(tg.Targets, telegramDCs[0]) {
@@ -190,7 +190,7 @@ func TestTelegramNeverUsesSmart(t *testing.T) {
 		t.Errorf("mail falls through to %s", r)
 	}
 	tt.mu.Unlock()
-	works := probeResult{Relays: 5, CanaryOK: true, CanaryChecked: true, SmartChecked: true, SmartOK: true, SmartKnown: true}
+	works := probeResult{Relays: 5, NetworkOK: true, CanaryOK: true, CanaryChecked: true, SmartChecked: true, SmartOK: true, SmartKnown: true}
 	for range blockedAfter {
 		tt.applyProbe(tt.relays["relay.example.org"], works)
 		tt.applyProbe(tt.telegram, works)

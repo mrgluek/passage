@@ -41,6 +41,7 @@ var diagTelegramDCs = []string{telegramDCs[1], telegramDCs[3]}
 // It is the user's own test, so it runs whether or not a route needs it.
 func (t *Tunnel) Diagnose(ctx context.Context) Diagnosis {
 	type target struct{ addr, kind string }
+	ipv6 := t.hasIPv6Route()
 	t.mu.Lock()
 	var targets []target
 	names := make([]string, 0, len(t.relays))
@@ -97,13 +98,16 @@ func (t *Tunnel) Diagnose(ctx context.Context) Diagnosis {
 		}
 		host, _, _ := net.SplitHostPort(tg.addr)
 		telegram := tg.kind == "telegram"
-		if telegram {
+		skipDirect := !ipv6 && isIPv6Address(tg.addr)
+		if skipDirect {
+			d.Rows[i].Results[0] = DiagResult{Skip: true}
+		} else if telegram {
 			check(0, probeTimeout, func(c context.Context) error { return directMT(c, tg.addr) })
 		} else {
 			check(0, probeTimeout, func(c context.Context) error { return direct(c, tg.addr, host) })
 		}
 		for j, s := range strategies {
-			if telegram { // MTProto is not TLS: strategies don't apply
+			if telegram || skipDirect {
 				d.Rows[i].Results[1+j] = DiagResult{Skip: true}
 				continue
 			}
@@ -111,7 +115,9 @@ func (t *Tunnel) Diagnose(ctx context.Context) Diagnosis {
 		}
 		if tunnel != nil {
 			col := len(d.Ways) - 1
-			if telegram {
+			if isIPv6Address(tg.addr) && !t.cfg.TunnelIPv6 {
+				d.Rows[i].Results[col] = DiagResult{Skip: true}
+			} else if telegram {
 				check(col, 15*time.Second, func(c context.Context) error { return probeMTProtoVia(c, tunnel, tg.addr) })
 			} else {
 				check(col, 15*time.Second, func(c context.Context) error { return probeTLSVia(c, tunnel, tg.addr, host) })
