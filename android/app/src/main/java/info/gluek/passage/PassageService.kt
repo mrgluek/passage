@@ -70,6 +70,7 @@ class PassageService : Service() {
 
     // Touched on the worker thread only.
     private var lastNet: Pair<List<String>, String>? = null
+    private var lastNotification: Pair<String, String>? = null
 
     private val tick = object : Runnable {
         override fun run() {
@@ -83,7 +84,7 @@ class PassageService : Service() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         if (intent?.action == ACTION_NOTIFY) {
-            if (active) bg { updateNotification() }
+            if (active) bg { updateNotification(force = true) }
             return START_STICKY
         }
         if (intent?.action == ACTION_STOP) {
@@ -184,6 +185,7 @@ class PassageService : Service() {
     /** Worker thread: (re)starts the proxy with the current network's resolvers. */
     private fun startTunnel(why: String) {
         if (!active) return
+        lastNotification = null
         val s = Settings(this)
         try {
             // Without a link the router runs direct and smart routes only.
@@ -242,15 +244,18 @@ class PassageService : Service() {
         }
     }
 
-    private fun updateNotification() {
+    private fun updateNotification(force: Boolean = false) {
         if (!active) return
         val (title, text) = lastError?.let { getString(R.string.app_name) to it } ?: try {
             StatusText.notification(this, Native.status())
         } catch (e: Throwable) {
             getString(R.string.app_name) to (e.message ?: e.toString())
         }
+        val content = title to text
+        if (!force && content == lastNotification) return
         val nm = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
         nm.notify(NOTIFICATION_ID, buildNotification(title, text))
+        lastNotification = content
     }
 
     private fun buildNotification(title: String, text: String): Notification {

@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.2.1
+
+- Improves automatic connection checks.
+- Handles IPv4-only networks more reliably.
+- Tunnel links can specify server IPv6 support.
+- Starts the tunnel only when needed and stops it when unused.
+- Smaller APKs.
+
 ## 0.2.0
 
 - More ways to connect: when a direct connection doesn't get through,

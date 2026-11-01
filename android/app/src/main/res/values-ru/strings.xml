@@ -3,6 +3,8 @@
     <string name="link_label">Ссылка</string>
     <string name="link_empty">Вставьте полученную ссылку passage://tunnel.</string>
     <string name="link_ok_zone">Ссылка в порядке: зона %1$s</string>
+    <string name="server_ipv6_on">IPv6 сервера: включён</string>
+    <string name="server_ipv6_off">IPv6 сервера: выключен</string>
     <plurals name="link_extra_resolvers">
         <item quantity="one">, %d дополнительный резолвер</item>
         <item quantity="few">, %d дополнительных резолвера</item>

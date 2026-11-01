@@ -76,8 +76,8 @@ func TestParseLink(t *testing.T) {
 }
 
 func TestDecide(t *testing.T) {
-	blocked := probeResult{Relays: 2, CanaryOK: true}
-	ok := probeResult{Relays: 2, RelayOK: 1, CanaryOK: true}
+	blocked := probeResult{Relays: 2, NetworkOK: true, CanaryOK: true}
+	ok := probeResult{Relays: 2, RelayOK: 1, NetworkOK: true, CanaryOK: true}
 	offline := probeResult{Relays: 2}
 
 	r, f, _, s := decide(RouteDirect, blocked, 0, 0, true)
@@ -470,7 +470,7 @@ func TestIPv4First(t *testing.T) {
 }
 
 func TestFailingTunnelIsLeftAtOnce(t *testing.T) {
-	ok := probeResult{Relays: 3, RelayOK: 3, CanaryOK: true}
+	ok := probeResult{Relays: 3, RelayOK: 3, NetworkOK: true, CanaryOK: true}
 	if r, _, _, _ := decide(RouteTunnel, ok, 0, 0, false); r != RouteDirect {
 		t.Fatal("relays answer directly and the tunnel fails: leave it after one probe")
 	}
@@ -511,12 +511,12 @@ func TestTunnelFailuresMarkItUnhealthy(t *testing.T) {
 }
 
 func TestRelaysDownThroughTheTunnelKeepTheRoute(t *testing.T) {
-	down := probeResult{Relays: 1, CanaryOK: true, TunnelChecked: true}
+	down := probeResult{Relays: 1, NetworkOK: true, CanaryOK: true, TunnelChecked: true}
 	r, f, _, s := decide(RouteDirect, down, blockedAfter-1, 0, true)
 	if r != RouteDirect || s != stateRelaysDown || f != blockedAfter {
 		t.Fatalf("relays failing through a live tunnel too are down, not blocked: %v %d %s", r, f, s)
 	}
-	up := probeResult{Relays: 1, CanaryOK: true, TunnelChecked: true, TunnelOK: true}
+	up := probeResult{Relays: 1, NetworkOK: true, CanaryOK: true, TunnelChecked: true, TunnelOK: true}
 	if r, _, _, _ := decide(RouteDirect, up, blockedAfter-1, 0, true); r != RouteTunnel {
 		t.Fatal("a relay answering through the tunnel means blocked: switch")
 	}
@@ -745,8 +745,8 @@ func TestRouteWithoutDialerIsSkipped(t *testing.T) {
 }
 
 func TestDecideUsesTheSmartRoute(t *testing.T) {
-	smart := probeResult{Relays: 1, CanaryOK: true, CanaryChecked: true, SmartChecked: true, SmartOK: true}
-	noSmart := probeResult{Relays: 1, CanaryOK: true, CanaryChecked: true, SmartChecked: true}
+	smart := probeResult{Relays: 1, NetworkOK: true, CanaryOK: true, CanaryChecked: true, SmartChecked: true, SmartOK: true}
+	noSmart := probeResult{Relays: 1, NetworkOK: true, CanaryOK: true, CanaryChecked: true, SmartChecked: true}
 
 	if r, _, _, _ := decide(RouteDirect, smart, 0, 0, true); r != RouteDirect {
 		t.Fatalf("one blocked probe must not switch yet, got %v", r)
@@ -836,7 +836,7 @@ func TestSilentConnectionTriggersAProbe(t *testing.T) {
 }
 
 func TestKnownStrategySwitchesOnFirstBlockedProbe(t *testing.T) {
-	known := probeResult{Relays: 1, CanaryOK: true, SmartChecked: true, SmartOK: true, SmartKnown: true}
+	known := probeResult{Relays: 1, NetworkOK: true, CanaryOK: true, SmartChecked: true, SmartOK: true, SmartKnown: true}
 	if r, _, _, _ := decide(RouteDirect, known, 0, 0, true); r != RouteSmart {
 		t.Fatalf("a strategy known on this network switches at once, got %v", r)
 	}
@@ -931,7 +931,7 @@ func TestBlockedWithoutTunnelStaysDirect(t *testing.T) {
 	down := func(context.Context, string, string) (net.Conn, error) { return nil, errors.New("down") }
 	tt := newTestTunnel(t, ModeAuto, down, nil)
 	defer tt.Close()
-	blocked := probeResult{Relays: 1, CanaryOK: true, CanaryChecked: true}
+	blocked := probeResult{Relays: 1, NetworkOK: true, CanaryOK: true, CanaryChecked: true}
 	mail := tt.testGroup("relay.example.org:993")
 	tt.applyProbe(mail, blocked)
 	tt.applyProbe(mail, blocked)

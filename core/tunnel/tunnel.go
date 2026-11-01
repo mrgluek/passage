@@ -131,7 +131,7 @@ type Tunnel struct {
 	cfg       Config
 	resolvers []string // the paths handed to soar (IPv6 dropped without a route)
 	ln        net.Listener
-	client    *soar.Client
+	client    *lazySoar
 	log       *eventLog
 	ctx       context.Context
 	cancel    context.CancelFunc
@@ -152,6 +152,7 @@ type Tunnel struct {
 	// The Telegram group's probes (telegram.go), directly and through the tunnel.
 	probeMT       func(ctx context.Context, hostport string) error
 	probeMTTunnel func(ctx context.Context, hostport string) error
+	ipv6Route     func() bool // nil: hasIPv6Route
 
 	mu          sync.Mutex
 	mode        string
@@ -188,15 +189,14 @@ type routeStats struct {
 }
 
 type probeResult struct {
-	Relays   int  `json:"relays"`
-	RelayOK  int  `json:"relay_ok"`
-	CanaryOK bool `json:"canary_ok"`
-	// CanaryChecked: the canaries were probed. They are skipped when a relay
-	// answers directly (the network is open whatever they say) or when
-	// there is no relay to probe yet.
+	Relays    int  `json:"relays"`
+	RelayOK   int  `json:"relay_ok"`
+	NetworkOK bool `json:"network_ok"` // a target or canary answered directly
+	CanaryOK  bool `json:"canary_ok"`
+	// Canaries are needed only when no target answered directly.
 	CanaryChecked bool `json:"canary_checked,omitempty"`
 	// SmartChecked: the probe hosts were tried on the smart route (they
-	// failed directly while a canary answered); SmartOK: a strategy works.
+	// failed directly while the network was reachable); SmartOK: a strategy works.
 	SmartChecked bool `json:"smart_checked,omitempty"`
 	SmartOK      bool `json:"smart_ok,omitempty"`
 	// SmartKnown: the strategy had worked on this network before this probe,
@@ -211,7 +211,7 @@ type probeResult struct {
 	hosts []string // the host:ports probed, most recent first
 }
 
-// Start validates cfg, creates the soar client and starts serving SOCKS5.
+// Start validates cfg and starts serving SOCKS5. The tunnel starts on demand.
 func Start(cfg Config) (*Tunnel, error) {
 	cfg, err := cfg.Normalize()
 	if err != nil {
@@ -239,12 +239,12 @@ func Start(cfg Config) (*Tunnel, error) {
 		if t.intercepted {
 			resolvers = dotFirst(resolvers)
 		}
-		if !hasIPv6Route() {
+		if !t.hasIPv6Route() {
 			// Without an IPv6 route these paths can only fail. A network change
 			// restarts the tunnel and re-checks.
 			resolvers, skipped6 = withoutIPv6(resolvers)
 		}
-		client, err := soar.NewClient(soar.Config{
+		t.client = newLazySoar(soar.Config{
 			Zone:          cfg.Zone,
 			ServerKey:     ed25519.PublicKey(key),
 			Resolvers:     resolvers,
@@ -255,10 +255,6 @@ func Start(cfg Config) (*Tunnel, error) {
 			StreamOnly:    isDoT, // DoT resolvers get their TCP (TLS) path at once, no doomed UDP probe
 			Logger:        slog.New(&logHandler{log: t.log}),
 		})
-		if err != nil {
-			return nil, err
-		}
-		t.client = client
 		t.resolvers = resolvers
 	}
 	d := &net.Dialer{Timeout: directDialTimeout}
@@ -564,6 +560,10 @@ func (t *Tunnel) handle(c net.Conn) {
 
 	remote, route, err := t.dial(g, addr)
 	if err != nil {
+		if errors.Is(err, errNoIPv6Route) {
+			socksReply(c, repNetworkUnreachable)
+			return
+		}
 		t.mu.Lock()
 		t.stats[route].Fails++
 		if route == RouteTunnel {
@@ -646,20 +646,54 @@ func (t *Tunnel) learn(g *group, addr string) {
 	}
 }
 
+var errNoIPv6Route = errors.New("no IPv6 route available")
+
 // dial opens addr on g's current route. In auto mode a failed dial falls
 // through to the next usable route for this connection and triggers a probe.
 // The error of the last route tried is returned for the caller to count.
 func (t *Tunnel) dial(g *group, addr string) (net.Conn, Route, error) {
+	ipv6 := isIPv6Address(addr)
+	localIPv6 := !ipv6 || t.hasIPv6Route()
+	usable := func(r Route) bool {
+		if !t.usableLocked(g, r) {
+			return false
+		}
+		if !ipv6 {
+			return true
+		}
+		if r == RouteTunnel {
+			return t.cfg.TunnelIPv6
+		}
+		return localIPv6
+	}
 	t.mu.Lock()
 	route, mode := g.route, t.mode
+	if ipv6 && !usable(route) {
+		if mode != ModeAuto {
+			t.mu.Unlock()
+			return nil, route, errNoIPv6Route
+		}
+		for route = RouteDirect; route < numRoutes && !usable(route); route++ {
+		}
+		if route == numRoutes {
+			t.mu.Unlock()
+			return nil, RouteDirect, errNoIPv6Route
+		}
+	}
 	t.mu.Unlock()
 	for r := route; ; {
 		t.mu.Lock()
 		w := t.ways[r]
-		if !t.usableLocked(g, r) {
+		if !usable(r) {
 			w = way{}
 		}
-		next := t.nextRouteLocked(g, r)
+		next := r
+		for n := r + 1; n < numRoutes; n++ {
+			if usable(n) {
+				next = n
+				break
+			}
+		}
 		t.mu.Unlock()
 		if w.dial == nil { // the smart route went away since the route was chosen
 			if next == r {
@@ -869,9 +903,8 @@ func (t *Tunnel) probeHost(ctx context.Context, g *group, viaTunnel bool, hostpo
 	}
 }
 
-// probe checks each group's probe hosts, then the canaries (they are global)
-// once if some group's hosts all failed, then the smart route for each relay
-// that failed, one at a time since they share the strategy.
+// probe checks targets, then canaries only if no target answered. Smart
+// checks run for failed relays, one at a time since they share the strategy.
 func (t *Tunnel) probe() map[*group]probeResult {
 	t.mu.Lock()
 	groups := t.groupsLocked()
@@ -892,25 +925,30 @@ func (t *Tunnel) probe() map[*group]probeResult {
 	}
 	wg.Wait()
 	failed := func(r probeResult) bool { return r.Relays > 0 && r.RelayOK == 0 }
-	anyFailed := false
+	anyFailed, networkOK := false, false
 	for _, r := range res {
 		anyFailed = anyFailed || failed(r)
+		networkOK = networkOK || r.RelayOK > 0
 	}
-	if anyFailed {
-		canary := t.probeCanaries()
-		for g, r := range res {
-			if failed(r) {
-				r.CanaryChecked, r.CanaryOK = true, canary
-				res[g] = r
-			}
+	canaryChecked, canaryOK := false, false
+	if anyFailed && !networkOK {
+		canaryChecked = true
+		canaryOK = t.probeCanaries()
+		networkOK = canaryOK
+	}
+	for g, r := range res {
+		r.NetworkOK = networkOK
+		if failed(r) {
+			r.CanaryChecked, r.CanaryOK = canaryChecked, canaryOK
 		}
+		res[g] = r
 	}
 	if !auto || len(t.strategies) == 0 {
 		return res
 	}
 	for _, g := range groups {
 		r := res[g]
-		if g.kind != kindRelay || !r.CanaryOK {
+		if g.kind != kindRelay || !failed(r) || !r.NetworkOK {
 			continue
 		}
 		t.mu.Lock()
@@ -931,6 +969,9 @@ func (t *Tunnel) probeGroup(g *group) probeResult {
 	t.mu.Lock()
 	hosts := t.targetsLocked(g)
 	t.mu.Unlock()
+	if g.kind == kindTelegram && !t.hasIPv6Route() {
+		hosts, _ = withoutIPv6(hosts)
+	}
 	res := probeResult{Relays: len(hosts), hosts: hosts}
 	var ok atomic.Int32
 	var wg sync.WaitGroup
@@ -1018,7 +1059,7 @@ func (t *Tunnel) confirmViaTunnel(g *group, res probeResult) probeResult {
 	t.mu.Lock()
 	gs := g
 	switching := t.mode == ModeAuto && gs.route == RouteDirect && !res.SmartOK &&
-		res.Relays > 0 && res.RelayOK == 0 && res.CanaryOK && gs.failStreak+1 >= blockedAfter
+		res.Relays > 0 && res.RelayOK == 0 && res.NetworkOK && gs.failStreak+1 >= blockedAfter
 	t.mu.Unlock()
 	canProbe := t.probeTunnel != nil
 	if g.kind == kindTelegram {
@@ -1027,9 +1068,16 @@ func (t *Tunnel) confirmViaTunnel(g *group, res probeResult) probeResult {
 	if !switching || !canProbe || t.established == nil {
 		return res
 	}
+	hosts := res.hosts
+	if !t.cfg.TunnelIPv6 {
+		hosts, _ = withoutIPv6(hosts)
+	}
+	if len(hosts) == 0 {
+		return res
+	}
 	var ok atomic.Bool
 	var wg sync.WaitGroup
-	for _, hp := range res.hosts {
+	for _, hp := range hosts {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
@@ -1062,9 +1110,9 @@ func (t *Tunnel) applyProbe(g *group, res probeResult) {
 		route = RouteDirect
 	}
 	if state != gs.state {
-		via := ""
+		via := fmt.Sprintf(", network ok=%v", res.NetworkOK)
 		if res.CanaryChecked {
-			via = fmt.Sprintf(", canary ok=%v", res.CanaryOK)
+			via += fmt.Sprintf(", canary ok=%v", res.CanaryOK)
 		}
 		if res.SmartChecked {
 			via += fmt.Sprintf(", smart ok=%v", res.SmartOK)
@@ -1083,7 +1131,7 @@ func (t *Tunnel) applyProbe(g *group, res probeResult) {
 // decide is the monitor's state machine, kept pure for tests.
 //   - any probe host answering directly means the network is open; leaving
 //     the tunnel takes recoveredAfter such probes, or one if it is failing;
-//   - every relay failing while the canary answers means "blocked": the
+//   - every relay failing while the network is reachable means "blocked": the
 //     smart route if a strategy works, else the tunnel, unless the relays
 //     fail through a live tunnel too: then they are down ("relays-down")
 //     and the route stays;
@@ -1100,7 +1148,7 @@ func decide(route Route, res probeResult, failStreak, okStreak int, tunnelHealth
 			route = RouteDirect
 		}
 		return route, 0, okStreak, "direct"
-	case res.CanaryOK:
+	case res.NetworkOK:
 		failStreak++
 		switch {
 		case res.SmartOK && (route != RouteDirect || failStreak >= blockedAfter || res.SmartKnown):
@@ -1173,6 +1221,22 @@ func hasIPv6Route() bool {
 	return true
 }
 
+func (t *Tunnel) hasIPv6Route() bool {
+	if t.ipv6Route != nil {
+		return t.ipv6Route()
+	}
+	return hasIPv6Route()
+}
+
+func isIPv6Address(addr string) bool {
+	host, _, err := net.SplitHostPort(addr)
+	if err != nil {
+		return false
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.To4() == nil
+}
+
 // withoutForeignPrivate drops resolvers on private addresses (RFC 1918,
 // CGNAT 100.64/10, IPv6 ULA) unless the current network handed them out.
 func withoutForeignPrivate(resolvers, network []string) ([]string, int) {
@@ -1216,14 +1280,12 @@ func ipv4First(resolvers []string) []string {
 	return append(v4, v6...)
 }
 
-// withoutIPv6 drops IPv6 resolvers, returning how many it dropped.
+// withoutIPv6 drops IPv6 addresses, returning how many it dropped.
 func withoutIPv6(resolvers []string) ([]string, int) {
 	out := make([]string, 0, len(resolvers))
 	for _, r := range resolvers {
-		if host, _, err := net.SplitHostPort(r); err == nil {
-			if ip := net.ParseIP(host); ip != nil && ip.To4() == nil {
-				continue
-			}
+		if isIPv6Address(r) {
+			continue
 		}
 		out = append(out, r)
 	}
@@ -1254,6 +1316,7 @@ func dialResolver(ctx context.Context, network, addr string) (net.Conn, error) {
 // Status is the diagnostics snapshot shown in the app and sent in reports.
 type Status struct {
 	Zone       string                `json:"zone"`
+	TunnelIPv6 bool                  `json:"tunnel_ipv6"`
 	Mode       string                `json:"mode"`
 	Route      string                `json:"route"`
 	Strategy   string                `json:"strategy,omitempty"` // the smart route's, when it works
@@ -1308,6 +1371,7 @@ func (t *Tunnel) Status(n int) Status {
 	}
 	s := Status{
 		Zone:           t.cfg.Zone,
+		TunnelIPv6:     t.cfg.HasTunnel() && t.cfg.TunnelIPv6,
 		Mode:           t.mode,
 		Route:          mail.route.String(),
 		RouteSince:     mail.routeSince.UTC(),
