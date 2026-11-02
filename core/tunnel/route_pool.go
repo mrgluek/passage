@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"net"
 	"os"
+	"slices"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -32,6 +33,7 @@ type routePool struct {
 	established atomic.Bool
 	mu          sync.Mutex
 	failedUntil map[int]time.Time
+	only        string           // when set, only routes of this type are tried
 	now         func() time.Time // for tests; nil = time.Now
 }
 
@@ -54,6 +56,17 @@ func newRoutePool(cfg Config) (soarClient, error) {
 				resolvers, _ = withoutIPv6(resolvers)
 			}
 			client = newLazySoar(soar.Config{Zone: params.Zone, ServerKey: ed25519.PublicKey(params.Key), Resolvers: resolvers, TCP: "auto", SafeQName: cmp.Or(cfg.SafeQName, soarSafeQName), MaxPathWindow: soarPathWindow, DialTCP: dialResolver, StreamOnly: isDoT, Logger: slog.New(slog.NewTextHandler(io.Discard, nil))})
+		case "wss":
+			params, err := links.Params[links.WSSParams](r)
+			if err != nil {
+				p.Close()
+				return nil, err
+			}
+			client, err = NewWSSClient(params)
+			if err != nil {
+				p.Close()
+				return nil, err
+			}
 		case "iroh":
 			client = &irohClient{route: r, binary: cfg.IrohBinary, dir: cfg.PrivateDir, dns: cfg.SystemResolvers}
 		default:
@@ -107,7 +120,7 @@ func (p *routePool) order(ip net.IP) []int {
 	now := p.clock()
 	var ready, cooling []int
 	for i := range p.clients {
-		if ip != nil && ip.To4() == nil && !p.ipv6[i] {
+		if ip != nil && ip.To4() == nil && !p.ipv6[i] || p.only != "" && p.kinds[i] != p.only {
 			continue
 		}
 		if now.Before(p.failedUntil[i]) {
@@ -117,6 +130,18 @@ func (p *routePool) order(ip net.IP) []int {
 		}
 	}
 	return append(ready, cooling...)
+}
+
+// restrict limits new connections to routes of one type; "" allows all.
+// It reports false, changing nothing, when no route has that type.
+func (p *routePool) restrict(kind string) bool {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if kind != "" && !slices.Contains(p.kinds, kind) {
+		return false
+	}
+	p.only = kind
+	return true
 }
 
 func (p *routePool) mark(i int, failed bool) {

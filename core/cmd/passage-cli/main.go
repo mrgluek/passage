@@ -25,12 +25,12 @@ import (
 )
 
 func main() {
-	link := flag.String("link", "", "passage://tunnel link (none: no tunnel)")
+	link := flag.String("link", "", "Passage link (none: no tunnel)")
 	canaries := flag.String("canaries", "", "comma-separated host:port canaries, replacing the link's or the defaults")
-	linkFile := flag.String("link-file", "", "read the passage://tunnel link from this file")
+	linkFile := flag.String("link-file", "", "read the Passage link from this file")
 	systemDNS := flag.Bool("system-dns", true, "add this machine's DNS servers (resolv.conf) as first resolver paths")
 	operator := flag.String("operator", "", "SIM operator MCC+MNC (e.g. 25001) to add its known resolvers")
-	mode := flag.String("mode", tunnel.ModeAuto, "auto, always or off")
+	mode := flag.String("mode", tunnel.ModeAuto, "auto, always, off, or a route type (wss, iroh, soar)")
 	listen := flag.String("listen", "127.0.0.1:18000", "SOCKS5 listen address")
 	user := flag.String("user", "", "SOCKS5 username (empty = no auth)")
 	pass := flag.String("pass", "", "SOCKS5 password")
@@ -49,7 +49,10 @@ func main() {
 	var cfg tunnel.Config // no link: direct and smart routes only
 	var err error
 	if *link != "" {
-		if cfg, err = tunnel.ParseLink(*link); err != nil {
+		result, importErr := tunnel.ImportLink(cfg, *link, false)
+		err = importErr
+		cfg = result.Config
+		if err != nil {
 			fmt.Fprintln(os.Stderr, "passage-cli:", err)
 			os.Exit(2)
 		}

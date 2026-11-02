@@ -83,6 +83,11 @@ type SocksAuth struct {
 	Username string `json:"username"`
 	Password string `json:"password"`
 }
+type WSSParams struct {
+	Endpoint string `json:"endpoint"`
+	Key      []byte `json:"key"`
+}
+
 type IrohParams struct {
 	Ticket string    `json:"ticket"`
 	Relay  string    `json:"relay"`
@@ -259,6 +264,30 @@ func ValidateRoute(r Route) (bool, error) {
 			if err := validateHostPort(v, false); err != nil {
 				return true, err
 			}
+		}
+	case "wss/wss-v1":
+		p, err := Params[WSSParams](r)
+		if err != nil {
+			return true, err
+		}
+		u, err := url.Parse(p.Endpoint)
+		if err != nil || len(p.Endpoint) > 2048 || u.Scheme != "wss" || u.Hostname() == "" || u.User != nil || u.RawQuery != "" || u.ForceQuery || u.Fragment != "" || strings.Contains(p.Endpoint, "#") || strings.ContainsAny(p.Endpoint, "\\\r\n\t ") || strings.Contains(u.Hostname(), "%") {
+			return true, errors.New("invalid WSS endpoint")
+		}
+		host := u.Hostname()
+		if net.ParseIP(host) == nil && !validZone(strings.ToLower(host)) {
+			return true, errors.New("invalid WSS endpoint host")
+		}
+		if strings.HasSuffix(u.Host, ":") {
+			return true, errors.New("invalid WSS endpoint port")
+		}
+		if u.Port() != "" {
+			if err := validateHostPort(u.Host, false); err != nil {
+				return true, err
+			}
+		}
+		if len(p.Key) != 32 {
+			return true, errors.New("invalid WSS key")
 		}
 	case "iroh/dumbpipe-v0/iroh-0.35":
 		p, err := Params[IrohParams](r)

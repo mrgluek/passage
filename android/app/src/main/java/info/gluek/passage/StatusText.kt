@@ -11,14 +11,28 @@ import java.util.Locale
 object StatusText {
     fun oneLine(c: Context, s: JSONObject): String {
         if (!s.optBoolean("running")) return c.getString(R.string.not_running)
-        return c.getString(R.string.one_line, routes(c, s), stateName(c, s.optString("state")), tunnelState(c, s))
+        return listOfNotNull(routes(c, s), network(c, s), tunnelState(c, s)).joinToString(" · ")
     }
 
     /** Notification title and text: the routes, then the network and the tunnel. */
     fun notification(c: Context, s: JSONObject): Pair<String, String> {
         if (!s.optBoolean("running")) return c.getString(R.string.app_name) to c.getString(R.string.not_running)
-        return routes(c, s) to
-            c.getString(R.string.notification_state, stateName(c, s.optString("state")), tunnelState(c, s))
+        return routes(c, s) to listOfNotNull(network(c, s), tunnelState(c, s)).joinToString(" · ")
+    }
+
+    /**
+     * The network as the last check saw it. Only auto checks the network,
+     * so with a fixed route there is nothing to show.
+     */
+    private fun network(c: Context, s: JSONObject): String? {
+        if (s.optString("mode") != "auto") return null
+        return c.getString(when (s.optString("state")) {
+            "direct" -> R.string.net_open
+            "blocked" -> R.string.net_restricted
+            "relays-down" -> R.string.net_relays_down
+            "offline" -> R.string.net_offline
+            else -> R.string.net_unchecked
+        })
     }
 
     /**
@@ -30,13 +44,14 @@ object StatusText {
         val groups = s.optJSONObject("groups") ?: JSONObject()
         // Counted by name, so relays on iroh and on soar show apart.
         val counts = linkedMapOf<String, Int>()
+        val only = onlyType(s)
         for ((_, g) in relays(groups)) {
-            val name = routeName(c, g.optString("route"), g.optString("via"))
+            val name = routeName(c, g.optString("route"), g.optString("via").ifEmpty { only })
             counts[name] = (counts[name] ?: 0) + 1
         }
         val telegram = groups.optJSONObject("telegram")?.takeIf { (it.optJSONArray("targets")?.length() ?: 0) > 0 }
         if (counts.isEmpty() && telegram == null) {
-            return c.getString(R.string.notification_route, routeName(c, s.optString("route"), s.optString("via")))
+            return c.getString(R.string.notification_route, routeName(c, s.optString("route"), s.optString("via").ifEmpty { only }))
         }
         val parts = mutableListOf<String>()
         if (counts.isNotEmpty()) {
@@ -46,9 +61,21 @@ object StatusText {
         }
         if (telegram != null) {
             parts += c.getString(R.string.group_telegram,
-                routeName(c, telegram.optString("route"), telegram.optString("via")))
+                routeName(c, telegram.optString("route"), telegram.optString("via").ifEmpty { only }))
         }
         return parts.joinToString(" · ")
+    }
+
+    /**
+     * The route type a tunnel connection must use: the chosen one, or the
+     * only type set up. Shown before a connection has gone through.
+     */
+    private fun onlyType(s: JSONObject): String {
+        val mode = s.optString("mode")
+        if (mode in Settings.ROUTE_KINDS) return mode
+        val list = s.optJSONArray("tunnels") ?: return ""
+        val types = (0 until list.length()).map { list.getJSONObject(it).optString("type") }.distinct()
+        return types.singleOrNull() ?: ""
     }
 
     /** The relay groups (host name, status), sorted by name. */
@@ -57,6 +84,54 @@ object StatusText {
             .mapNotNull { name -> groups.optJSONObject(name)?.takeIf { it.optString("kind") == "relay" }?.let { name to it } }
             .sortedBy { it.first }
             .toList()
+
+    /**
+     * Battery drain from consecutive samples while not charging, split by
+     * whether the wake lock was held at the start of each interval.
+     */
+    fun batterySummary(samples: JSONArray): JSONObject {
+        val hours = doubleArrayOf(0.0, 0.0)
+        val drop = doubleArrayOf(0.0, 0.0)
+        val format = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss", Locale.US).apply { timeZone = java.util.TimeZone.getTimeZone("UTC") }
+        fun time(s: JSONObject) = try { format.parse(s.optString("t").take(19))?.time } catch (_: Exception) { null }
+        for (i in 1 until samples.length()) {
+            val a = samples.getJSONObject(i - 1)
+            val b = samples.getJSONObject(i)
+            if (a.optBoolean("charging") || b.optBoolean("charging")) continue
+            val ta = time(a) ?: continue
+            val tb = time(b) ?: continue
+            val h = (tb - ta) / 3_600_000.0
+            // Samples need the CPU awake, so without the lock they come late;
+            // longer gaps likely span time with the proxy off.
+            if (h <= 0 || h > 3.0 || b.optInt("level") > a.optInt("level")) continue
+            val k = if (a.optBoolean("wake_lock")) 1 else 0
+            hours[k] += h
+            drop[k] += (a.optInt("level") - b.optInt("level")).toDouble()
+        }
+        fun part(k: Int) = JSONObject().put("hours", "%.1f".format(Locale.US, hours[k])).put("percent", drop[k].toInt())
+            .put("percent_per_hour", if (hours[k] > 0) "%.2f".format(Locale.US, drop[k] / hours[k]) else JSONObject.NULL)
+        return JSONObject().put("with_wake_lock", part(1)).put("without_wake_lock", part(0))
+    }
+
+    /** The network test in one line for the log: "12 ok, 3 failed". */
+    fun diagnosisSummary(d: JSONObject): String {
+        d.optString("error").takeIf { it.isNotEmpty() }?.let { return it }
+        var ok = 0
+        var failed = 0
+        val list = d.optJSONArray("rows") ?: JSONArray()
+        for (i in 0 until list.length()) {
+            val res = list.getJSONObject(i).optJSONArray("results") ?: continue
+            for (j in 0 until res.length()) {
+                val x = res.getJSONObject(j)
+                when {
+                    x.optBoolean("skip") -> {}
+                    x.optBoolean("ok") -> ok++
+                    else -> failed++
+                }
+            }
+        }
+        return "$ok ok, $failed failed"
+    }
 
     /** The network test (tunnel.Diagnosis) as a table: one row per target. */
     fun diagnosis(c: Context, d: JSONObject): String {
@@ -102,7 +177,7 @@ object StatusText {
         val types = rows.groupingBy { it.optString("type") }.eachCount()
         return rows.map { r ->
             val type = r.optString("type")
-            val name = if ((types[type] ?: 0) > 1) r.optString("id") else type
+            val name = if ((types[type] ?: 0) > 1) r.optString("id") else Ui.routeLabel(type)
             name to routeStateName(c, r.optString("state"))
         }
     }
@@ -212,7 +287,7 @@ object StatusText {
      * The status for a bug report, without the tunnel zone (private, like
      * everything the link carries).
      */
-    fun report(c: Context, s: JSONObject, net: NetInfo.Snapshot, settings: Settings, version: String): String {
+    fun report(c: Context, s: JSONObject, net: NetInfo.Snapshot, settings: Settings, version: String, networkTest: String? = null): String {
         Diagnostics.collectExits(c)
         val r = JSONObject(s.toString())
         r.remove("zone")
@@ -221,15 +296,17 @@ object StatusText {
             .put("listen", settings.listen)
             .put("auth", settings.auth)
             .put("mode_setting", settings.mode)
-            .put("keep_cpu_awake", settings.keepCpuAwake)
             .put("last_error", PassageService.lastError?.let(Diagnostics::redact) ?: JSONObject.NULL))
         r.put("device", Diagnostics.device())
-        r.put("diagnostics", Diagnostics.snapshot())
+        val diagnostics = Diagnostics.snapshot()
+        r.put("diagnostics", diagnostics)
+        diagnostics.optJSONArray("battery")?.let { r.put("battery_summary", batterySummary(it)) }
         r.put("device_network", JSONObject()
             .put("transport", net.transport)
             .put("dns", JSONArray(net.dns))
             .put("operator", net.operator)
             .put("private_dns", net.privateDns))
+        if (networkTest != null) r.put("network_test", JSONArray(networkTest.trimEnd().lines()))
         return r.toString(2)
     }
 
@@ -245,7 +322,7 @@ object StatusText {
     /** The route for people; a tunnel shows the route type that carries it (iroh, soar), when known. */
     private fun routeName(c: Context, route: String, via: String = ""): String = when (route) {
         "direct" -> c.getString(R.string.route_direct)
-        "tunnel" -> via.ifEmpty { c.getString(R.string.route_tunnel) }
+        "tunnel" -> if (via.isEmpty()) c.getString(R.string.route_tunnel) else Ui.routeLabel(via)
         "smart" -> c.getString(R.string.route_smart)
         else -> route
     }

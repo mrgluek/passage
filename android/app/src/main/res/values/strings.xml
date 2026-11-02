@@ -19,12 +19,10 @@
 
     <string name="route_label">Route</string>
     <string name="mode_auto">Auto</string>
-    <string name="mode_always">Always tunnel</string>
-    <string name="mode_off">Never tunnel</string>
+    <string name="mode_off">Direct</string>
 
     <string name="stop">Stop</string>
     <string name="share_report">Share report</string>
-    <string name="check_now">Check now</string>
     <string name="checking">Checking the network…</string>
     <string name="battery">Allow running in background</string>
 
@@ -33,9 +31,8 @@
 
     <string name="not_running">not running</string>
     <string name="proxy_not_running">Proxy is not running.</string>
-    <string name="one_line">%1$s · %2$s · %3$s</string>
     <string name="group_mail">Mail: %1$s</string>
-    <string name="group_telegram">Telegram: %1$s</string>
+    <string name="group_telegram">Tg: %1$s</string>
     <string name="route_direct">direct</string>
     <string name="route_tunnel">tunnel</string>
 
@@ -43,7 +40,7 @@
     <string name="state_blocked">restricted (probe hosts fail, other sites answer)</string>
     <string name="state_relays_down">probe hosts down (they fail through the tunnel too)</string>
     <string name="state_offline">offline (nothing answers)</string>
-    <string name="state_unknown">not checked yet</string>
+    <string name="state_unknown">not checked yet (only Auto checks it)</string>
 
     <string name="status_route">Route: %1$s since %2$s (mode %3$s)</string>
     <string name="status_network">Network: %1$s</string>
@@ -72,11 +69,9 @@
     <string name="no_link">No link yet: Passage works directly and with tuning. A link adds a tunnel for networks where nothing else gets through; add it in settings.</string>
     <string name="open_settings">Open settings</string>
     <string name="connect_label">Connect an app</string>
-    <string name="connect_help">Copy the proxy link and paste it into the app\'s proxy settings (Delta Chat, ArcaneChat: Settings → Advanced → Proxy → Add proxy). If the app adds proxies from links, Open proxy link is quicker.</string>
+    <string name="connect_help">Add the proxy to the app\'s proxy settings (Delta Chat, ArcaneChat: Settings → Advanced → Proxy → Add proxy). The buttons on the right copy the proxy link or open it in an app that adds proxies from links. Tap a value to copy just that.</string>
     <string name="copy_proxy_link">Copy proxy link</string>
     <string name="proxy_link_copied">Proxy link copied</string>
-    <string name="proxy_details">Host %1$s, port %2$d\nUsername %3$s\nPassword %4$s</string>
-    <string name="proxy_details_open">Host %1$s, port %2$d, no password</string>
     <string name="status_label">Status</string>
     <string name="change_link">Change link</string>
     <string name="saved">Saved</string>
@@ -102,12 +97,11 @@
     <string name="tunnel_no_link">no link</string>
     <string name="tunnel_label">tunnel: %1$s</string>
     <string name="tunnel_route">%1$s: %2$s</string>
-    <string name="route_state_up">up</string>
+    <string name="route_state_up">connected</string>
     <string name="route_state_failed">failed</string>
-    <string name="route_state_idle">idle</string>
+    <string name="route_state_idle">standby</string>
     <string name="status_no_tunnel">Tunnel: no link (add one in settings)</string>
     <string name="notification_route">Route: %1$s</string>
-    <string name="notification_state">%1$s · %2$s</string>
     <string name="background_help">Passage has to keep running while the screen is off. Otherwise Android may stop it after a while to save battery, and your messaging apps lose their connection.</string>
     <string name="background_allowed">Allowed: Android won\'t stop Passage to save battery.</string>
     <string name="notifications_title">Notification while running</string>
@@ -120,7 +114,6 @@
     <string name="testing_network">Checking every relay and way, up to 20 seconds…</string>
     <string name="test_target">target</string>
     <string name="test_time">Network test at %1$s</string>
-    <string name="share">Share</string>
     <string name="import_title">Import routes</string>
     <string name="import_trusted">Signed by the trusted author.</string>
     <string name="import_untrusted">The author is not verified. Import only from someone you trust.</string>
@@ -130,6 +123,17 @@
     <string name="import_route_count">Saved routes: %1$d (%2$s)</string>
     <string name="import_collision">Routes with the same ID will be overwritten.</string>
     <string name="import_clear">Remove all saved routes.</string>
-    <string name="keep_cpu_awake">Keep CPU awake</string>
-    <string name="keep_cpu_awake_help">Helps keep connections alive while the screen is off, but uses more battery. Enabled by default. Turn it off to test battery savings; turn it back on if messages are delayed or connections drop. The screen stays off.</string>
+    <string name="route_hint">Auto picks the route by itself; a fixed route always uses that one.</string>
+    <string name="net_open">Network: open</string>
+    <string name="net_restricted">Network: restricted</string>
+    <string name="net_relays_down">Network: probe hosts down</string>
+    <string name="net_offline">Network: offline</string>
+    <string name="net_unchecked">Network: not checked yet</string>
+    <string name="proxy_host">Host</string>
+    <string name="proxy_port">Port</string>
+    <string name="proxy_user">Username</string>
+    <string name="proxy_pass">Password</string>
+    <string name="proxy_no_password">No password</string>
+    <string name="value_copied">Copied: %1$s</string>
+    <string name="send_report">Send a bug report (runs a network test first)</string>
 </resources>

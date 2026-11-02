@@ -2,7 +2,10 @@ module github.com/mrgluek/passage/core
 
 go 1.25.0
 
-require github.com/getlantern/soar v0.2.4
+require (
+	github.com/coder/websocket v1.8.15
+	github.com/getlantern/soar v0.2.4
+)
 
 require (
 	github.com/fxamacker/cbor/v2 v2.10.0 // indirect

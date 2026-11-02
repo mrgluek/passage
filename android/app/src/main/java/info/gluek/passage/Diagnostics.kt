@@ -17,6 +17,7 @@ import java.util.TimeZone
 /** Bounded, local history that survives router and process restarts. */
 object Diagnostics {
     private const val MAX_EVENTS = 128
+    private const val MAX_BATTERY = 288 // 48 hours of 10-minute samples
     private var file: AtomicFile? = null
     private var history = JSONObject()
     private var version = "?"
@@ -39,6 +40,21 @@ object Diagnostics {
     @Synchronized
     fun event(message: String) {
         record(entry(message))
+    }
+
+    /** A battery sample (PassageService.sampleBattery), kept for the report. */
+    @Synchronized
+    fun battery(sample: JSONObject) {
+        try {
+            sample.put("t", timestamp(System.currentTimeMillis()))
+            val old = history.optJSONArray("battery") ?: JSONArray()
+            val samples = JSONArray()
+            for (i in (old.length() - MAX_BATTERY + 1).coerceAtLeast(0) until old.length()) samples.put(old.getJSONObject(i))
+            samples.put(sample)
+            history.put("battery", samples)
+            save()
+        } catch (_: Exception) {
+        }
     }
 
     @Synchronized

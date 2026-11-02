@@ -167,6 +167,7 @@ type Tunnel struct {
 
 	mu          sync.Mutex
 	mode        string
+	only        string // route type the tunnel is limited to, with mode always
 	relays      map[string]*group // by host name
 	telegram    *group
 	other       *group
@@ -229,16 +230,20 @@ func Start(cfg Config) (*Tunnel, error) {
 	if err != nil {
 		return nil, err
 	}
+	mode := cfg.Mode
+	if slices.Contains(RouteKinds, mode) {
+		mode = ModeAlways
+	}
 	t := &Tunnel{
 		cfg:    cfg,
 		log:    newEventLog(500),
 		kick:   make(chan struct{}, 1),
-		mode:   cfg.Mode,
+		mode:   mode,
 		conns:  map[*tracked]struct{}{},
 		relays: map[string]*group{},
 	}
-	t.telegram = newGroup("telegram", kindTelegram, initialRoute(cfg.Mode))
-	t.other = newGroup("other", kindOther, initialRoute(cfg.Mode))
+	t.telegram = newGroup("telegram", kindTelegram, initialRoute(mode))
+	t.other = newGroup("other", kindOther, initialRoute(mode))
 	t.ctx, t.cancel = context.WithCancel(context.Background())
 	var skipped6, skippedPrivate int
 	if cfg.Zone != "" {
@@ -274,6 +279,12 @@ func Start(cfg Config) (*Tunnel, error) {
 		if err != nil {
 			return nil, err
 		}
+	}
+	if mode != cfg.Mode && !t.restrict(cfg.Mode) {
+		// The chosen route type is not in the link (any more): back to auto.
+		t.mode = ModeAuto
+		t.telegram = newGroup("telegram", kindTelegram, RouteDirect)
+		t.other = newGroup("other", kindOther, RouteDirect)
 	}
 	d := &net.Dialer{Timeout: directDialTimeout}
 	t.ways[RouteDirect] = way{d.DialContext, directDialTimeout}
@@ -481,12 +492,40 @@ func (t *Tunnel) Close() {
 	t.wg.Wait()
 }
 
-// SetMode switches between auto, always and off.
+// restrict limits the tunnel to routes of one type ("" = all). It reports
+// false when no configured route has that type.
+func (t *Tunnel) restrict(kind string) bool {
+	ok := false
+	switch c := t.client.(type) {
+	case nil:
+		ok = kind == ""
+	case *routePool:
+		ok = c.restrict(kind)
+	default: // a link without a route list: one soar route
+		ok = kind == "" || kind == "soar"
+	}
+	if ok {
+		t.mu.Lock()
+		t.only = kind
+		t.mu.Unlock()
+	}
+	return ok
+}
+
+// SetMode switches between auto, always and off, or forces the tunnel
+// through one route type.
 func (t *Tunnel) SetMode(mode string) error {
+	kind := ""
 	switch mode {
 	case ModeAuto, ModeAlways, ModeOff:
 	default:
-		return errors.New("unknown mode " + mode)
+		if !slices.Contains(RouteKinds, mode) {
+			return errors.New("unknown mode " + mode)
+		}
+		kind, mode = mode, ModeAlways
+	}
+	if !t.restrict(kind) {
+		return errors.New("no " + kind + " route configured")
 	}
 	t.mu.Lock()
 	t.mode = mode
@@ -506,8 +545,9 @@ func (t *Tunnel) SetMode(mode string) error {
 			t.setRouteLocked(g, RouteDirect, "mode auto")
 		}
 	}
+	shown := cmp.Or(t.only, t.mode)
 	t.mu.Unlock()
-	t.log.add("mode set to %s", mode)
+	t.log.add("mode set to %s", shown)
 	t.kickProbe()
 	return nil
 }
@@ -1446,7 +1486,7 @@ func (t *Tunnel) Status(n int) Status {
 		Zone:           t.cfg.Zone,
 		RouteCount:     len(t.cfg.Routes),
 		TunnelIPv6:     t.cfg.HasTunnel() && t.cfg.TunnelIPv6,
-		Mode:           t.mode,
+		Mode:           cmp.Or(t.only, t.mode),
 		Route:          mail.route.String(),
 		Via:            mail.viaLocked(),
 		RouteSince:     mail.routeSince.UTC(),

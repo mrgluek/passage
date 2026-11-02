@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"net"
 	"net/url"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -18,12 +19,16 @@ import (
 )
 
 // Modes. Auto routes directly and switches to the tunnel when the probe
-// hosts are blocked; Always forces the tunnel; Off never uses it.
+// hosts are blocked; Always forces the tunnel; Off never uses it. A route
+// type as the mode forces the tunnel through routes of that type only.
 const (
 	ModeAuto   = "auto"
 	ModeAlways = "always"
 	ModeOff    = "off"
 )
+
+// RouteKinds are the route types that can be chosen as the mode.
+var RouteKinds = []string{"wss", "iroh", "soar"}
 
 // DefaultResolvers are public resolvers used in addition to the network's
 // and the link's. soar uses all of them and backs off the ones that don't
@@ -227,9 +232,11 @@ func (c Config) Normalize() (Config, error) {
 		c.Mode = ModeAuto
 	case ModeAuto, ModeAlways, ModeOff:
 	default:
-		return Config{}, fmt.Errorf("unknown mode %q", c.Mode)
+		if !slices.Contains(RouteKinds, c.Mode) {
+			return Config{}, fmt.Errorf("unknown mode %q", c.Mode)
+		}
 	}
-	if c.Mode == ModeAlways && !c.HasTunnel() {
+	if c.Mode != ModeAuto && c.Mode != ModeOff && !c.HasTunnel() {
 		c.Mode = ModeAuto
 	}
 	if c.Listen == "" {
