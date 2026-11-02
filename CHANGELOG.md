@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.4.0
+
+- Adds a new connection type for links (WSS).
+- The main screen lets you choose how Passage connects: automatically,
+  through one of the link's connections, or directly.
+- Proxy settings are shown as values you can tap to copy, with buttons to
+  copy or open the proxy link.
+- The status line is easier to read.
+- A bug report button checks the network and shares a full report.
+- Start and stop sit next to the proxy status.
+- The CPU is kept awake only while a connection needs it; the separate
+  setting is gone. Reports include battery readings.
+- Fixes the proxy sometimes failing to restart for a minute after a stop.
+
 ## 0.3.2
 
 - Fixes automatic routing when only the tunnel is reachable, including
