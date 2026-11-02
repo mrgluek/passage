@@ -63,6 +63,7 @@
     <string name="status_tunnel">Туннель</string>
     <string name="status_paths">Пути через резолверы (рабочие сверху):</string>
     <string name="status_events">События (новые внизу):</string>
+    <string name="diagnostic_events">История приложения (сохраняется при перезапуске):</string>
     <string name="settings">Настройки</string>
     <string name="action_start">Запустить прокси</string>
     <string name="action_stop">Остановить прокси</string>
@@ -129,4 +130,6 @@
     <string name="import_route_count">Сохранено маршрутов: %1$d (%2$s)</string>
     <string name="import_collision">Маршруты с совпадающими ID будут перезаписаны.</string>
     <string name="import_clear">Удалить все сохранённые маршруты.</string>
+    <string name="keep_cpu_awake">Не давать процессору засыпать</string>
+    <string name="keep_cpu_awake_help">Помогает сохранять соединения при выключенном экране, но расходует больше заряда. Включено по умолчанию. Можно отключить для экономии заряда; включите снова, если сообщения задерживаются или связь пропадает. Экран остаётся выключенным.</string>
 </resources>

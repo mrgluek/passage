@@ -91,7 +91,9 @@ func (p *routePool) DialContext(ctx context.Context, network, address string) (n
 		if ctx.Err() != nil {
 			return nil, ctx.Err()
 		}
-		p.mark(i, true)
+		if !errors.Is(err, errDestinationRefused) {
+			p.mark(i, true)
+		}
 	}
 	p.established.Store(false)
 	return nil, errors.New("all configured routes failed")

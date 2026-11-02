@@ -212,7 +212,8 @@ object StatusText {
      * The status for a bug report, without the tunnel zone (private, like
      * everything the link carries).
      */
-    fun report(s: JSONObject, net: NetInfo.Snapshot, settings: Settings, version: String): String {
+    fun report(c: Context, s: JSONObject, net: NetInfo.Snapshot, settings: Settings, version: String): String {
+        Diagnostics.collectExits(c)
         val r = JSONObject(s.toString())
         r.remove("zone")
         r.put("app", JSONObject()
@@ -220,7 +221,10 @@ object StatusText {
             .put("listen", settings.listen)
             .put("auth", settings.auth)
             .put("mode_setting", settings.mode)
-            .put("last_error", PassageService.lastError ?: JSONObject.NULL))
+            .put("keep_cpu_awake", settings.keepCpuAwake)
+            .put("last_error", PassageService.lastError?.let(Diagnostics::redact) ?: JSONObject.NULL))
+        r.put("device", Diagnostics.device())
+        r.put("diagnostics", Diagnostics.snapshot())
         r.put("device_network", JSONObject()
             .put("transport", net.transport)
             .put("dns", JSONArray(net.dns))

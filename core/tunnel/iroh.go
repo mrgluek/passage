@@ -18,6 +18,7 @@ import (
 )
 
 var errIrohExited = errors.New("transport exited")
+var errDestinationRefused = errors.New("destination connection refused")
 
 func startIroh(ctx context.Context, r links.Route, binaryPath string, privateDir string, dns []string) (dialFunc, func(), error) {
 	if !filepath.IsAbs(binaryPath) {
@@ -77,6 +78,10 @@ func startIroh(ctx context.Context, r links.Route, binaryPath string, privateDir
 					return conn, nil
 				}
 				conn.Close()
+				if errors.Is(e, errDestinationRefused) {
+					cancel()
+					return nil, e
+				}
 			}
 			cancel()
 			select {
@@ -145,8 +150,14 @@ func socks(conn net.Conn, target string, auth links.SocksAuth) error {
 	if _, err = io.ReadFull(conn, head); err != nil {
 		return err
 	}
-	if head[0] != 5 || head[1] != 0 || head[2] != 0 {
-		return errors.New("SOCKS connection refused")
+	if head[0] != 5 || head[2] != 0 {
+		return errors.New("invalid SOCKS reply")
+	}
+	if head[1] >= 2 && head[1] <= 6 {
+		return errDestinationRefused
+	}
+	if head[1] != 0 {
+		return errors.New("SOCKS connection failed")
 	}
 	count := 0
 	switch head[3] {

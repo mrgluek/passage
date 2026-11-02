@@ -30,12 +30,13 @@ class PassageService : Service() {
     companion object {
         private const val ACTION_START = "info.gluek.passage.START"
         private const val ACTION_STOP = "info.gluek.passage.STOP"
+        private const val ACTION_POWER = "info.gluek.passage.POWER"
         private const val ACTION_NOTIFY = "info.gluek.passage.NOTIFY"
         private const val CHANNEL = "proxy"
         private const val NOTIFICATION_ID = 1
-        private const val TICK_MS = 15_000L
+        private const val TICK_MS = 60_000L
+        private const val RETRY_MS = 15_000L
         private const val NET_SETTLE_MS = 2_000L
-        /** soar's own starting name length (Config.SafeQName default). */
 
         /** The service is up (the proxy may still be starting or retrying). */
         @Volatile
@@ -47,14 +48,19 @@ class PassageService : Service() {
         var lastError: String? = null
             private set
 
-        fun start(context: Context) {
+        fun start(context: Context, reason: String = "user start") {
             val i = Intent(context, PassageService::class.java).setAction(ACTION_START)
+                .putExtra("reason", reason)
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) context.startForegroundService(i) else context.startService(i)
         }
 
         /** Redraws the notification now, e.g. once notifications are allowed. */
         fun refreshNotification(context: Context) {
             if (active) context.startService(Intent(context, PassageService::class.java).setAction(ACTION_NOTIFY))
+        }
+
+        fun refreshPowerSettings(context: Context) {
+            if (active) context.startService(Intent(context, PassageService::class.java).setAction(ACTION_POWER))
         }
 
         fun stop(context: Context) {
@@ -73,53 +79,79 @@ class PassageService : Service() {
 
     private val tick = object : Runnable {
         override fun run() {
-            bg { checkNetwork(nudge = false); updateNotification() }
-            main.postDelayed(this, TICK_MS)
+            bg {
+                try {
+                    checkNetwork(nudge = false)
+                    updateNotification()
+                } finally {
+                    val delay = if (lastError != null) RETRY_MS else TICK_MS
+                    main.post {
+                        if (active && !worker.isShutdown) {
+                            main.removeCallbacks(this)
+                            main.postDelayed(this, delay)
+                        }
+                    }
+                }
+            }
         }
     }
     private val netKick = Runnable { bg { checkNetwork(nudge = true); updateNotification() } }
 
     override fun onBind(intent: Intent?): IBinder? = null
 
+    override fun onCreate() {
+        super.onCreate()
+        Diagnostics.event("service created")
+    }
+
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        if (intent?.action == ACTION_POWER) {
+            if (active) updateWakeLock() else stopSelf()
+            return if (active) START_STICKY else START_NOT_STICKY
+        }
         if (intent?.action == ACTION_NOTIFY) {
             if (active) bg { updateNotification(force = true) }
             return START_STICKY
         }
         if (intent?.action == ACTION_STOP) {
+            Diagnostics.event("service stop requested")
             shutdown()
             return START_NOT_STICKY
         }
         // ACTION_START, or the system restarting a sticky service (null intent).
         if (intent == null && !Settings(this).running) {
+            Diagnostics.event("system service restart ignored: proxy was stopped")
             stopSelf()
             return START_NOT_STICKY
         }
+        val reason = if (intent == null) "system service restart" else intent.getStringExtra("reason") ?: "start requested"
+        Diagnostics.event("service start: $reason active=$active flags=$flags")
         goForeground()
         if (!active) {
-            begin()
+            begin(reason)
         } else {
-            // Start while running = apply the edited link / probe hosts.
-            bg { startTunnel("restart"); updateNotification() }
+            bg { startTunnel(reason); updateNotification() }
         }
         return START_STICKY
     }
 
     override fun onDestroy() {
+        Diagnostics.event("service destroyed")
         if (active) release()
         worker.shutdown()
         super.onDestroy()
     }
 
-    private fun begin() {
+    override fun onTaskRemoved(rootIntent: Intent?) {
+        Diagnostics.event("app task removed")
+        super.onTaskRemoved(rootIntent)
+    }
+
+    private fun begin(reason: String) {
         active = true
         Settings(this).running = true
         lastError = null
-        val pm = getSystemService(Context.POWER_SERVICE) as PowerManager
-        wakeLock = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "passage:proxy").apply {
-            setReferenceCounted(false)
-            acquire()
-        }
+        updateWakeLock()
         val cm = getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
         val cb = object : ConnectivityManager.NetworkCallback() {
             override fun onAvailable(network: Network) = settle()
@@ -129,10 +161,26 @@ class PassageService : Service() {
         try {
             cm.registerDefaultNetworkCallback(cb)
             netCallback = cb
-        } catch (_: Exception) {
+        } catch (e: Exception) {
+            Diagnostics.error("network callback registration failed", e)
         }
-        bg { startTunnel("start"); updateNotification() }
-        main.postDelayed(tick, TICK_MS)
+        bg { startTunnel(reason); updateNotification() }
+        main.postDelayed(tick, RETRY_MS)
+    }
+
+    private fun updateWakeLock() {
+        val enabled = active && Settings(this).keepCpuAwake
+        if (enabled && wakeLock?.isHeld != true) {
+            val pm = getSystemService(Context.POWER_SERVICE) as PowerManager
+            wakeLock = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "passage:proxy").apply {
+                setReferenceCounted(false)
+                acquire()
+            }
+        } else if (!enabled) {
+            wakeLock?.let { if (it.isHeld) it.release() }
+            wakeLock = null
+        }
+        Diagnostics.event("keep CPU awake: $enabled")
     }
 
     /** Network events come in bursts (Wi-Fi off = lost + available + link changes). */
@@ -174,6 +222,7 @@ class PassageService : Service() {
                     task()
                 } catch (e: Throwable) {
                     lastError = e.message ?: e.toString()
+                    Diagnostics.error("service task failed", e)
                 }
             }
         } catch (_: java.util.concurrent.RejectedExecutionException) {
@@ -186,6 +235,7 @@ class PassageService : Service() {
         if (!active) return
         lastNotification = null
         val s = Settings(this)
+        Diagnostics.event("router start: $why mode=${s.mode}")
         try {
             // Without a link the router runs direct and smart routes only.
             val cfg = if (s.routesConfig.isNotEmpty()) JSONObject(s.routesConfig) else if (s.link.isEmpty()) JSONObject() else Native.parse(s.link)
@@ -206,8 +256,10 @@ class PassageService : Service() {
             out.optString("error").takeIf { it.isNotEmpty() }?.let { throw IllegalStateException(it) }
             lastNet = net.key
             lastError = null
+            Diagnostics.event("router started")
         } catch (e: Throwable) {
             lastError = "$why failed: ${e.message ?: e}"
+            Diagnostics.error("router start failed: $why", e)
         }
     }
 
@@ -220,7 +272,8 @@ class PassageService : Service() {
         if (!active) return
         val running = try {
             Native.status().optBoolean("running")
-        } catch (_: Throwable) {
+        } catch (e: Throwable) {
+            Diagnostics.error("router status failed", e)
             false
         }
         if (!running) {

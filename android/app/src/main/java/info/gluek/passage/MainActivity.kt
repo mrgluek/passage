@@ -40,6 +40,12 @@ class MainActivity : Activity() {
     private lateinit var batteryButton: Button
     private lateinit var statusView: TextView
     private var shownActive: Boolean? = null
+    private class NetworkTest {
+        @Volatile var result: String? = null
+    }
+    private var networkTest: NetworkTest? = null
+    private var testDialog: AlertDialog? = null
+    private var testResultShown = false
 
     private val poll = object : Runnable {
         override fun run() {
@@ -50,12 +56,14 @@ class MainActivity : Activity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        networkTest = lastNonConfigurationInstance as? NetworkTest
+        Diagnostics.event("main screen created: recreation=${savedInstanceState != null}")
         settings = Settings(this)
         setContentView(buildUi())
         // The proxy was on and is not now: an app update or the system
         // stopped it. Opening the app turns it back on.
         if (settings.running && !PassageService.active) {
-            PassageService.start(this)
+            PassageService.start(this, "restore on app open")
         }
     }
 
@@ -70,9 +78,17 @@ class MainActivity : Activity() {
     }
 
     override fun onDestroy() {
+        main.removeCallbacksAndMessages(null)
+        testDialog?.setOnDismissListener(null)
+        testDialog?.dismiss()
+        testDialog = null
+        Diagnostics.event("main screen destroyed: configuration=$isChangingConfigurations finishing=$isFinishing")
         worker.shutdown()
         super.onDestroy()
     }
+
+    @Suppress("OVERRIDE_DEPRECATION")
+    override fun onRetainNonConfigurationInstance(): Any? = networkTest
 
     override fun onCreateOptionsMenu(menu: Menu): Boolean {
         menuInflater.inflate(R.menu.main, menu)
@@ -205,6 +221,8 @@ class MainActivity : Activity() {
     }
 
     private fun refresh() {
+        if (isFinishing || isDestroyed) return
+        showNetworkTest()
         val active = PassageService.active
         if (shownActive != active) {
             shownActive = active
@@ -224,12 +242,13 @@ class MainActivity : Activity() {
                 val s = Native.status()
                 val err = PassageService.lastError
                 val line = if (active && s.optBoolean("running")) StatusText.oneLine(this, s) else ""
-                val full = StatusText.full(this, s)
+                val full = StatusText.full(this, s) + Diagnostics.text(this)
                 Pair(line, if (err != null) "⚠ $err\n\n$full" else full)
             } catch (e: Throwable) {
-                Pair("", getString(R.string.native_broken, e.message ?: e.toString()))
+                Pair("", getString(R.string.native_broken, e.message ?: e.toString()) + Diagnostics.text(this))
             }
             runOnUiThread {
+                if (isFinishing || isDestroyed) return@runOnUiThread
                 stateView.text = head
                 routeView.text = line
                 routeView.visibility = if (line.isEmpty()) View.GONE else View.VISIBLE
@@ -241,12 +260,18 @@ class MainActivity : Activity() {
     /** The report goes through the share sheet, so a tester can send it straight from here. */
     private fun shareReport() {
         worker.execute {
+            val status = try { Native.status() } catch (e: Throwable) {
+                org.json.JSONObject().put("running", false).put("error", e.toString())
+            }
             val report = try {
-                StatusText.report(Native.status(), NetInfo.snapshot(this), settings, appVersion())
+                StatusText.report(this, status, NetInfo.snapshot(this), settings, appVersion())
             } catch (e: Throwable) {
-                "error: ${e.message ?: e}"
+                Diagnostics.error("report failed", e)
+                org.json.JSONObject().put("error", e.javaClass.name)
+                    .put("device", Diagnostics.device()).put("diagnostics", Diagnostics.snapshot()).toString(2)
             }
             runOnUiThread {
+                if (isFinishing || isDestroyed) return@runOnUiThread
                 val send = Intent(Intent.ACTION_SEND)
                     .setType("text/plain")
                     .putExtra(Intent.EXTRA_SUBJECT, "Passage report")
@@ -272,40 +297,59 @@ class MainActivity : Activity() {
             Toast.makeText(this, getString(R.string.proxy_stopped), Toast.LENGTH_SHORT).show()
             return
         }
-        val wait = AlertDialog.Builder(this)
-            .setTitle(R.string.test_network)
-            .setMessage(R.string.testing_network)
-            .setCancelable(false)
-            .show()
+        if (networkTest != null) return
+        val test = NetworkTest()
+        networkTest = test
+        val context = applicationContext
+        showNetworkTest()
         worker.execute {
-            val text = try {
-                StatusText.diagnosis(this, Native.json(Native.diagnose()))
+            test.result = try {
+                StatusText.diagnosis(context, Native.json(Native.diagnose()))
             } catch (e: Throwable) {
+                Diagnostics.error("network test failed", e)
                 e.message ?: e.toString()
             }
-            runOnUiThread {
-                wait.dismiss()
-                if (isFinishing) return@runOnUiThread
-                val view = TextView(this).apply {
-                    this.text = text
-                    typeface = Typeface.MONOSPACE
-                    textSize = 11f
-                    setTextIsSelectable(true)
-                    val pad = Ui.dp(this@MainActivity, 16)
-                    setPadding(pad, pad, pad, pad)
-                }
-                AlertDialog.Builder(this)
+        }
+    }
+
+    private fun showNetworkTest() {
+        val test = networkTest ?: return
+        val text = test.result
+        if (text == null) {
+            if (testDialog == null) {
+                testDialog = AlertDialog.Builder(this)
                     .setTitle(R.string.test_network)
-                    .setView(ScrollView(this).apply { addView(HorizontalScrollView(this@MainActivity).apply { addView(view) }) })
-                    .setPositiveButton(R.string.share) { _, _ ->
-                        val send = Intent(Intent.ACTION_SEND).setType("text/plain")
-                            .putExtra(Intent.EXTRA_SUBJECT, "Passage network test")
-                            .putExtra(Intent.EXTRA_TEXT, text)
-                        startActivity(Intent.createChooser(send, getString(R.string.share)))
-                    }
-                    .setNegativeButton(android.R.string.ok, null)
+                    .setMessage(R.string.testing_network)
+                    .setCancelable(false)
                     .show()
             }
+        } else if (!testResultShown) {
+            testDialog?.dismiss()
+            testResultShown = true
+            val view = TextView(this).apply {
+                this.text = text
+                typeface = Typeface.MONOSPACE
+                textSize = 11f
+                setTextIsSelectable(true)
+                val pad = Ui.dp(this@MainActivity, 16)
+                setPadding(pad, pad, pad, pad)
+            }
+            testDialog = AlertDialog.Builder(this)
+                .setTitle(R.string.test_network)
+                .setView(ScrollView(this).apply { addView(HorizontalScrollView(this@MainActivity).apply { addView(view) }) })
+                .setPositiveButton(R.string.share) { _, _ ->
+                    val send = Intent(Intent.ACTION_SEND).setType("text/plain")
+                        .putExtra(Intent.EXTRA_SUBJECT, "Passage network test")
+                        .putExtra(Intent.EXTRA_TEXT, text)
+                    startActivity(Intent.createChooser(send, getString(R.string.share)))
+                }
+                .setNegativeButton(android.R.string.ok, null)
+                .setOnDismissListener {
+                    networkTest = null
+                    testDialog = null
+                    testResultShown = false
+                }
+                .show()
         }
     }
 

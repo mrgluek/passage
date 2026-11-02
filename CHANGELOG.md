@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.3.1
+
+- Adds an option to let the CPU sleep while Passage runs; keeping it awake
+  remains enabled by default for reliable background connections.
+- Fixes a crash when rotating the screen during a network test and keeps
+  the test result across rotation.
+- Saves startup errors, crashes and restart history for shared reports.
+- Checks the background service less often while it is working; network
+  changes still trigger a check.
+- Fixes connections failing while a tunnel is still starting.
+- Stops retrying refused destinations through iroh and keeps other
+  destinations on their preferred connection.
+- Limits local connections and closes pending connections when stopped.
+
 ## 0.3.0
 
 - One link can carry several connections. Passage tries them in order and

@@ -113,6 +113,8 @@ const (
 // Timeouts and the monitor's hysteresis.
 const (
 	handshakeTimeout      = 30 * time.Second
+	maxConnections        = 256
+	maxPendingHandshakes  = 32
 	directDialTimeout     = 8 * time.Second
 	tunnelDialTimeout     = 60 * time.Second
 	probeTimeout          = 6 * time.Second
@@ -168,10 +170,12 @@ type Tunnel struct {
 	relays      map[string]*group // by host name
 	telegram    *group
 	other       *group
-	routeGen    atomic.Int64 // bumped on every route change, for the shell to nudge the core
-	urgent      atomic.Bool  // the next probe skips minProbeGap (Recheck)
-	intercepted bool         // this network redirects port-53 traffic (see intercept.go)
-	dnsEgress   string       // who actually resolves for the interceptor, if learned
+	routeGen    atomic.Int64      // bumped on every route change, for the shell to nudge the core
+	urgent      atomic.Bool       // the next probe skips minProbeGap (Recheck)
+	intercepted bool              // this network redirects port-53 traffic (see intercept.go)
+	dnsEgress   string            // who actually resolves for the interceptor, if learned
+	clients     map[net.Conn]bool // true until the SOCKS handshake finishes
+	pending     int
 	conns       map[*tracked]struct{}
 	lastProbe   time.Time // the monitor's last round
 	lastCanary  string    // the canary that answered last; tried first next time
@@ -456,11 +460,18 @@ func (t *Tunnel) Close() {
 	t.cancel()
 	t.ln.Close()
 	t.mu.Lock()
+	var locals []net.Conn
+	for c := range t.clients {
+		locals = append(locals, c)
+	}
 	var all []*tracked
 	for c := range t.conns {
 		all = append(all, c)
 	}
 	t.mu.Unlock()
+	for _, c := range locals {
+		c.Close()
+	}
 	for _, c := range all {
 		c.local.Close()
 		c.remote.Close()
@@ -556,7 +567,31 @@ func (t *Tunnel) serve() {
 			time.Sleep(100 * time.Millisecond)
 			continue
 		}
-		go t.handle(c)
+		t.mu.Lock()
+		if t.ctx.Err() != nil || len(t.clients) >= maxConnections || t.pending >= maxPendingHandshakes {
+			t.mu.Unlock()
+			c.Close()
+			continue
+		}
+		if t.clients == nil {
+			t.clients = make(map[net.Conn]bool)
+		}
+		t.clients[c] = true
+		t.pending++
+		t.wg.Add(1)
+		t.mu.Unlock()
+		go func() {
+			defer t.wg.Done()
+			defer func() {
+				t.mu.Lock()
+				if t.clients[c] {
+					t.pending--
+				}
+				delete(t.clients, c)
+				t.mu.Unlock()
+			}()
+			t.handle(c)
+		}()
 	}
 }
 
@@ -568,12 +603,18 @@ func (t *Tunnel) handle(c net.Conn) {
 		t.log.add("socks: %v", err)
 		return
 	}
+	c.SetDeadline(time.Time{})
 	t.mu.Lock()
+	if t.clients[c] {
+		t.clients[c] = false
+		t.pending--
+	}
 	g := t.groupForLocked(addr)
 	t.mu.Unlock()
 	t.learn(g, addr)
 
 	remote, route, err := t.dial(g, addr)
+	c.SetWriteDeadline(time.Now().Add(handshakeTimeout))
 	if err != nil {
 		if errors.Is(err, errNoIPv6Route) {
 			socksReply(c, repNetworkUnreachable)
@@ -597,6 +638,10 @@ func (t *Tunnel) handle(c net.Conn) {
 
 	tr := &tracked{group: g, route: route, local: c, remote: remote}
 	t.mu.Lock()
+	if t.ctx.Err() != nil {
+		t.mu.Unlock()
+		return
+	}
 	t.conns[tr] = struct{}{}
 	t.stats[route].Conns++
 	if route == RouteTunnel {

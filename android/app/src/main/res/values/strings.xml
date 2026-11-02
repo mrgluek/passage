@@ -63,6 +63,7 @@
     <string name="status_tunnel">Tunnel</string>
     <string name="status_paths">Resolver paths (working first):</string>
     <string name="status_events">Events (newest last):</string>
+    <string name="diagnostic_events">App history (saved across restarts):</string>
     <string name="settings">Settings</string>
     <string name="action_start">Start proxy</string>
     <string name="action_stop">Stop proxy</string>
@@ -129,4 +130,6 @@
     <string name="import_route_count">Saved routes: %1$d (%2$s)</string>
     <string name="import_collision">Routes with the same ID will be overwritten.</string>
     <string name="import_clear">Remove all saved routes.</string>
+    <string name="keep_cpu_awake">Keep CPU awake</string>
+    <string name="keep_cpu_awake_help">Helps keep connections alive while the screen is off, but uses more battery. Enabled by default. Turn it off to test battery savings; turn it back on if messages are delayed or connections drop. The screen stays off.</string>
 </resources>

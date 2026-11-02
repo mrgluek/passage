@@ -145,3 +145,29 @@ func TestRoutePoolWaysUseIDsForSharedTypes(t *testing.T) {
 		t.Fatalf("names = %v", names)
 	}
 }
+
+func TestDestinationFailureDoesNotPenalizeRoute(t *testing.T) {
+	primary := &poolFixture{dial: func(_ context.Context, _, address string) (net.Conn, error) {
+		if address == "down.example.org:443" {
+			return nil, errDestinationRefused
+		}
+		a, b := net.Pipe()
+		b.Close()
+		return a, nil
+	}}
+	backup := &poolFixture{dial: func(context.Context, string, string) (net.Conn, error) {
+		return nil, errors.New("backup unavailable")
+	}}
+	pool := &routePool{clients: []soarClient{primary, backup}, ipv6: []bool{false, false}}
+	if _, err := pool.DialContext(context.Background(), "tcp", "down.example.org:443"); err == nil {
+		t.Fatal("unavailable destination connected")
+	}
+	if _, penalized := pool.failedUntil[0]; penalized {
+		t.Fatal("destination failure penalized primary")
+	}
+	conn, err := pool.DialContext(context.Background(), "tcp", "example.org:443")
+	if err != nil {
+		t.Fatal(err)
+	}
+	conn.Close()
+}

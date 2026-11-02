@@ -30,6 +30,10 @@ class Settings(context: Context) {
         get() = prefs.getBoolean("running", false)
         set(v) = prefs.edit().putBoolean("running", v).apply()
 
+    var keepCpuAwake: Boolean
+        get() = prefs.getBoolean("keep_cpu_awake", true)
+        set(v) = prefs.edit().putBoolean("keep_cpu_awake", v).apply()
+
     /** The notification explainer was shown (Android 13+ asks at most twice). */
     var askedNotifications: Boolean
         get() = prefs.getBoolean("asked_notifications", false)

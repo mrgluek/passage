@@ -164,6 +164,15 @@ class SettingsActivity : Activity() {
             setOnClickListener { Ui.askBatteryExemption(this@SettingsActivity) }
         }
         col.addView(batteryButton)
+        col.addView(CheckBox(this).apply {
+            text = getString(R.string.keep_cpu_awake)
+            isChecked = settings.keepCpuAwake
+            setOnCheckedChangeListener { _, on ->
+                settings.keepCpuAwake = on
+                PassageService.refreshPowerSettings(this@SettingsActivity)
+            }
+        })
+        col.addView(Ui.hint(this, getString(R.string.keep_cpu_awake_help)))
 
         col.addView(Ui.heading(this, getString(R.string.about_label)))
         aboutView = Ui.hint(this, "")
@@ -256,7 +265,7 @@ class SettingsActivity : Activity() {
 
     /** Start while running = restart with the saved settings. */
     private fun restartIfRunning() {
-        if (PassageService.active) PassageService.start(this)
+        if (PassageService.active) PassageService.start(this, "settings changed")
     }
 
     /** Validates the saved link and says which zone it names; a bad one unfolds the fields. */
