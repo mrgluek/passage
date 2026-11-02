@@ -120,7 +120,7 @@ const (
 	probeTimeout          = 6 * time.Second
 	tunnelProbeTimeout    = 30 * time.Second // a cold soar session needs its hellos first
 	minProbeGap           = 10 * time.Second
-	blockedAfter          = 2 // consecutive "relays fail, canary ok" probes before switching to the tunnel
+	blockedAfter          = 2 // consecutive probes showing direct access blocked before switching
 	recoveredAfter        = 3 // consecutive "a relay answers directly" probes before switching back
 	maxProbedRelays       = 4
 	suspiciousLifetime    = 20 * time.Second
@@ -216,8 +216,7 @@ type probeResult struct {
 	// so one blocked probe is enough to switch to it.
 	SmartKnown bool   `json:"smart_known,omitempty"`
 	Strategy   string `json:"strategy,omitempty"`
-	// Set by confirmViaTunnel before a switch to the tunnel: the same relays
-	// probed through a live tunnel session.
+	// Set by confirmViaTunnel: the same targets checked through the tunnel.
 	TunnelChecked bool `json:"tunnel_checked,omitempty"`
 	TunnelOK      bool `json:"tunnel_ok,omitempty"`
 
@@ -1117,21 +1116,20 @@ func (t *Tunnel) probeCanaries() bool {
 	return false
 }
 
-// confirmViaTunnel runs when the next "blocked" probe would switch g to the
-// tunnel. If a live tunnel session can't reach the probe hosts either, they
-// are down rather than blocked, and the route stays. Without a live session
-// a failure proves nothing, and the switch goes ahead.
+// confirmViaTunnel checks before switching, and when nothing answers directly.
+// A tunnel answer proves connectivity even when all direct access is blocked.
+// With direct connectivity, failure through a live session means relays-down.
 func (t *Tunnel) confirmViaTunnel(g *group, res probeResult) probeResult {
 	t.mu.Lock()
 	gs := g
-	switching := t.mode == ModeAuto && gs.route == RouteDirect && !res.SmartOK &&
-		res.Relays > 0 && res.RelayOK == 0 && res.NetworkOK && gs.failStreak+1 >= blockedAfter
+	check := t.mode == ModeAuto && !res.SmartOK && res.Relays > 0 && res.RelayOK == 0 &&
+		(!res.NetworkOK || gs.route == RouteDirect && gs.failStreak+1 >= blockedAfter)
 	t.mu.Unlock()
 	canProbe := t.probeTunnel != nil
 	if g.kind == kindTelegram {
 		canProbe = t.probeMTTunnel != nil
 	}
-	if !switching || !canProbe || t.established == nil {
+	if !check || !canProbe || t.established == nil {
 		return res
 	}
 	hosts := res.hosts
@@ -1201,6 +1199,7 @@ func (t *Tunnel) applyProbe(g *group, res probeResult) {
 //     smart route if a strategy works, else the tunnel, unless the relays
 //     fail through a live tunnel too: then they are down ("relays-down")
 //     and the route stays;
+//   - a tunnel answer also proves direct access is blocked;
 //   - everything failing means "offline": change nothing.
 func decide(route Route, res probeResult, failStreak, okStreak int, tunnelHealthy bool) (Route, int, int, string) {
 	switch {
@@ -1214,7 +1213,7 @@ func decide(route Route, res probeResult, failStreak, okStreak int, tunnelHealth
 			route = RouteDirect
 		}
 		return route, 0, okStreak, "direct"
-	case res.NetworkOK:
+	case res.NetworkOK || res.TunnelOK:
 		failStreak++
 		switch {
 		case res.SmartOK && (route != RouteDirect || failStreak >= blockedAfter || res.SmartKnown):
@@ -1413,7 +1412,7 @@ type Status struct {
 	Events         []Event         `json:"events"`
 	// Groups has each group's verdict, by relay host name or "telegram". The
 	// top-level route, state and last probe are the most recently used
-	// relay's; relays lists every relay group.
+	// relay's, or Telegram's when there are no relays.
 	Groups map[string]GroupStatus `json:"groups"`
 }
 
@@ -1433,12 +1432,15 @@ type GroupStatus struct {
 func (t *Tunnel) Status(n int) Status {
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	// The top-level fields follow the most recently used relay.
+	// Follow the most recently used relay, or Telegram when used alone.
 	mail := t.other
 	for _, g := range t.relays {
 		if mail == t.other || g.used.After(mail.used) {
 			mail = g
 		}
+	}
+	if mail == t.other && t.telegram.seen {
+		mail = t.telegram
 	}
 	s := Status{
 		Zone:           t.cfg.Zone,

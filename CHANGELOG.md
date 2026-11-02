@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.3.2
+
+- Fixes automatic routing when only the tunnel is reachable, including
+  stalled Telegram connections and incorrect direct/offline status.
+- Shows Telegram's route and connection checks when no mail app is connected.
+
 ## 0.3.1
 
 - Adds an option to let the CPU sleep while Passage runs; keeping it awake

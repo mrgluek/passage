@@ -3,10 +3,86 @@ package tunnel
 import (
 	"context"
 	"errors"
+	"fmt"
+	"io"
+	"net"
 	"slices"
 	"sync/atomic"
 	"testing"
+	"time"
 )
+
+func TestTunnelOnlyConnectivity(t *testing.T) {
+	for _, target := range []string{"relay.example.org:993", telegramDCs[0]} {
+		for _, session := range []bool{false, true} {
+			for _, working := range []bool{false, true} {
+				t.Run(fmt.Sprintf("%s/session=%v/working=%v", target, session, working), func(t *testing.T) {
+					var n atomic.Int32
+					tt := newTestTunnel(t, ModeAuto, echoDialer("D:", &n), echoDialer("T:", &n))
+					g := tt.testGroup(target)
+					tt.established = func() bool { return session }
+					probe := func(context.Context, string) error {
+						if working {
+							return nil
+						}
+						return errors.New("unreachable")
+					}
+					tt.probeMTTunnel = probe
+					tt.probeTunnel = func(ctx context.Context, addr, _ string) error { return probe(ctx, addr) }
+					for range blockedAfter + 1 {
+						tt.check()
+					}
+					s := tt.Status(0).Groups[g.name]
+					if s.LastResult.NetworkOK || !s.LastResult.CanaryChecked || s.LastResult.CanaryOK {
+						t.Fatalf("direct connectivity must remain unavailable: %+v", s)
+					}
+					if working {
+						if s.Route != "tunnel" || s.State != "blocked" || !s.LastResult.TunnelOK {
+							t.Fatalf("a working tunnel must be used despite failed canaries: %+v", s)
+						}
+						c, reply := socksConnect(t, tt.Addr(), "u", "p", target)
+						defer c.Close()
+						if reply != repSucceeded || roundTrip(t, c) != "T:hi" {
+							t.Fatal("traffic did not use the tunnel")
+						}
+					} else if s.Route != "direct" || s.State != "offline" {
+						t.Fatalf("a session alone does not prove connectivity: %+v", s)
+					}
+				})
+			}
+		}
+	}
+}
+
+func TestTunnelOnlyClosesStalledTelegramConnection(t *testing.T) {
+	var n atomic.Int32
+	silent := func(context.Context, string, string) (net.Conn, error) {
+		a, b := net.Pipe()
+		go func() { defer b.Close(); io.Copy(io.Discard, b) }()
+		return a, nil
+	}
+	tt := newTestTunnel(t, ModeAuto, silent, echoDialer("T:", &n))
+	tt.established = func() bool { return false }
+	tt.probeMTTunnel = func(context.Context, string) error { return nil }
+	c, reply := socksConnect(t, tt.Addr(), "u", "p", telegramDCs[0])
+	defer c.Close()
+	if reply != repSucceeded {
+		t.Fatalf("SOCKS reply: %d", reply)
+	}
+	c.SetDeadline(time.Now().Add(2 * time.Second))
+	if _, err := c.Write([]byte("hello")); err != nil {
+		t.Fatal(err)
+	}
+	for range blockedAfter {
+		tt.check()
+	}
+	if _, err := c.Read(make([]byte, 1)); !errors.Is(err, io.EOF) {
+		t.Fatalf("stalled direct connection must close after switching: %v", err)
+	}
+	if tt.RouteGen() == 0 {
+		t.Fatal("route change must notify the app")
+	}
+}
 
 func TestCanariesSkippedWhenAnotherGroupAnswers(t *testing.T) {
 	for _, tc := range []struct {

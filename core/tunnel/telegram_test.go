@@ -287,6 +287,27 @@ func TestTelegramTargets(t *testing.T) {
 	}
 }
 
+func TestStatusFollowsTelegramWithoutMail(t *testing.T) {
+	var n atomic.Int32
+	tt := newTestTunnel(t, ModeAuto, echoDialer("D:", &n), echoDialer("T:", &n))
+	g := tt.testGroup(telegramDCs[0])
+	tt.applyProbe(g, probeResult{Relays: 1, TunnelChecked: true, TunnelOK: true})
+	tt.applyProbe(g, probeResult{Relays: 1, TunnelChecked: true, TunnelOK: true})
+	tt.mu.Lock()
+	g.via = "iroh"
+	tt.mu.Unlock()
+	s := tt.Status(0)
+	tg := s.Groups["telegram"]
+	if s.Route != "tunnel" || s.Via != "iroh" || s.State != "blocked" ||
+		!s.LastProbe.Equal(tg.LastProbe) || !s.RouteSince.Equal(tg.RouteSince) || !s.LastResult.TunnelOK {
+		t.Fatalf("overall status must follow Telegram: %+v", s)
+	}
+	tt.testGroup("relay.example.org:993")
+	if s := tt.Status(0); s.Route != "direct" || s.Via != "" {
+		t.Fatalf("mail status must take priority once used: %+v", s)
+	}
+}
+
 func TestStatusHasGroups(t *testing.T) {
 	var n atomic.Int32
 	tt, _ := groupsTunnel(t, echoDialer("D:", &n))
