@@ -1,6 +1,7 @@
 package info.gluek.passage
 
 import android.content.Context
+import org.json.JSONObject
 import java.security.SecureRandom
 
 /** What the user entered. The tunnel link stays in app-private storage only. */
@@ -15,14 +16,47 @@ class Settings(context: Context) {
         get() = prefs.getString("routes_config", "") ?: ""
         private set(v) { prefs.edit().putString("routes_config", v).apply() }
 
+    /** Saves a new link; a chosen route type the link no longer has goes back to auto. */
     fun saveRoutes(link: String, config: String) {
         prefs.edit().putString("link", link).putString("routes_config", config).apply()
+        prefs.edit().putString("mode", mode).apply()
     }
 
-    /** auto, always or off. */
+    /**
+     * auto, off, or one of [routeKinds]. The earlier "always" (any tunnel
+     * route) reads as the link's first route type.
+     */
     var mode: String
-        get() = prefs.getString("mode", "auto") ?: "auto"
+        get() {
+            val saved = prefs.getString("mode", "auto") ?: "auto"
+            val kinds = routeKinds
+            return when (saved) {
+                "auto", "off" -> saved
+                "always" -> kinds.firstOrNull() ?: "auto"
+                in kinds -> saved
+                else -> "auto"
+            }
+        }
         set(v) = prefs.edit().putString("mode", v).apply()
+
+    /** Route types in the saved link, in the order the router tries them. */
+    val routeKinds: List<String>
+        get() {
+            val config = routesConfig
+            if (config.isEmpty()) return if (link.isEmpty()) emptyList() else listOf("soar")
+            return try {
+                val json = JSONObject(config)
+                val routes = json.optJSONArray("routes")
+                    ?: return if (json.optString("zone").isNotEmpty()) listOf("soar") else emptyList()
+                (0 until routes.length()).map { routes.getJSONObject(it) }
+                    .sortedWith(compareBy({ it.optInt("priority") }, { it.optString("id") }))
+                    .map { it.optString("type") }
+                    .filter { it in ROUTE_KINDS }
+                    .distinct()
+            } catch (_: Exception) {
+                emptyList()
+            }
+        }
 
 
     /** The user wants the proxy on: a system restart of the service resumes it. */
@@ -30,9 +64,6 @@ class Settings(context: Context) {
         get() = prefs.getBoolean("running", false)
         set(v) = prefs.edit().putBoolean("running", v).apply()
 
-    var keepCpuAwake: Boolean
-        get() = prefs.getBoolean("keep_cpu_awake", true)
-        set(v) = prefs.edit().putBoolean("keep_cpu_awake", v).apply()
 
     /** The notification explainer was shown (Android 13+ asks at most twice). */
     var askedNotifications: Boolean
@@ -93,8 +124,13 @@ class Settings(context: Context) {
 
     companion object {
         const val HOST = "127.0.0.1"
+        /** Route types that can be chosen, as in the Go core's RouteKinds. */
+        val ROUTE_KINDS = listOf("wss", "iroh", "soar")
+        // Below Linux's ephemeral range (32768-60999): a client retrying a
+        // stopped proxy could otherwise get the port as its own source port,
+        // connect to itself and block the restart for a minute.
         private const val MIN_PORT = 20000
-        private const val MAX_PORT = 60000
+        private const val MAX_PORT = 32768 // exclusive
         private val random = SecureRandom()
 
         private fun hex(bytes: Int): String {

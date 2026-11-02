@@ -11,6 +11,7 @@ import android.content.pm.ServiceInfo
 import android.net.ConnectivityManager
 import android.net.LinkProperties
 import android.net.Network
+import android.os.BatteryManager
 import android.os.Build
 import android.os.Handler
 import android.os.IBinder
@@ -30,13 +31,13 @@ class PassageService : Service() {
     companion object {
         private const val ACTION_START = "info.gluek.passage.START"
         private const val ACTION_STOP = "info.gluek.passage.STOP"
-        private const val ACTION_POWER = "info.gluek.passage.POWER"
         private const val ACTION_NOTIFY = "info.gluek.passage.NOTIFY"
         private const val CHANNEL = "proxy"
         private const val NOTIFICATION_ID = 1
         private const val TICK_MS = 60_000L
         private const val RETRY_MS = 15_000L
         private const val NET_SETTLE_MS = 2_000L
+        private const val BATTERY_SAMPLE_MS = 10 * 60_000L
 
         /** The service is up (the proxy may still be starting or retrying). */
         @Volatile
@@ -59,10 +60,6 @@ class PassageService : Service() {
             if (active) context.startService(Intent(context, PassageService::class.java).setAction(ACTION_NOTIFY))
         }
 
-        fun refreshPowerSettings(context: Context) {
-            if (active) context.startService(Intent(context, PassageService::class.java).setAction(ACTION_POWER))
-        }
-
         fun stop(context: Context) {
             context.startService(Intent(context, PassageService::class.java).setAction(ACTION_STOP))
         }
@@ -76,15 +73,21 @@ class PassageService : Service() {
     // Touched on the worker thread only.
     private var lastNet: Pair<List<String>, String>? = null
     private var lastNotification: Pair<String, String>? = null
+    private var lastBatterySample = 0L
 
     private val tick = object : Runnable {
         override fun run() {
             bg {
                 try {
                     checkNetwork(nudge = false)
-                    updateNotification()
+                    val status = status()
+                    updateWakeLock(status)
+                    updateNotification(status)
+                    sampleBattery()
                 } finally {
-                    val delay = if (lastError != null) RETRY_MS else TICK_MS
+                    // With a Soar route, check often: its polling needs the
+                    // wake lock soon after it starts carrying connections.
+                    val delay = if (lastError != null || "soar" in Settings(this@PassageService).routeKinds) RETRY_MS else TICK_MS
                     main.post {
                         if (active && !worker.isShutdown) {
                             main.removeCallbacks(this)
@@ -105,10 +108,6 @@ class PassageService : Service() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        if (intent?.action == ACTION_POWER) {
-            if (active) updateWakeLock() else stopSelf()
-            return if (active) START_STICKY else START_NOT_STICKY
-        }
         if (intent?.action == ACTION_NOTIFY) {
             if (active) bg { updateNotification(force = true) }
             return START_STICKY
@@ -168,19 +167,59 @@ class PassageService : Service() {
         main.postDelayed(tick, RETRY_MS)
     }
 
-    private fun updateWakeLock() {
-        val enabled = active && Settings(this).keepCpuAwake
-        if (enabled && wakeLock?.isHeld != true) {
+    /** The router's status, or null while it can't be read. */
+    private fun status(): JSONObject? = try { Native.status() } catch (_: Throwable) { null }
+
+    /**
+     * The CPU stays awake while a Soar route carries connections: it polls
+     * and nothing from the network would wake the phone for it. Other routes
+     * get incoming data and let the phone sleep. Changes go to the log.
+     */
+    private fun updateWakeLock(status: JSONObject? = null) {
+        val reason = if (active && soarInUse(status)) "soar in use" else null
+        val held = wakeLock?.isHeld == true
+        if (reason != null && !held) {
             val pm = getSystemService(Context.POWER_SERVICE) as PowerManager
             wakeLock = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "passage:proxy").apply {
                 setReferenceCounted(false)
                 acquire()
             }
-        } else if (!enabled) {
-            wakeLock?.let { if (it.isHeld) it.release() }
+            Diagnostics.event("wake lock on: $reason")
+        } else if (reason == null && held) {
+            wakeLock?.release()
             wakeLock = null
+            Diagnostics.event("wake lock off")
         }
-        Diagnostics.event("keep CPU awake: $enabled")
+    }
+
+    private fun soarInUse(status: JSONObject?): Boolean {
+        val tunnels = status?.optJSONArray("tunnels") ?: return false
+        return (0 until tunnels.length()).any {
+            val t = tunnels.getJSONObject(it)
+            t.optString("type") == "soar" && t.optString("state") == "up"
+        }
+    }
+
+    /** One battery sample every BATTERY_SAMPLE_MS for the report (while the proxy runs). */
+    private fun sampleBattery() {
+        val now = System.currentTimeMillis()
+        if (now - lastBatterySample < BATTERY_SAMPLE_MS) return
+        lastBatterySample = now
+        try {
+            val bm = getSystemService(BatteryManager::class.java)
+            val pm = getSystemService(PowerManager::class.java)
+            fun prop(id: Int): Any = bm.getIntProperty(id).let { if (it == 0 || it == Int.MIN_VALUE) JSONObject.NULL else it }
+            Diagnostics.battery(JSONObject()
+                .put("level", bm.getIntProperty(BatteryManager.BATTERY_PROPERTY_CAPACITY))
+                .put("charge_uah", prop(BatteryManager.BATTERY_PROPERTY_CHARGE_COUNTER))
+                .put("current_ua", prop(BatteryManager.BATTERY_PROPERTY_CURRENT_NOW))
+                .put("charging", bm.isCharging)
+                .put("screen_on", pm.isInteractive)
+                .put("doze", pm.isDeviceIdleMode)
+                .put("wake_lock", wakeLock?.isHeld == true))
+        } catch (e: Throwable) {
+            Diagnostics.error("battery sample failed", e)
+        }
     }
 
     /** Network events come in bursts (Wi-Fi off = lost + available + link changes). */
@@ -296,10 +335,10 @@ class PassageService : Service() {
         }
     }
 
-    private fun updateNotification(force: Boolean = false) {
+    private fun updateNotification(status: JSONObject? = null, force: Boolean = false) {
         if (!active) return
         val (title, text) = lastError?.let { getString(R.string.app_name) to it } ?: try {
-            StatusText.notification(this, Native.status())
+            StatusText.notification(this, status ?: Native.status())
         } catch (e: Throwable) {
             getString(R.string.app_name) to (e.message ?: e.toString())
         }

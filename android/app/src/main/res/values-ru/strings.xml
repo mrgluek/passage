@@ -19,12 +19,10 @@
 
     <string name="route_label">Маршрут</string>
     <string name="mode_auto">Авто</string>
-    <string name="mode_always">Всегда туннель</string>
-    <string name="mode_off">Без туннеля</string>
+    <string name="mode_off">Напрямую</string>
 
     <string name="stop">Стоп</string>
     <string name="share_report">Отправить отчёт</string>
-    <string name="check_now">Проверить сейчас</string>
     <string name="checking">Проверяю сеть…</string>
     <string name="battery">Разрешить работу в фоне</string>
 
@@ -33,9 +31,8 @@
 
     <string name="not_running">не запущен</string>
     <string name="proxy_not_running">Прокси не запущен.</string>
-    <string name="one_line">%1$s · %2$s · %3$s</string>
     <string name="group_mail">Почта: %1$s</string>
-    <string name="group_telegram">Telegram: %1$s</string>
+    <string name="group_telegram">Tg: %1$s</string>
     <string name="route_direct">напрямую</string>
     <string name="route_tunnel">туннель</string>
 
@@ -43,7 +40,7 @@
     <string name="state_blocked">ограничена (проверочные хосты не отвечают, другие сайты отвечают)</string>
     <string name="state_relays_down">проверочные хосты недоступны (и через туннель тоже)</string>
     <string name="state_offline">нет сети (ничего не отвечает)</string>
-    <string name="state_unknown">ещё не проверялась</string>
+    <string name="state_unknown">ещё не проверялась (проверяет только Авто)</string>
 
     <string name="status_route">Маршрут: %1$s с %2$s (режим %3$s)</string>
     <string name="status_network">Сеть: %1$s</string>
@@ -72,11 +69,9 @@
     <string name="no_link">Ссылки пока нет: Passage работает напрямую и с подстройкой. Ссылка добавит туннель для сетей, где больше ничего не проходит; её можно добавить в настройках.</string>
     <string name="open_settings">Открыть настройки</string>
     <string name="connect_label">Подключить приложение</string>
-    <string name="connect_help">Скопируйте ссылку на прокси и вставьте её в настройки прокси приложения (Delta Chat, ArcaneChat: Настройки → Дополнительно → Прокси → Добавить прокси). Если приложение умеет добавлять прокси по ссылке, быстрее нажать «Открыть ссылку на прокси».</string>
+    <string name="connect_help">Добавьте прокси в настройки прокси приложения (Delta Chat, ArcaneChat: Настройки → Дополнительно → Прокси → Добавить прокси). Кнопки справа копируют ссылку на прокси или открывают её в приложении, которое добавляет прокси по ссылке. Нажмите на значение, чтобы скопировать только его.</string>
     <string name="copy_proxy_link">Скопировать ссылку на прокси</string>
     <string name="proxy_link_copied">Ссылка на прокси скопирована</string>
-    <string name="proxy_details">Хост %1$s, порт %2$d\nЛогин %3$s\nПароль %4$s</string>
-    <string name="proxy_details_open">Хост %1$s, порт %2$d, без пароля</string>
     <string name="status_label">Состояние</string>
     <string name="change_link">Изменить ссылку</string>
     <string name="saved">Сохранено</string>
@@ -102,12 +97,11 @@
     <string name="tunnel_no_link">нет ссылки</string>
     <string name="tunnel_label">туннель: %1$s</string>
     <string name="tunnel_route">%1$s: %2$s</string>
-    <string name="route_state_up">работает</string>
+    <string name="route_state_up">подключён</string>
     <string name="route_state_failed">сбой</string>
-    <string name="route_state_idle">не активен</string>
+    <string name="route_state_idle">ожидает</string>
     <string name="status_no_tunnel">Туннель: нет ссылки (добавьте в настройках)</string>
     <string name="notification_route">Маршрут: %1$s</string>
-    <string name="notification_state">%1$s · %2$s</string>
     <string name="background_help">Passage должен работать и при выключенном экране. Иначе Android через какое-то время остановит его ради экономии заряда, и мессенджеры потеряют связь.</string>
     <string name="background_allowed">Разрешено: Android не будет останавливать Passage ради экономии заряда.</string>
     <string name="notifications_title">Уведомление во время работы</string>
@@ -120,7 +114,6 @@
     <string name="testing_network">Проверяю каждый релей и способ, до 20 секунд…</string>
     <string name="test_target">цель</string>
     <string name="test_time">Проверка сети в %1$s</string>
-    <string name="share">Отправить</string>
     <string name="import_title">Импорт маршрутов</string>
     <string name="import_trusted">Подписано доверенным автором.</string>
     <string name="import_untrusted">Автор не подтверждён. Импортируйте только из доверенного источника.</string>
@@ -130,6 +123,17 @@
     <string name="import_route_count">Сохранено маршрутов: %1$d (%2$s)</string>
     <string name="import_collision">Маршруты с совпадающими ID будут перезаписаны.</string>
     <string name="import_clear">Удалить все сохранённые маршруты.</string>
-    <string name="keep_cpu_awake">Не давать процессору засыпать</string>
-    <string name="keep_cpu_awake_help">Помогает сохранять соединения при выключенном экране, но расходует больше заряда. Включено по умолчанию. Можно отключить для экономии заряда; включите снова, если сообщения задерживаются или связь пропадает. Экран остаётся выключенным.</string>
+    <string name="route_hint">Авто выбирает маршрут само; выбранный маршрут используется всегда.</string>
+    <string name="net_open">Сеть: открыта</string>
+    <string name="net_restricted">Сеть: ограничена</string>
+    <string name="net_relays_down">Сеть: проверочные хосты недоступны</string>
+    <string name="net_offline">Сеть: нет связи</string>
+    <string name="net_unchecked">Сеть: ещё не проверялась</string>
+    <string name="proxy_host">Хост</string>
+    <string name="proxy_port">Порт</string>
+    <string name="proxy_user">Логин</string>
+    <string name="proxy_pass">Пароль</string>
+    <string name="proxy_no_password">Без пароля</string>
+    <string name="value_copied">Скопировано: %1$s</string>
+    <string name="send_report">Отправить отчёт об ошибке (сначала проверяет сеть)</string>
 </resources>

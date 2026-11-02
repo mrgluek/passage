@@ -17,8 +17,6 @@ import android.widget.Button
 import android.widget.CheckBox
 import android.widget.EditText
 import android.widget.LinearLayout
-import android.widget.RadioButton
-import android.widget.RadioGroup
 import android.widget.ScrollView
 import android.widget.TextView
 import android.widget.Toast
@@ -40,7 +38,7 @@ class SettingsActivity : Activity() {
     private lateinit var linkEdit: EditText
     private lateinit var batteryButton: Button
     private lateinit var backgroundState: TextView
-    private var alwaysButton: RadioButton? = null
+    private lateinit var routeBox: LinearLayout
     private lateinit var aboutView: TextView
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -52,7 +50,7 @@ class SettingsActivity : Activity() {
         // Folded at once when a link is saved, so the key never flashes on
         // screen while describeLink checks it (a bad link unfolds).
         setLinkOpen(settings.link.isEmpty())
-        showTunnelChoice()
+        showRoutes()
         describeLink()
         takeLink(intent)
     }
@@ -121,17 +119,11 @@ class SettingsActivity : Activity() {
         })
 
         col.addView(Ui.heading(this, getString(R.string.route_label)))
-        val modeGroup = RadioGroup(this).apply { orientation = RadioGroup.VERTICAL }
-        MODE_LABELS.forEachIndexed { i, label ->
-            modeGroup.addView(RadioButton(this).apply {
-                id = i + 1
-                text = getString(label)
-                if (MODES[i] == "always") alwaysButton = this
-            })
-        }
-        modeGroup.check(MODES.indexOf(settings.mode).coerceAtLeast(0) + 1)
-        modeGroup.setOnCheckedChangeListener { _, id -> onMode(MODES[id - 1]) }
-        col.addView(modeGroup)
+        routeBox = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        col.addView(routeBox)
+        col.addView(Ui.hint(this, getString(R.string.route_hint)).apply {
+            setPadding(0, Ui.dp(this@SettingsActivity, 6), 0, 0)
+        })
 
         col.addView(Ui.heading(this, getString(R.string.access_label)))
         col.addView(CheckBox(this).apply {
@@ -164,15 +156,6 @@ class SettingsActivity : Activity() {
             setOnClickListener { Ui.askBatteryExemption(this@SettingsActivity) }
         }
         col.addView(batteryButton)
-        col.addView(CheckBox(this).apply {
-            text = getString(R.string.keep_cpu_awake)
-            isChecked = settings.keepCpuAwake
-            setOnCheckedChangeListener { _, on ->
-                settings.keepCpuAwake = on
-                PassageService.refreshPowerSettings(this@SettingsActivity)
-            }
-        })
-        col.addView(Ui.hint(this, getString(R.string.keep_cpu_awake_help)))
 
         col.addView(Ui.heading(this, getString(R.string.about_label)))
         aboutView = Ui.hint(this, "")
@@ -243,23 +226,12 @@ class SettingsActivity : Activity() {
                                     val result = prepare(true)
                                     if (result.has("error")) throw IllegalArgumentException(result.optString("error"))
                                     settings.saveRoutes(incoming, result.getJSONObject("config").toString())
-                                    runOnUiThread { describeLink(); setLinkOpen(false); showTunnelChoice(); restartIfRunning() }
+                                    runOnUiThread { describeLink(); setLinkOpen(false); showRoutes(); restartIfRunning() }
                                 } catch (e: Throwable) { runOnUiThread { Toast.makeText(this, getString(R.string.link_error_toast, e.message), Toast.LENGTH_LONG).show() } }
                             }
                         }.show()
                 }
             } catch (e: Throwable) { runOnUiThread { Toast.makeText(this, getString(R.string.link_error_toast, e.message), Toast.LENGTH_LONG).show() } }
-        }
-    }
-
-    private fun onMode(mode: String) {
-        settings.mode = mode
-        if (!PassageService.active) return
-        worker.execute {
-            try {
-                Native.setMode(mode.toByteArray(Charsets.UTF_8))
-            } catch (_: Throwable) {
-            }
         }
     }
 
@@ -357,8 +329,10 @@ class SettingsActivity : Activity() {
     }
 
     /** "Always tunnel" only makes sense with a link; without one the router runs auto. */
-    private fun showTunnelChoice() {
-        alwaysButton?.visibility = if (settings.link.isEmpty()) View.GONE else View.VISIBLE
+    /** The route choice for the saved link; a removed route type shows as Auto. */
+    private fun showRoutes() {
+        routeBox.removeAllViews()
+        routeBox.addView(Ui.routeSelector(this, settings, worker::execute) { showRoutes() })
     }
 
     private fun setLinkOpen(open: Boolean) {
@@ -369,7 +343,5 @@ class SettingsActivity : Activity() {
     companion object {
         private const val SITE_URL = "https://passage.gluek.info"
         private const val SOURCE_URL = "https://github.com/mrgluek/passage"
-        private val MODES = listOf("auto", "always", "off")
-        private val MODE_LABELS = listOf(R.string.mode_auto, R.string.mode_always, R.string.mode_off)
     }
 }

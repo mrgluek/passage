@@ -12,13 +12,13 @@ import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import android.view.Gravity
 import android.view.Menu
 import android.view.MenuItem
 import android.view.View
 import android.widget.Button
-import android.widget.HorizontalScrollView
+import android.widget.ImageButton
 import android.widget.LinearLayout
-import android.widget.ScrollView
 import android.widget.TextView
 import android.widget.Toast
 import java.util.concurrent.Executors
@@ -35,17 +35,22 @@ class MainActivity : Activity() {
     private lateinit var stateView: TextView
     private lateinit var routeView: TextView
     private lateinit var noLinkBox: LinearLayout
+    private lateinit var routeBox: LinearLayout
     private lateinit var connectBox: LinearLayout
-    private lateinit var detailsView: TextView
+    private lateinit var detailsBox: LinearLayout
+    private var shownRoutes: String? = null
+    private var shownDetails: String? = null
     private lateinit var batteryButton: Button
     private lateinit var statusView: TextView
+    private lateinit var startStopButton: ImageButton
     private var shownActive: Boolean? = null
+    /** A network test for a bug report; kept across screen rotation. */
     private class NetworkTest {
         @Volatile var result: String? = null
     }
     private var networkTest: NetworkTest? = null
     private var testDialog: AlertDialog? = null
-    private var testResultShown = false
+    private var checkingUntil = 0L
 
     private val poll = object : Runnable {
         override fun run() {
@@ -95,23 +100,8 @@ class MainActivity : Activity() {
         return true
     }
 
-    override fun onPrepareOptionsMenu(menu: Menu): Boolean {
-        val active = PassageService.active
-        menu.findItem(R.id.action_start).isVisible = !active
-        menu.findItem(R.id.action_stop).isVisible = active
-        return true
-    }
-
     override fun onOptionsItemSelected(item: MenuItem): Boolean {
         when (item.itemId) {
-            R.id.action_start -> onStartClicked()
-            R.id.action_stop -> {
-                PassageService.stop(this)
-                main.postDelayed({ refresh() }, 300)
-            }
-            R.id.action_report -> shareReport()
-            R.id.action_check -> checkNow()
-            R.id.action_test -> testNetwork()
             R.id.action_settings -> startActivity(Intent(this, SettingsActivity::class.java))
             else -> return super.onOptionsItemSelected(item)
         }
@@ -124,8 +114,15 @@ class MainActivity : Activity() {
         stateView = TextView(this).apply {
             textSize = 18f
             setTypeface(typeface, Typeface.BOLD)
+            setOnClickListener { checkNow() }
         }
-        col.addView(stateView)
+        startStopButton = Ui.iconButton(this, R.drawable.ic_action_start, getString(R.string.action_start)) { onStartStop() }
+        col.addView(LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            addView(stateView, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+            addView(startStopButton)
+        })
         routeView = TextView(this).apply { textSize = 15f }
         col.addView(routeView)
 
@@ -139,25 +136,32 @@ class MainActivity : Activity() {
         })
         col.addView(noLinkBox)
 
+        routeBox = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(0, Ui.dp(this@MainActivity, 12), 0, 0)
+        }
+        col.addView(routeBox)
+
         connectBox = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         connectBox.addView(Ui.heading(this, getString(R.string.connect_label)))
         connectBox.addView(Ui.hint(this, getString(R.string.connect_help)))
-        connectBox.addView(Button(this).apply {
-            text = getString(R.string.copy_proxy_link)
-            setOnClickListener {
-                Ui.copy(this@MainActivity, "Passage proxy", settings.proxyLink(), getString(R.string.proxy_link_copied))
-            }
-        })
-        connectBox.addView(Button(this).apply {
-            text = getString(R.string.open_proxy_link)
-            setOnClickListener { openProxyLink() }
-        })
-        detailsView = TextView(this).apply {
-            typeface = Typeface.MONOSPACE
-            textSize = 12f
-            setTextIsSelectable(true)
+        val proxyRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(0, Ui.dp(this@MainActivity, 8), 0, 0)
         }
-        connectBox.addView(detailsView)
+        detailsBox = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        proxyRow.addView(detailsBox, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+        val icons = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(Ui.dp(this@MainActivity, 4), 0, 0, 0)
+        }
+        icons.addView(Ui.iconButton(this, R.drawable.ic_copy, getString(R.string.copy_proxy_link)) {
+            Ui.copy(this, "Passage proxy", settings.proxyLink(), getString(R.string.proxy_link_copied))
+        })
+        icons.addView(Ui.iconButton(this, R.drawable.ic_open, getString(R.string.open_proxy_link)) { openProxyLink() })
+        proxyRow.addView(icons)
+        connectBox.addView(proxyRow)
         col.addView(connectBox)
 
         batteryButton = Button(this).apply {
@@ -166,7 +170,15 @@ class MainActivity : Activity() {
         }
         col.addView(batteryButton)
 
-        col.addView(Ui.heading(this, getString(R.string.status_label)))
+        val statusRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(0, Ui.dp(this@MainActivity, 12), 0, 0)
+        }
+        statusRow.addView(Ui.heading(this, getString(R.string.status_label)).apply { setPadding(0, 0, 0, 0) },
+            LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+        statusRow.addView(Ui.iconButton(this, R.drawable.ic_bug, getString(R.string.send_report)) { sendReport() })
+        col.addView(statusRow)
         statusView = TextView(this).apply {
             typeface = Typeface.MONOSPACE
             textSize = 11f
@@ -177,12 +189,45 @@ class MainActivity : Activity() {
         return Ui.scroll(this, col)
     }
 
+    /** The route choice, rebuilt when the link or the choice changes. */
+    private fun showRoutes(hasLink: Boolean) {
+        val key = "$hasLink ${settings.routeKinds} ${settings.mode}"
+        if (key == shownRoutes) return
+        shownRoutes = key
+        routeBox.removeAllViews()
+        routeBox.visibility = if (hasLink) View.VISIBLE else View.GONE
+        if (hasLink) routeBox.addView(Ui.routeSelector(this, settings, worker::execute) { refresh() })
+    }
+
+    /** Host, port and credentials, each copied on tap. */
+    private fun showDetails() {
+        val rows = mutableListOf(getString(R.string.proxy_host) to Settings.HOST, getString(R.string.proxy_port) to settings.port.toString())
+        if (settings.auth) {
+            rows += getString(R.string.proxy_user) to settings.user
+            rows += getString(R.string.proxy_pass) to settings.pass
+        }
+        val key = rows.toString()
+        if (key == shownDetails) return
+        shownDetails = key
+        detailsBox.removeAllViews()
+        detailsBox.addView(Ui.valueBlock(this, rows, if (settings.auth) null else getString(R.string.proxy_no_password)))
+    }
+
     /** Hands the proxy to an app that handles tg://socks links; it asks before adding it. */
     private fun openProxyLink() {
         try {
             startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(settings.proxyLink("tg://socks"))))
         } catch (_: ActivityNotFoundException) {
             Toast.makeText(this, getString(R.string.no_app_for_link), Toast.LENGTH_LONG).show()
+        }
+    }
+
+    private fun onStartStop() {
+        if (PassageService.active) {
+            PassageService.stop(this)
+            main.postDelayed({ refresh() }, 300)
+        } else {
+            onStartClicked()
         }
     }
 
@@ -226,18 +271,22 @@ class MainActivity : Activity() {
         val active = PassageService.active
         if (shownActive != active) {
             shownActive = active
-            invalidateOptionsMenu()
+            startStopButton.setImageResource(if (active) R.drawable.ic_action_stop else R.drawable.ic_action_start)
+            val label = getString(if (active) R.string.action_stop else R.string.action_start)
+            startStopButton.contentDescription = label
+            if (Build.VERSION.SDK_INT >= 26) startStopButton.tooltipText = label
         }
         val hasLink = settings.link.isNotEmpty()
         noLinkBox.visibility = if (hasLink) View.GONE else View.VISIBLE
-        detailsView.text = if (settings.auth) {
-            getString(R.string.proxy_details, Settings.HOST, settings.port, settings.user, settings.pass)
-        } else {
-            getString(R.string.proxy_details_open, Settings.HOST, settings.port)
-        }
+        showRoutes(hasLink)
+        showDetails()
         batteryButton.visibility = if (Ui.batteryExempt(this)) View.GONE else View.VISIBLE
         worker.execute {
-            val head = getString(if (active) R.string.proxy_running else R.string.proxy_stopped)
+            val head = getString(when {
+                active && System.currentTimeMillis() < checkingUntil -> R.string.checking
+                active -> R.string.proxy_running
+                else -> R.string.proxy_stopped
+            })
             val (line, body) = try {
                 val s = Native.status()
                 val err = PassageService.lastError
@@ -258,13 +307,13 @@ class MainActivity : Activity() {
     }
 
     /** The report goes through the share sheet, so a tester can send it straight from here. */
-    private fun shareReport() {
+    private fun shareReport(networkTest: String? = null) {
         worker.execute {
             val status = try { Native.status() } catch (e: Throwable) {
                 org.json.JSONObject().put("running", false).put("error", e.toString())
             }
             val report = try {
-                StatusText.report(this, status, NetInfo.snapshot(this), settings, appVersion())
+                StatusText.report(this, status, NetInfo.snapshot(this), settings, appVersion(), networkTest)
             } catch (e: Throwable) {
                 Diagnostics.error("report failed", e)
                 org.json.JSONObject().put("error", e.javaClass.name)
@@ -292,9 +341,13 @@ class MainActivity : Activity() {
      * each checked directly, with each strategy and through the tunnel. The
      * result can be shared, e.g. with whoever gave the link.
      */
-    private fun testNetwork() {
+    /**
+     * The bug button: with the proxy on, test the network first (the result
+     * goes into the log and the report), then share the whole report.
+     */
+    private fun sendReport() {
         if (!PassageService.active) {
-            Toast.makeText(this, getString(R.string.proxy_stopped), Toast.LENGTH_SHORT).show()
+            shareReport()
             return
         }
         if (networkTest != null) return
@@ -304,7 +357,9 @@ class MainActivity : Activity() {
         showNetworkTest()
         worker.execute {
             test.result = try {
-                StatusText.diagnosis(context, Native.json(Native.diagnose()))
+                val d = Native.json(Native.diagnose())
+                Diagnostics.event("network test: ${StatusText.diagnosisSummary(d)}")
+                StatusText.diagnosis(context, d)
             } catch (e: Throwable) {
                 Diagnostics.error("network test failed", e)
                 e.message ?: e.toString()
@@ -312,6 +367,7 @@ class MainActivity : Activity() {
         }
     }
 
+    /** While a test runs, a progress dialog; when it ends, the report. */
     private fun showNetworkTest() {
         val test = networkTest ?: return
         val text = test.result
@@ -323,37 +379,14 @@ class MainActivity : Activity() {
                     .setCancelable(false)
                     .show()
             }
-        } else if (!testResultShown) {
-            testDialog?.dismiss()
-            testResultShown = true
-            val view = TextView(this).apply {
-                this.text = text
-                typeface = Typeface.MONOSPACE
-                textSize = 11f
-                setTextIsSelectable(true)
-                val pad = Ui.dp(this@MainActivity, 16)
-                setPadding(pad, pad, pad, pad)
-            }
-            testDialog = AlertDialog.Builder(this)
-                .setTitle(R.string.test_network)
-                .setView(ScrollView(this).apply { addView(HorizontalScrollView(this@MainActivity).apply { addView(view) }) })
-                .setPositiveButton(R.string.share) { _, _ ->
-                    val send = Intent(Intent.ACTION_SEND).setType("text/plain")
-                        .putExtra(Intent.EXTRA_SUBJECT, "Passage network test")
-                        .putExtra(Intent.EXTRA_TEXT, text)
-                    startActivity(Intent.createChooser(send, getString(R.string.share)))
-                }
-                .setNegativeButton(android.R.string.ok, null)
-                .setOnDismissListener {
-                    networkTest = null
-                    testDialog = null
-                    testResultShown = false
-                }
-                .show()
+            return
         }
+        testDialog?.dismiss()
+        testDialog = null
+        networkTest = null
+        shareReport(text)
     }
 
-    /** Probes the network now instead of at the next scheduled check (auto mode only). */
     private fun checkNow() {
         if (!PassageService.active) {
             Toast.makeText(this, getString(R.string.proxy_stopped), Toast.LENGTH_SHORT).show()
@@ -365,7 +398,8 @@ class MainActivity : Activity() {
             } catch (_: Throwable) {
             }
         }
-        Toast.makeText(this, getString(R.string.checking), Toast.LENGTH_SHORT).show()
-        main.postDelayed({ refresh() }, 3_000)
+        checkingUntil = System.currentTimeMillis() + 3_000
+        refresh()
+        main.postDelayed({ refresh() }, 3_100)
     }
 }
