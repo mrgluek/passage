@@ -19,11 +19,15 @@ import (
 )
 
 // A route that failed goes behind the others for routeCooldown, so new
-// connections don't each wait routeAttemptTimeout on it before the backup.
+// connections don't each wait on it before the backup.
 const (
 	routeCooldown       = 30 * time.Second
 	routeAttemptTimeout = 8 * time.Second
 )
+
+// routeStagger is how long a route gets before the next one starts in
+// parallel; the first connection wins and the others are dropped.
+var routeStagger = 2 * time.Second
 
 type routePool struct {
 	clients     []soarClient
@@ -85,27 +89,79 @@ func newRoutePool(cfg Config) (soarClient, error) {
 func (p *routePool) DialContext(ctx context.Context, network, address string) (net.Conn, error) {
 	host, _, _ := net.SplitHostPort(address)
 	order := p.order(net.ParseIP(host))
-	for n, i := range order {
-		child := ctx
-		cancel := func() {}
+	race, stop := context.WithCancel(ctx)
+	defer stop()
+	type result struct {
+		i    int
+		conn net.Conn
+		err  error
+	}
+	results := make(chan result, len(order))
+	started, pending := 0, 0
+	startNext := func() {
+		n, i := started, order[started]
+		started++
+		pending++
+		child, cancel := race, context.CancelFunc(func() {})
 		if n < len(order)-1 {
-			child, cancel = context.WithTimeout(ctx, routeAttemptTimeout)
+			child, cancel = context.WithTimeout(race, routeAttemptTimeout)
 		}
-		conn, err := p.clients[i].DialContext(child, network, address)
-		cancel()
-		if err == nil {
-			p.mark(i, false)
-			p.established.Store(true)
-			if i < len(p.kinds) {
-				conn = viaConn{conn, p.kinds[i]}
+		go func() {
+			conn, err := p.clients[i].DialContext(child, network, address)
+			cancel()
+			results <- result{i, conn, err}
+		}()
+	}
+	// drain closes connections that win after the race is decided.
+	drain := func() {
+		go func(left int) {
+			for ; left > 0; left-- {
+				if r := <-results; r.err == nil {
+					r.conn.Close()
+				}
 			}
-			return conn, nil
-		}
-		if ctx.Err() != nil {
+		}(pending)
+	}
+	if len(order) > 0 {
+		startNext()
+	}
+	stagger := time.NewTimer(routeStagger)
+	defer stagger.Stop()
+	for pending > 0 {
+		select {
+		case r := <-results:
+			pending--
+			if r.err == nil {
+				stop()
+				drain()
+				p.mark(r.i, false)
+				p.established.Store(true)
+				conn := r.conn
+				if r.i < len(p.kinds) {
+					conn = viaConn{conn, p.kinds[r.i]}
+				}
+				return conn, nil
+			}
+			if ctx.Err() != nil {
+				drain()
+				return nil, ctx.Err()
+			}
+			if !errors.Is(r.err, errDestinationRefused) {
+				p.mark(r.i, true)
+			}
+			if started < len(order) {
+				startNext()
+				stagger.Reset(routeStagger)
+			}
+		case <-stagger.C:
+			if started < len(order) {
+				startNext()
+				stagger.Reset(routeStagger)
+			}
+		case <-ctx.Done():
+			stop()
+			drain()
 			return nil, ctx.Err()
-		}
-		if !errors.Is(err, errDestinationRefused) {
-			p.mark(i, true)
 		}
 	}
 	p.established.Store(false)
