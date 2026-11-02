@@ -3,6 +3,8 @@
 ## 0.4.0
 
 - Adds a new connection type for links (WSS).
+- With several connections in a link, a backup starts after 2 seconds
+  instead of waiting for a stuck connection to time out.
 - The main screen lets you choose how Passage connects: automatically,
   through one of the link's connections, or directly.
 - Proxy settings are shown as values you can tap to copy, with buttons to

@@ -167,7 +167,7 @@ type Tunnel struct {
 
 	mu          sync.Mutex
 	mode        string
-	only        string // route type the tunnel is limited to, with mode always
+	only        string            // route type the tunnel is limited to, with mode always
 	relays      map[string]*group // by host name
 	telegram    *group
 	other       *group
