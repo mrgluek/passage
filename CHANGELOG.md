@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.5.1
+
+- On a computer, `passage-iroh` now listens only on the computer itself, so
+  macOS and Windows no longer ask to allow incoming network connections.
+- The website lists the downloads for Linux, macOS and Windows.
+
 ## 0.5.0
 
 - My route: set the address of your own SOCKS5 proxy in Settings (for
