@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Passage</title>
-<meta name="description" content="A local SOCKS5 proxy for messaging apps on Android.">
+<meta name="description" content="A local SOCKS5 proxy for messaging apps on Android, Linux, macOS and Windows.">
 <link rel="icon" href="icon.svg" type="image/svg+xml">
 <link rel="stylesheet" href="style.css">
 <script>
@@ -31,8 +31,8 @@
 <main class="wrap">
   <section class="hero">
     <h1><span class="en">You shall pass.</span><span class="ru">Ты пройдёшь.</span></h1>
-    <p class="en">A local SOCKS5 proxy for messaging apps on Android. Apps on the phone connect to it on <code>127.0.0.1</code>, and Passage picks the best available connection for them automatically.</p>
-    <p class="ru">Локальный SOCKS5-прокси для мессенджеров на Android. Приложения на телефоне подключаются к нему на <code>127.0.0.1</code>, а Passage сам выбирает для них лучшее доступное соединение.</p>
+    <p class="en">A local SOCKS5 proxy for messaging apps on Android. Apps on the phone connect to it on <code>127.0.0.1</code>, and Passage picks the best available connection for them automatically. The same proxy runs on Linux, macOS and Windows as <code>passage-cli</code>.</p>
+    <p class="ru">Локальный SOCKS5-прокси для мессенджеров на Android. Приложения на телефоне подключаются к нему на <code>127.0.0.1</code>, а Passage сам выбирает для них лучшее доступное соединение. Тот же прокси работает на Linux, macOS и Windows как <code>passage-cli</code>.</p>
   </section>
 
   <section id="connect" hidden>
@@ -62,6 +62,20 @@
       <a class="button" href="{{RELEASE}}/passage-{{VERSION}}-universal.apk">universal <small class="en">if unsure</small><small class="ru">если не уверены</small></a>
     </div>
     <p class="muted"><a href="{{RELEASE}}/SHA256SUMS">SHA256SUMS</a> · <a href="https://github.com/mrgluek/passage/releases"><span class="en">All releases</span><span class="ru">Все версии</span></a></p>
+  </section>
+
+  <section id="desktop">
+    <h2><span class="en">On a computer</span><span class="ru">На компьютере</span></h2>
+    <p class="muted"><span class="en">Version</span><span class="ru">Версия</span> {{VERSION}} · <code>passage-cli</code></p>
+    <div class="buttons">
+      <a class="button" href="{{RELEASE}}/passage-cli-{{VERSION}}-windows-amd64.zip">Windows <small>x64</small></a>
+      <a class="button" href="{{RELEASE}}/passage-cli-{{VERSION}}-darwin-arm64.tar.gz">macOS <small>Apple silicon</small></a>
+      <a class="button" href="{{RELEASE}}/passage-cli-{{VERSION}}-darwin-amd64.tar.gz">macOS <small>Intel</small></a>
+      <a class="button" href="{{RELEASE}}/passage-cli-{{VERSION}}-linux-amd64.tar.gz">Linux <small>x64</small></a>
+      <a class="button" href="{{RELEASE}}/passage-cli-{{VERSION}}-linux-arm64.tar.gz">Linux <small>arm64</small></a>
+    </div>
+    <p class="en">Unpack the archive, save your link to <code>link.txt</code> next to it and run <code>passage-cli -link-file link.txt</code> in a terminal, then set the SOCKS5 proxy <code>127.0.0.1:18000</code> in the app. Keep <code>passage-iroh</code> in the same folder.</p>
+    <p class="ru">Распакуйте архив, сохраните ссылку в <code>link.txt</code> рядом и запустите в терминале <code>passage-cli -link-file link.txt</code>, затем укажите в приложении SOCKS5-прокси <code>127.0.0.1:18000</code>. <code>passage-iroh</code> держите в той же папке.</p>
   </section>
 
   <section id="use">
