@@ -274,7 +274,11 @@ func Start(cfg Config) (*Tunnel, error) {
 		})
 		t.resolvers = resolvers
 	}
-	if len(cfg.Routes) > 0 {
+	if cfg.My != "" && len(cfg.Routes) == 0 && cfg.Zone != "" {
+		// A v1 link's soar route joins My in the pool.
+		cfg.Routes = legacyRoutes(cfg)
+	}
+	if len(cfg.Routes) > 0 || cfg.My != "" {
 		t.client, err = newRoutePool(cfg)
 		if err != nil {
 			return nil, err
@@ -309,6 +313,11 @@ func Start(cfg Config) (*Tunnel, error) {
 			t.client.Close()
 		}
 		return nil, err
+	}
+	if cfg.My != "" && pointsAt(cfg.My, ln.Addr()) {
+		ln.Close()
+		t.client.Close()
+		return nil, errors.New("my route points at this proxy")
 	}
 	t.ln = ln
 	t.useProbeTargets()

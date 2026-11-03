@@ -286,6 +286,7 @@ class PassageService : Service() {
                 cfg.put("pass", s.pass)
             }
             cfg.put("mode", s.mode)
+            if (s.myRoute.isNotEmpty()) cfg.put("my", s.myRoute)
             cfg.put("system_resolvers", JSONArray(net.dns))
             cfg.put("operator", net.operator)
             cfg.put("iroh_binary", java.io.File(applicationInfo.nativeLibraryDir, "libpassage_iroh.so").path)

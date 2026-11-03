@@ -39,24 +39,41 @@ class Settings(context: Context) {
         }
         set(v) = prefs.edit().putString("mode", v).apply()
 
-    /** Route types in the saved link, in the order the router tries them. */
+    /**
+     * The user's own SOCKS5 proxy, [user:pass@]host:port, or empty. The
+     * router adds it as the "my" route; it is not part of the link.
+     */
+    var myRoute: String
+        get() = prefs.getString("my_route", "") ?: ""
+        set(v) = prefs.edit().putString("my_route", v.trim()).apply()
+
+    /** Route types in the saved link and My, in the order the router tries them. */
     val routeKinds: List<String>
         get() {
-            val config = routesConfig
-            if (config.isEmpty()) return if (link.isEmpty()) emptyList() else listOf("soar")
-            return try {
-                val json = JSONObject(config)
-                val routes = json.optJSONArray("routes")
-                    ?: return if (json.optString("zone").isNotEmpty()) listOf("soar") else emptyList()
-                (0 until routes.length()).map { routes.getJSONObject(it) }
-                    .sortedWith(compareBy({ it.optInt("priority") }, { it.optString("id") }))
-                    .map { it.optString("type") }
-                    .filter { it in ROUTE_KINDS }
-                    .distinct()
-            } catch (_: Exception) {
-                emptyList()
-            }
+            // (priority, My before link routes of the same priority, id, type)
+            val routes = linkRoutes().toMutableList()
+            if (myRoute.isNotEmpty()) routes += listOf(MY_PRIORITY, 0, "", "my")
+            return routes
+                .sortedWith(compareBy({ it[0] as Int }, { it[1] as Int }, { it[2] as String }))
+                .map { it[3] as String }
+                .filter { it in ROUTE_KINDS }
+                .distinct()
         }
+
+    private fun linkRoutes(): List<List<Any>> {
+        val legacy = listOf(listOf<Any>(100, 1, "", "soar"))
+        val config = routesConfig
+        if (config.isEmpty()) return if (link.isEmpty()) emptyList() else legacy
+        return try {
+            val json = JSONObject(config)
+            val routes = json.optJSONArray("routes")
+                ?: return if (json.optString("zone").isNotEmpty()) legacy else emptyList()
+            (0 until routes.length()).map { routes.getJSONObject(it) }
+                .map { listOf(it.optInt("priority"), 1, it.optString("id"), it.optString("type")) }
+        } catch (_: Exception) {
+            emptyList()
+        }
+    }
 
 
     /** The user wants the proxy on: a system restart of the service resumes it. */
@@ -125,7 +142,18 @@ class Settings(context: Context) {
     companion object {
         const val HOST = "127.0.0.1"
         /** Route types that can be chosen, as in the Go core's RouteKinds. */
-        val ROUTE_KINDS = listOf("wss", "iroh", "soar")
+        val ROUTE_KINDS = listOf("my", "wss", "iroh", "soar")
+        /** The Go core's myPriority. */
+        private const val MY_PRIORITY = 5
+
+        /** Whether [s] reads as [user:pass@]host:port; the core checks it fully. */
+        fun validMyRoute(s: String): Boolean = try {
+            val uri = java.net.URI(if ("://" in s) s else "socks5://$s")
+            uri.scheme in listOf("socks5", "socks5h") && !uri.host.isNullOrEmpty() && uri.port in 1..65535 &&
+                uri.path.isNullOrEmpty() && uri.query == null
+        } catch (_: Exception) {
+            false
+        }
         // Below Linux's ephemeral range (32768-60999): a client retrying a
         // stopped proxy could otherwise get the port as its own source port,
         // connect to itself and block the restart for a minute.

@@ -95,16 +95,26 @@ func startIroh(ctx context.Context, r links.Route, binaryPath string, privateDir
 	}
 	return dial, cleanup, nil
 }
+
+// socks opens target through a SOCKS5 proxy on conn, with username and
+// password when auth has a username.
 func socks(conn net.Conn, target string, auth links.SocksAuth) error {
-	if _, err := conn.Write([]byte{5, 1, 2}); err != nil {
+	method := byte(2)
+	if auth.Username == "" {
+		method = 0
+	}
+	if _, err := conn.Write([]byte{5, 1, method}); err != nil {
 		return err
 	}
 	reply := make([]byte, 2)
 	if _, err := io.ReadFull(conn, reply); err != nil {
 		return err
 	}
-	if reply[0] != 5 || reply[1] != 2 {
+	if reply[0] != 5 || reply[1] != method {
 		return errors.New("SOCKS authentication not offered")
+	}
+	if method == 0 {
+		return socksRequest(conn, target)
 	}
 	request := []byte{1, byte(len(auth.Username))}
 	request = append(request, auth.Username...)
@@ -119,6 +129,10 @@ func socks(conn net.Conn, target string, auth links.SocksAuth) error {
 	if reply[0] != 1 || reply[1] != 0 {
 		return errors.New("SOCKS authentication refused")
 	}
+	return socksRequest(conn, target)
+}
+
+func socksRequest(conn net.Conn, target string) error {
 	host, port, err := net.SplitHostPort(target)
 	if err != nil {
 		return err
@@ -127,7 +141,7 @@ func socks(conn net.Conn, target string, auth links.SocksAuth) error {
 	if _, err := parsePort(port, &n); err != nil {
 		return err
 	}
-	request = []byte{5, 1, 0}
+	request := []byte{5, 1, 0}
 	ip := net.ParseIP(host)
 	if ip4 := ip.To4(); ip4 != nil {
 		request = append(request, 1)

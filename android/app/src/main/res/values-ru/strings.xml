@@ -136,4 +136,11 @@
     <string name="proxy_no_password">Без пароля</string>
     <string name="value_copied">Скопировано: %1$s</string>
     <string name="send_report">Отправить отчёт об ошибке (сначала проверяет сеть)</string>
+    <string name="route_my">Мой</string>
+    <string name="my_route_label">Мой маршрут</string>
+    <string name="my_route_hint">127.0.0.1:9050</string>
+    <string name="my_route_help">Адрес своего SOCKS5-прокси: на этом телефоне, в вашей сети или в интернете; user:password@host:port, если нужен пароль. Когда в режиме Авто нужен маршрут, он проверяется первым, затем маршруты из ссылки. Чтобы убрать его, очистите поле и сохраните.</string>
+    <string name="my_route_invalid">Укажите host:port, например 127.0.0.1:9050</string>
+    <string name="my_route_saved">Мой маршрут сохранён</string>
+    <string name="my_route_removed">Мой маршрут удалён</string>
 </resources>

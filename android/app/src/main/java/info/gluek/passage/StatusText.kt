@@ -177,7 +177,7 @@ object StatusText {
         val types = rows.groupingBy { it.optString("type") }.eachCount()
         return rows.map { r ->
             val type = r.optString("type")
-            val name = if ((types[type] ?: 0) > 1) r.optString("id") else Ui.routeLabel(type)
+            val name = if ((types[type] ?: 0) > 1) r.optString("id") else Ui.routeLabel(c, type)
             name to routeStateName(c, r.optString("state"))
         }
     }
@@ -322,7 +322,7 @@ object StatusText {
     /** The route for people; a tunnel shows the route type that carries it (iroh, soar), when known. */
     private fun routeName(c: Context, route: String, via: String = ""): String = when (route) {
         "direct" -> c.getString(R.string.route_direct)
-        "tunnel" -> if (via.isEmpty()) c.getString(R.string.route_tunnel) else Ui.routeLabel(via)
+        "tunnel" -> if (via.isEmpty()) c.getString(R.string.route_tunnel) else Ui.routeLabel(c, via)
         "smart" -> c.getString(R.string.route_smart)
         else -> route
     }
