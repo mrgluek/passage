@@ -4,7 +4,8 @@
 
 A local SOCKS5 proxy for Android. Messaging apps on the phone that support a
 SOCKS5 proxy connect to it on `127.0.0.1`, and Passage picks the best
-available connection for them automatically.
+available connection for them automatically. The same proxy runs on Linux,
+macOS and Windows as `passage-cli` ([On a computer](#on-a-computer)).
 
 Website: <https://passage.gluek.info>
 
