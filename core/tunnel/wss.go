@@ -401,6 +401,8 @@ func (s *wssSession) open(ctx context.Context, st *wssStream, dest []byte) error
 		switch status {
 		case 1:
 			return errDestinationRefused
+		case 2:
+			return errDestinationUnreachable
 		case 3:
 			s.mu.Lock()
 			s.limit = max(1, len(s.streams))

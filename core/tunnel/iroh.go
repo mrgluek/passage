@@ -6,6 +6,7 @@ import (
 	"encoding/binary"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"io"
 	"net"
 	"os"
@@ -20,6 +21,10 @@ import (
 
 var errIrohExited = errors.New("transport exited")
 var errDestinationRefused = errors.New("destination connection refused")
+
+// errDestinationUnreachable is a refusal the exit may not repeat: it could
+// not connect, as opposed to a destination it does not allow.
+var errDestinationUnreachable = fmt.Errorf("%w: unreachable", errDestinationRefused)
 
 func startIroh(ctx context.Context, r links.Route, binaryPath string, privateDir string, dns []string) (dialFunc, func(), error) {
 	if !filepath.IsAbs(binaryPath) {
@@ -190,8 +195,11 @@ func socksRequest(conn net.Conn, target string) error {
 	if head[0] != 5 || head[2] != 0 {
 		return errors.New("invalid SOCKS reply")
 	}
-	if head[1] >= 2 && head[1] <= 6 {
+	if head[1] == 2 {
 		return errDestinationRefused
+	}
+	if head[1] >= 3 && head[1] <= 6 {
+		return errDestinationUnreachable
 	}
 	if head[1] != 0 {
 		return errors.New("SOCKS connection failed")
