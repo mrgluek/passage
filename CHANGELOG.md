@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.5.0
+
+- My route: set the address of your own SOCKS5 proxy in Settings (for
+  example 127.0.0.1:9050). It is tried first, then the link's routes, and
+  can be chosen as the only route.
+- `passage-cli` for Linux, macOS and Windows: the same proxy on a computer,
+  with all connection types, in the release downloads.
+- When a server refuses a connection, quick retries from apps are answered
+  at once and no longer make Passage treat the connection as broken.
+
 ## 0.4.0
 
 - Adds a new connection type for links (WSS).
