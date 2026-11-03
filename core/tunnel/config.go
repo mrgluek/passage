@@ -28,7 +28,7 @@ const (
 )
 
 // RouteKinds are the route types that can be chosen as the mode.
-var RouteKinds = []string{"wss", "iroh", "soar"}
+var RouteKinds = []string{"my", "wss", "iroh", "soar"}
 
 // DefaultResolvers are public resolvers used in addition to the network's
 // and the link's. soar uses all of them and backs off the ones that don't
@@ -86,6 +86,9 @@ type Config struct {
 	// StateFile keeps what the router learned across restarts (the smart
 	// route's strategy per network), in the app's private storage.
 	StateFile string `json:"state_file,omitempty"`
+	// My is the user's own SOCKS5 proxy, [user:pass@]host:port, added as the
+	// "my" route at myPriority. It comes from the app's settings, never from a link.
+	My string `json:"my,omitempty"`
 }
 
 // LinkHost and LinkPath give the web form of links:
@@ -170,6 +173,12 @@ func (c Config) Normalize() (Config, error) {
 			c.TunnelIPv6 = c.TunnelIPv6 || r.IPv6
 		}
 	}
+	if c.My = strings.TrimSpace(c.My); c.My != "" {
+		if _, _, err := parseMy(c.My); err != nil {
+			return Config{}, err
+		}
+		c.TunnelIPv6 = true // the pool still gives IPv6 only to routes that allow it
+	}
 	c.Zone = strings.TrimSuffix(strings.ToLower(strings.TrimSpace(c.Zone)), ".")
 	// Without a zone and key (no link yet) the router runs without the tunnel.
 	if c.Zone != "" || strings.TrimSpace(c.Key) != "" {
@@ -245,8 +254,8 @@ func (c Config) Normalize() (Config, error) {
 	return c, nil
 }
 
-// HasTunnel reports whether the config carries a tunnel (a link was given).
-func (c Config) HasTunnel() bool { return c.Zone != "" || len(c.Routes) > 0 }
+// HasTunnel reports whether the config carries a tunnel (a link or My).
+func (c Config) HasTunnel() bool { return c.Zone != "" || len(c.Routes) > 0 || c.My != "" }
 
 // Effective is the resolver list the tunnel uses: the network's resolvers,
 // then the SIM operator's known resolvers, then the link's extra resolvers,

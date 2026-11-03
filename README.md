@@ -65,6 +65,13 @@ the GitHub releases and keeps it up to date:
 Android only installs an update signed with the same key as the installed
 app, so a tampered APK can't replace Passage.
 
+### My route
+
+Settings → **My route** takes the address of your own SOCKS5 proxy (for
+example `127.0.0.1:9050`, or `user:password@host:port`). Passage tries it
+first when it needs a route, then the link's routes, and it can also be
+chosen as the only route. `passage-cli -my host:port` does the same.
+
 ### Proxy access
 
 The proxy listens on `127.0.0.1` with a random port, username and password

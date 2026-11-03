@@ -8,6 +8,7 @@
 // Like the app, it puts this machine's own DNS servers (from resolv.conf)
 // first among the tunnel's resolver paths; -system-dns=false turns that off.
 // iroh routes run the passage-iroh helper from next to this binary, or -iroh.
+// -my adds your own SOCKS5 proxy as the "my" route, tried before the link's.
 package main
 
 import (
@@ -32,7 +33,8 @@ func main() {
 	linkFile := flag.String("link-file", "", "read the Passage link from this file")
 	systemDNS := flag.Bool("system-dns", true, "add this machine's DNS servers (resolv.conf) as first resolver paths")
 	operator := flag.String("operator", "", "SIM operator MCC+MNC (e.g. 25001) to add its known resolvers")
-	mode := flag.String("mode", tunnel.ModeAuto, "auto, always, off, or a route type (wss, iroh, soar)")
+	mode := flag.String("mode", tunnel.ModeAuto, "auto, always, off, or a route type (my, wss, iroh, soar)")
+	my := flag.String("my", "", "your own SOCKS5 proxy as a route, [user:pass@]host:port")
 	listen := flag.String("listen", "127.0.0.1:18000", "SOCKS5 listen address")
 	user := flag.String("user", "", "SOCKS5 username (empty = no auth)")
 	pass := flag.String("pass", "", "SOCKS5 password")
@@ -65,6 +67,7 @@ func main() {
 	}
 	cfg.Mode, cfg.Listen, cfg.User, cfg.Pass = *mode, *listen, *user, *pass
 	cfg.Operator = *operator
+	cfg.My = *my
 	cfg.IrohBinary = irohHelper(*iroh)
 	cfg.PrivateDir = privateDir()
 	for _, r := range cfg.Routes {

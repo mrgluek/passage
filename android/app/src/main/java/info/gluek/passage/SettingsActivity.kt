@@ -125,6 +125,21 @@ class SettingsActivity : Activity() {
             setPadding(0, Ui.dp(this@SettingsActivity, 6), 0, 0)
         })
 
+        col.addView(Ui.heading(this, getString(R.string.my_route_label)))
+        val myEdit = EditText(this).apply {
+            hint = getString(R.string.my_route_hint)
+            setText(settings.myRoute)
+            isSingleLine = true
+            inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS or InputType.TYPE_TEXT_VARIATION_URI
+            textSize = 14f
+        }
+        col.addView(myEdit)
+        col.addView(Button(this).apply {
+            text = getString(R.string.save)
+            setOnClickListener { saveMyRoute(myEdit.text.toString().trim()) }
+        })
+        col.addView(Ui.hint(this, getString(R.string.my_route_help)))
+
         col.addView(Ui.heading(this, getString(R.string.access_label)))
         col.addView(CheckBox(this).apply {
             text = getString(R.string.auth_switch)
@@ -233,6 +248,19 @@ class SettingsActivity : Activity() {
                 }
             } catch (e: Throwable) { runOnUiThread { Toast.makeText(this, getString(R.string.link_error_toast, e.message), Toast.LENGTH_LONG).show() } }
         }
+    }
+
+    /** Saves My route (empty removes it) and restarts a running proxy. */
+    private fun saveMyRoute(value: String) {
+        if (value.isNotEmpty() && !Settings.validMyRoute(value)) {
+            Toast.makeText(this, getString(R.string.my_route_invalid), Toast.LENGTH_LONG).show()
+            return
+        }
+        if (value == settings.myRoute) return
+        settings.myRoute = value
+        Toast.makeText(this, getString(if (value.isEmpty()) R.string.my_route_removed else R.string.my_route_saved), Toast.LENGTH_SHORT).show()
+        showRoutes()
+        restartIfRunning()
     }
 
     /** Start while running = restart with the saved settings. */

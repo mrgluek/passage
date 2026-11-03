@@ -57,13 +57,8 @@ func ImportLink(existing Config, text string, replaceIDs bool) (ImportResult, er
 		result.IDs = append(result.IDs, r.ID)
 	}
 	routes := existing.Routes
-	if len(routes) == 0 && existing.HasTunnel() {
-		p := links.SoarParams{Zone: existing.Zone, Resolvers: existing.Resolvers, Canaries: existing.Canaries}
-		p.Key, _ = base64.StdEncoding.DecodeString(existing.Key)
-		raw, _ := json.Marshal(p)
-		var params map[string]any
-		json.Unmarshal(raw, &params)
-		routes = []links.Route{{ID: "legacy-dns", Type: "soar", Wire: "soar-v1", Priority: 100, IPv6: existing.TunnelIPv6, Params: params}}
+	if len(routes) == 0 && existing.Zone != "" {
+		routes = legacyRoutes(existing)
 	}
 	installed, err := links.Apply(routes, decoded.Bundle, false)
 	if err != nil {
@@ -90,4 +85,14 @@ func ImportLink(existing Config, text string, replaceIDs bool) (ImportResult, er
 	result.Config.Routes = installed
 	result.Config, err = result.Config.Normalize()
 	return result, err
+}
+
+// legacyRoutes turns a v1 link's zone and key into its one soar route.
+func legacyRoutes(c Config) []links.Route {
+	p := links.SoarParams{Zone: c.Zone, Resolvers: c.Resolvers, Canaries: c.Canaries}
+	p.Key, _ = base64.StdEncoding.DecodeString(c.Key)
+	raw, _ := json.Marshal(p)
+	var params map[string]any
+	json.Unmarshal(raw, &params)
+	return []links.Route{{ID: "legacy-dns", Type: "soar", Wire: "soar-v1", Priority: 100, IPv6: c.TunnelIPv6, Params: params}}
 }

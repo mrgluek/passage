@@ -70,7 +70,8 @@ object Ui {
     }
 
     /** A route type for people: wss -> WSS. */
-    fun routeLabel(kind: String): String = when (kind) {
+    fun routeLabel(c: Context, kind: String): String = when (kind) {
+        "my" -> c.getString(R.string.route_my)
         "wss" -> "WSS"
         "iroh" -> "Iroh"
         "soar" -> "Soar"
@@ -120,7 +121,7 @@ object Ui {
      */
     fun routeSelector(c: Context, settings: Settings, run: (Runnable) -> Unit, changed: () -> Unit): View {
         val choices = listOf("auto" to c.getString(R.string.mode_auto)) +
-            settings.routeKinds.map { it to routeLabel(it) } +
+            settings.routeKinds.map { it to routeLabel(c, it) } +
             ("off" to c.getString(R.string.mode_off))
         val selected = choices.indexOfFirst { it.first == settings.mode }.coerceAtLeast(0)
         return segments(c, choices.map { it.second }, selected) { i ->

@@ -49,9 +49,28 @@ type routePool struct {
 
 func newRoutePool(cfg Config) (soarClient, error) {
 	p := &routePool{}
-	for _, r := range links.Sorted(cfg.Routes) {
+	routes := links.Sorted(cfg.Routes)
+	if cfg.My != "" {
+		// Before link routes of the same priority.
+		at := len(routes)
+		for i, r := range routes {
+			if r.Priority >= myPriority {
+				at = i
+				break
+			}
+		}
+		routes = slices.Insert(routes, at, links.Route{ID: "my", Type: "my", Priority: myPriority, IPv6: true})
+	}
+	for _, r := range routes {
 		var client soarClient
 		switch r.Type {
+		case "my":
+			c, err := newMyClient(cfg.My)
+			if err != nil {
+				p.Close()
+				return nil, err
+			}
+			client = c
 		case "soar":
 			params, err := links.Params[links.SoarParams](r)
 			if err != nil {
