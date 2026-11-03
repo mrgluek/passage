@@ -46,6 +46,12 @@ Shared libraries for `arm64-v8a` and `armeabi-v7a`, into
 scripts/build-native.sh
 ```
 
+`passage-cli` archives for Linux and macOS (amd64, arm64):
+
+```bash
+scripts/build-cli.sh <version> <out-dir>
+```
+
 Android app (from `android/`):
 
 ```bash
@@ -69,7 +75,8 @@ those that only touch the website, store listing or docs.
 1. Bump `versionCode` and `versionName` in `android/app/build.gradle.kts`.
 2. Add a `## <version>` section to `CHANGELOG.md`: short, user-facing.
 3. Tag `v<version>` on `main` and push the tag; `release.yml` builds, signs
-   and publishes the APK with `SHA256SUMS`, then deploys the website.
+   and publishes the APKs and `passage-cli` archives with `SHA256SUMS`, then
+   deploys the website.
 
 ## Website and F-Droid repository
 
