@@ -67,10 +67,11 @@ app, so a tampered APK can't replace Passage.
 
 ### My route
 
-Settings → **My route** takes the address of your own SOCKS5 proxy (for
-example `127.0.0.1:9050`, or `user:password@host:port`). Passage tries it
-first when it needs a route, then the link's routes, and it can also be
-chosen as the only route. `passage-cli -my host:port` does the same.
+Settings → **My route** takes the address of your own SOCKS5 proxy: for
+example `127.0.0.1:9050` or `user:password@host:port`, or a pasted
+`socks5://…` or `t.me/socks` link. Passage tries it first when it needs a
+route, then the link's routes, and it can also be chosen as the only route.
+`passage-cli -my <address>` does the same.
 
 ### Proxy access
 

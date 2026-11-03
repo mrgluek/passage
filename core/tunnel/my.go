@@ -14,36 +14,62 @@ import (
 	links "github.com/mrgluek/passage-link/link"
 )
 
-// myPriority puts the user's own proxy before the routes a link usually
-// carries; a link route with a lower priority still goes first.
-const myPriority = 5
+// myPriority puts the user's own proxy level with the first route a link
+// usually carries, and ties go to My; a link route below it still goes first.
+const myPriority = 10
 
-// parseMy reads [socks5://][user:pass@]host:port.
+var errMyAddress = errors.New("my route: expected host:port of a SOCKS5 proxy")
+
+// parseMy reads [user:pass@]host:port, also as a socks://, socks5:// or
+// socks5h:// URL, or a t.me/socks or tg://socks proxy link.
 func parseMy(s string) (string, links.SocksAuth, error) {
 	var auth links.SocksAuth
 	if !strings.Contains(s, "://") {
 		s = "socks5://" + s
 	}
 	u, err := url.Parse(s)
-	if err != nil || u.Scheme != "socks5" && u.Scheme != "socks5h" || u.Host == "" || u.Path != "" && u.Path != "/" || u.RawQuery != "" {
-		return "", auth, errors.New("my route: expected host:port of a SOCKS5 proxy")
+	if err != nil {
+		return "", auth, errMyAddress
 	}
-	host, port, err := net.SplitHostPort(u.Host)
+	hostport := u.Host
+	switch scheme := strings.ToLower(u.Scheme); {
+	case scheme == "socks" || scheme == "socks5" || scheme == "socks5h":
+		if u.Path != "" && u.Path != "/" || u.RawQuery != "" {
+			return "", auth, errMyAddress
+		}
+		if u.User != nil {
+			auth.Username = u.User.Username()
+			auth.Password, _ = u.User.Password()
+		}
+	case scheme == "tg" && strings.EqualFold(u.Host, "socks"),
+		(scheme == "https" || scheme == "http") && (strings.EqualFold(u.Host, "t.me") || strings.EqualFold(u.Host, "telegram.me")) && strings.TrimSuffix(u.Path, "/") == "/socks":
+		q := u.Query()
+		hostport = net.JoinHostPort(q.Get("server"), q.Get("port"))
+		auth.Username, auth.Password = q.Get("user"), q.Get("pass")
+	default:
+		return "", auth, errMyAddress
+	}
+	host, port, err := net.SplitHostPort(hostport)
 	var n uint16
 	if err != nil || host == "" {
-		return "", auth, errors.New("my route: expected host:port of a SOCKS5 proxy")
+		return "", auth, errMyAddress
 	}
 	if _, err = parsePort(port, &n); err != nil {
 		return "", auth, errors.New("my route: invalid port")
 	}
-	if u.User != nil {
-		auth.Username = u.User.Username()
-		auth.Password, _ = u.User.Password()
-		if len(auth.Username) == 0 || len(auth.Username) > 255 || len(auth.Password) > 255 {
-			return "", auth, errors.New("my route: invalid username or password")
-		}
+	if auth.Username == "" && auth.Password != "" || len(auth.Username) > 255 || len(auth.Password) > 255 {
+		return "", auth, errors.New("my route: invalid username or password")
 	}
-	return u.Host, auth, nil
+	return net.JoinHostPort(host, port), auth, nil
+}
+
+// normalizeMy writes a My route in the stored form, [user:pass@]host:port.
+func normalizeMy(s string) (string, error) {
+	addr, auth, err := parseMy(s)
+	if err != nil || auth.Username == "" {
+		return addr, err
+	}
+	return url.UserPassword(auth.Username, auth.Password).String() + "@" + addr, nil
 }
 
 // myClient carries connections through the user's own SOCKS5 proxy, which

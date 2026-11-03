@@ -22,6 +22,14 @@ func TestParseMy(t *testing.T) {
 		{"socks5://proxy.example.org:1080", "proxy.example.org:1080", "", "", true},
 		{"socks5h://u:p@[::1]:1080", "[::1]:1080", "u", "p", true},
 		{"u:p@10.0.0.2:1080", "10.0.0.2:1080", "u", "p", true},
+		{"socks://127.0.0.1:9050", "127.0.0.1:9050", "", "", true},
+		{"SOCKS5://u%40x:p%3Aq@proxy.example.org:1080/", "proxy.example.org:1080", "u@x", "p:q", true},
+		{"https://t.me/socks?server=10.0.0.2&port=1080&user=u&pass=p%26q", "10.0.0.2:1080", "u", "p&q", true},
+		{"tg://socks?server=proxy.example.org&port=1080", "proxy.example.org:1080", "", "", true},
+		{"tg://socks?server=2001:db8::1&port=1080", "[2001:db8::1]:1080", "", "", true},
+		{"https://t.me/socks?server=10.0.0.2", "", "", "", false},
+		{"https://example.org/socks?server=10.0.0.2&port=1080", "", "", "", false},
+		{"socks5://:p@10.0.0.2:1080", "", "", "", false},
 		{"127.0.0.1", "", "", "", false},
 		{"127.0.0.1:0", "", "", "", false},
 		{"http://127.0.0.1:8080", "", "", "", false},
@@ -44,9 +52,9 @@ func TestMyRouteOrder(t *testing.T) {
 		want   []string
 	}{
 		{nil, []string{"my"}},
-		{[]links.Route{route("b", 20), route("a", 10)}, []string{"my", "a", "b"}},
-		{[]links.Route{route("z", 5), route("a", 10)}, []string{"my", "z", "a"}}, // ties go to My
-		{[]links.Route{route("first", 3), route("a", 10)}, []string{"first", "my", "a"}},
+		{[]links.Route{route("b", 20), route("a", 100)}, []string{"my", "b", "a"}},
+		{[]links.Route{route("b", 20), route("a", 10)}, []string{"my", "a", "b"}}, // ties go to My
+		{[]links.Route{route("first", 5), route("a", 10)}, []string{"first", "my", "a"}},
 	} {
 		c, err := newRoutePool(Config{Routes: tc.routes, My: "127.0.0.1:9050"})
 		if err != nil {
@@ -212,4 +220,20 @@ func TestMyRouteDownFallsThroughAtOnce(t *testing.T) {
 		t.Errorf("my route state %q, want failed", pool.states()[0].State)
 	}
 	conn.Close()
+}
+
+func TestNormalizeMy(t *testing.T) {
+	for in, want := range map[string]string{
+		"socks5://127.0.0.1:9050":                               "127.0.0.1:9050",
+		" 127.0.0.1:9050 ":                                      "127.0.0.1:9050",
+		"socks5h://u:p@proxy.example.org:1080":                  "u:p@proxy.example.org:1080",
+		"https://t.me/socks?server=10.0.0.2&port=1080&user=u@x": "u%40x:@10.0.0.2:1080",
+		"tg://socks?server=10.0.0.2&port=1080&user=u&pass=a+b":  "u:a%20b@10.0.0.2:1080",
+		"socks5://u:a+b@10.0.0.2:1080":                          "u:a+b@10.0.0.2:1080",
+	} {
+		c, err := Config{My: in}.Normalize()
+		if err != nil || c.My != want {
+			t.Errorf("Normalize(My %q) = %q, %v; want %q", in, c.My, err, want)
+		}
+	}
 }
