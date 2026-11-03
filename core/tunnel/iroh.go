@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"time"
 
@@ -29,7 +30,11 @@ func startIroh(ctx context.Context, r links.Route, binaryPath string, privateDir
 	if err != nil {
 		return nil, nil, err
 	}
-	socket := filepath.Join(dir, "proxy.sock")
+	network, address, listen, err := irohListen(dir)
+	if err != nil {
+		os.RemoveAll(dir)
+		return nil, nil, err
+	}
 	key := make([]byte, 32)
 	if _, err = rand.Read(key); err != nil {
 		os.RemoveAll(dir)
@@ -40,7 +45,7 @@ func startIroh(ctx context.Context, r links.Route, binaryPath string, privateDir
 		return nil, nil, err
 	}
 	childCtx, cancel := context.WithCancel(ctx)
-	cmd := exec.CommandContext(childCtx, binaryPath, "connect-unix", "--socket-path", socket, "--relay", p.Relay, "--no-direct", p.Ticket)
+	cmd := exec.CommandContext(childCtx, binaryPath, append(listen, "--relay", p.Relay, "--no-direct", p.Ticket)...)
 	for _, v := range os.Environ() {
 		if !strings.HasPrefix(v, "IROH_SECRET=") {
 			cmd.Env = append(cmd.Env, v)
@@ -67,7 +72,7 @@ func startIroh(ctx context.Context, r links.Route, binaryPath string, privateDir
 	dial := func(ctx context.Context, _, target string) (net.Conn, error) {
 		for {
 			attempt, cancel := context.WithTimeout(ctx, 3*time.Second)
-			conn, e := (&net.Dialer{}).DialContext(attempt, "unix", socket)
+			conn, e := (&net.Dialer{}).DialContext(attempt, network, address)
 			if e == nil {
 				deadline, _ := attempt.Deadline()
 				conn.SetDeadline(deadline)
@@ -94,6 +99,22 @@ func startIroh(ctx context.Context, r links.Route, binaryPath string, privateDir
 		}
 	}
 	return dial, cleanup, nil
+}
+
+// irohListen picks where the helper listens: a socket in dir, or a free
+// loopback port on Windows, where the helper has no socket mode.
+func irohListen(dir string) (network, address string, args []string, err error) {
+	if runtime.GOOS != "windows" {
+		socket := filepath.Join(dir, "proxy.sock")
+		return "unix", socket, []string{"connect-unix", "--socket-path", socket}, nil
+	}
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		return "", "", nil, err
+	}
+	address = ln.Addr().String()
+	ln.Close()
+	return "tcp", address, []string{"connect-tcp", "--addr", address}, nil
 }
 
 // socks opens target through a SOCKS5 proxy on conn, with username and

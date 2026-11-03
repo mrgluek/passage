@@ -54,6 +54,7 @@ jobs:
         working-directory: ./core
         run: |
           go vet ./tunnel ./cmd/passage-cli
+          GOOS=windows go vet ./tunnel ./cmd/passage-cli
           go test -race ./...
 
 

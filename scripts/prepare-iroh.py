@@ -109,7 +109,8 @@ def desktop(target, output):
         subprocess.run(["cargo", "build", "--locked", "--release", "--target", target], cwd=source, env=env, check=True)
         output = Path(output)
         output.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copyfile(Path(env["CARGO_TARGET_DIR"]) / target / "release/dumbpipe", output)
+        binary = "dumbpipe.exe" if "windows" in target else "dumbpipe"
+        shutil.copyfile(Path(env["CARGO_TARGET_DIR"]) / target / "release" / binary, output)
         output.chmod(0o755)
 
 if len(sys.argv) == 4 and sys.argv[1] == "desktop":

@@ -16,7 +16,7 @@ require (
 	github.com/mrgluek/passage-link v0.0.0
 	golang.getoutline.org/sdk v0.0.23
 	golang.org/x/crypto v0.55.0 // indirect
-	golang.org/x/sys v0.47.0 // indirect
+	golang.org/x/sys v0.47.0
 )
 
 replace github.com/mrgluek/passage-link => ./third_party/passage-link
