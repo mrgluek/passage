@@ -208,10 +208,10 @@ func (c *disorderConn) lowTTL() (func(), error) {
 	old := 64
 	var serr error
 	if err := raw.Control(func(fd uintptr) {
-		if v, err := syscall.GetsockoptInt(int(fd), level, opt); err == nil && v > 0 {
+		if v, err := syscall.GetsockoptInt(sockfd(fd), level, opt); err == nil && v > 0 {
 			old = v
 		}
-		serr = syscall.SetsockoptInt(int(fd), level, opt, 1)
+		serr = syscall.SetsockoptInt(sockfd(fd), level, opt, 1)
 	}); err != nil {
 		return nil, err
 	}
@@ -219,7 +219,7 @@ func (c *disorderConn) lowTTL() (func(), error) {
 		return nil, serr
 	}
 	return func() {
-		raw.Control(func(fd uintptr) { syscall.SetsockoptInt(int(fd), level, opt, old) })
+		raw.Control(func(fd uintptr) { syscall.SetsockoptInt(sockfd(fd), level, opt, old) })
 	}, nil
 }
 

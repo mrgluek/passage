@@ -80,8 +80,9 @@ send one, or make a new port and password.
 
 ## On a computer
 
-Releases also have `passage-cli` for Linux and macOS (`amd64`, `arm64`):
-the same proxy without the app. Unpack the archive for your system and run
+Releases also have `passage-cli` for Linux and macOS (`amd64`, `arm64`) and
+Windows (`amd64`): the same proxy without the app. Unpack the archive for
+your system and run
 
 ```
 passage-cli -link-file link.txt
@@ -91,7 +92,9 @@ with a link saved in `link.txt` (or no flags to run without one), then set
 the SOCKS5 proxy `127.0.0.1:18000` in the other app. `passage-cli -h` lists
 the options. Keep `passage-iroh` next to `passage-cli`: some links need it.
 On macOS, allow the unsigned binaries once with
-`xattr -dr com.apple.quarantine <unpacked folder>`.
+`xattr -dr com.apple.quarantine <unpacked folder>`. On Windows, run
+`passage-cli.exe` from a terminal in the unpacked folder; SmartScreen may
+warn about an unsigned program first.
 
 ## Build
 

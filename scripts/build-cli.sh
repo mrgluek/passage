@@ -1,11 +1,13 @@
 #!/usr/bin/env bash
 # Builds passage-cli with the iroh helper as
-# passage-cli-<version>-<os>-<arch>.tar.gz in <out-dir>.
+# passage-cli-<version>-<os>-<arch>.tar.gz (.zip for Windows) in <out-dir>.
 # Usage: build-cli.sh <version> <out-dir> [os/arch ...]
-# Targets: linux/amd64 linux/arm64 darwin/amd64 darwin/arm64 (default: all).
+# Targets: linux/amd64 linux/arm64 darwin/amd64 darwin/arm64 windows/amd64
+# windows/arm64 (default: the Linux and macOS ones).
 # The helper is built from source with Rust for each target (Linux needs
-# musl-tools on a host of the same architecture). PASSAGE_IROH_DIR instead
-# takes prebuilt helpers from <dir>/<os>-<arch>/passage-iroh.
+# musl-tools on a host of the same architecture, Windows builds on Windows).
+# PASSAGE_IROH_DIR instead takes prebuilt helpers from
+# <dir>/<os>-<arch>/passage-iroh[.exe]. PYTHON names the interpreter.
 set -euo pipefail
 
 version=$1
@@ -31,19 +33,27 @@ for target in "${targets[@]}"; do
     linux/arm64) rust=aarch64-unknown-linux-musl ;;
     darwin/amd64) rust=x86_64-apple-darwin ;;
     darwin/arm64) rust=aarch64-apple-darwin ;;
+    windows/amd64) rust=x86_64-pc-windows-msvc ;;
+    windows/arm64) rust=aarch64-pc-windows-msvc ;;
     *) echo "unsupported target $target" >&2; exit 1 ;;
   esac
+  exe=""
+  [[ $goos == windows ]] && exe=.exe
   name="passage-cli-$version-$goos-$goarch"
   mkdir "$work/$name"
   CGO_ENABLED=0 GOOS=$goos GOARCH=$goarch \
     go build -trimpath -buildvcs=false -ldflags="$link_flags -s -w -buildid=" \
-    -o "$work/$name/passage-cli" ./cmd/passage-cli
+    -o "$work/$name/passage-cli$exe" ./cmd/passage-cli
   if [[ -n "${PASSAGE_IROH_DIR:-}" ]]; then
-    install -m 755 "$PASSAGE_IROH_DIR/$goos-$goarch/passage-iroh" "$work/$name/passage-iroh"
+    install -m 755 "$PASSAGE_IROH_DIR/$goos-$goarch/passage-iroh$exe" "$work/$name/passage-iroh$exe"
   else
-    python3 "$root/scripts/prepare-iroh.py" desktop "$rust" "$work/$name/passage-iroh"
+    "${PYTHON:-python3}" "$root/scripts/prepare-iroh.py" desktop "$rust" "$work/$name/passage-iroh$exe"
   fi
   cp "$root/LICENSE" "$work/$name/"
-  tar -C "$work" -czf "$out/$name.tar.gz" "$name"
+  if [[ $goos == windows ]]; then
+    (cd "$work" && "${PYTHON:-python3}" -m zipfile -c "$out/$name.zip" "$name")
+  else
+    tar -C "$work" -czf "$out/$name.tar.gz" "$name"
+  fi
 done
-ls -l "$out"/passage-cli-*.tar.gz
+ls -l "$out"/passage-cli-*

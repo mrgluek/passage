@@ -139,7 +139,7 @@ func irohHelper(path string) string {
 		if exe, err = filepath.EvalSymlinks(exe); err != nil {
 			return ""
 		}
-		path = filepath.Join(filepath.Dir(exe), "passage-iroh")
+		path = filepath.Join(filepath.Dir(exe), "passage-iroh"+exeSuffix)
 	}
 	path, err := filepath.Abs(path)
 	if err != nil {
@@ -161,11 +161,15 @@ func privateDir() string {
 	return filepath.Join(base, "passage")
 }
 
-// systemResolvers reads this machine's DNS servers. With systemd-resolved,
+// systemResolvers reads this machine's DNS servers: from the network
+// adapters on Windows, from resolv.conf elsewhere. With systemd-resolved,
 // /etc/resolv.conf only names the 127.0.0.53 stub, so the real upstream list
 // comes from /run/systemd/resolve/resolv.conf. Loopback entries are skipped:
 // a local stub can't forward to the tunnel zone any better than its upstreams.
 func systemResolvers() []string {
+	if out := adapterResolvers(); out != nil {
+		return out
+	}
 	for _, path := range []string{"/run/systemd/resolve/resolv.conf", "/etc/resolv.conf"} {
 		f, err := os.Open(path)
 		if err != nil {
