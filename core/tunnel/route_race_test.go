@@ -112,3 +112,44 @@ func TestRoutePoolCallerCancelClosesLateWinners(t *testing.T) {
 	close(release)
 	waitFor(t, late.closed.Load)
 }
+
+func TestRoutePoolRemembersRefusals(t *testing.T) {
+	now := time.Now()
+	var asked [2]atomic.Int32
+	a, b := net.Pipe()
+	defer b.Close()
+	refuser := &poolFixture{dial: func(context.Context, string, string) (net.Conn, error) {
+		asked[0].Add(1)
+		return nil, errDestinationRefused
+	}}
+	pool := &routePool{clients: []soarClient{refuser}, ipv6: []bool{false}, now: func() time.Time { return now }}
+	for range 3 {
+		if _, err := pool.DialContext(context.Background(), "tcp", "149.154.167.35:443"); !errors.Is(err, errDestinationRefused) {
+			t.Fatal(err)
+		}
+	}
+	if asked[0].Load() != 1 {
+		t.Fatalf("asked the exit %d times within the window", asked[0].Load())
+	}
+	if len(pool.failedUntil) != 0 {
+		t.Fatal("a refusal penalized the route")
+	}
+	pool.DialContext(context.Background(), "tcp", "149.154.167.41:443")
+	if asked[0].Load() != 2 {
+		t.Fatal("another destination was not asked")
+	}
+	now = now.Add(refusedFor)
+	pool.DialContext(context.Background(), "tcp", "149.154.167.35:443")
+	if asked[0].Load() != 3 {
+		t.Fatal("the refusal did not expire")
+	}
+
+	// With a second route, the refused destination goes to it at once.
+	other := &poolFixture{dial: func(context.Context, string, string) (net.Conn, error) { asked[1].Add(1); return a, nil }}
+	pool = &routePool{clients: []soarClient{refuser, other}, ipv6: []bool{false, false}, now: func() time.Time { return now }}
+	pool.DialContext(context.Background(), "tcp", "149.154.167.35:443")
+	conn, err := pool.DialContext(context.Background(), "tcp", "149.154.167.35:443")
+	if err != nil || conn == nil || asked[0].Load() != 4 || asked[1].Load() != 2 {
+		t.Fatalf("err %v, refuser asked %d, other %d", err, asked[0].Load(), asked[1].Load())
+	}
+}

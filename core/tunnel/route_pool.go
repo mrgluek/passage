@@ -10,6 +10,7 @@ import (
 	"net"
 	"os"
 	"slices"
+	"strconv"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -29,6 +30,10 @@ const (
 // parallel; the first connection wins and the others are dropped.
 var routeStagger = 2 * time.Second
 
+// A destination a route refused is not asked of that route again for
+// refusedFor: apps retry at once, and each ask costs the exit work.
+const refusedFor = 30 * time.Second
+
 type routePool struct {
 	clients     []soarClient
 	ipv6        []bool
@@ -37,8 +42,9 @@ type routePool struct {
 	established atomic.Bool
 	mu          sync.Mutex
 	failedUntil map[int]time.Time
-	only        string           // when set, only routes of this type are tried
-	now         func() time.Time // for tests; nil = time.Now
+	refused     map[string]time.Time // "route index|address" -> until
+	only        string               // when set, only routes of this type are tried
+	now         func() time.Time     // for tests; nil = time.Now
 }
 
 func newRoutePool(cfg Config) (soarClient, error) {
@@ -89,6 +95,12 @@ func newRoutePool(cfg Config) (soarClient, error) {
 func (p *routePool) DialContext(ctx context.Context, network, address string) (net.Conn, error) {
 	host, _, _ := net.SplitHostPort(address)
 	order := p.order(net.ParseIP(host))
+	asked := p.withoutRefused(order, address)
+	if len(order) > 0 && len(asked) == 0 {
+		return nil, errDestinationRefused
+	}
+	order = asked
+	refusals := 0
 	race, stop := context.WithCancel(ctx)
 	defer stop()
 	type result struct {
@@ -146,7 +158,10 @@ func (p *routePool) DialContext(ctx context.Context, network, address string) (n
 				drain()
 				return nil, ctx.Err()
 			}
-			if !errors.Is(r.err, errDestinationRefused) {
+			if errors.Is(r.err, errDestinationRefused) {
+				refusals++
+				p.markRefused(r.i, address)
+			} else {
 				p.mark(r.i, true)
 			}
 			if started < len(order) {
@@ -164,8 +179,44 @@ func (p *routePool) DialContext(ctx context.Context, network, address string) (n
 			return nil, ctx.Err()
 		}
 	}
+	if refusals > 0 && refusals == started {
+		return nil, errDestinationRefused
+	}
 	p.established.Store(false)
 	return nil, errors.New("all configured routes failed")
+}
+
+func refusedKey(i int, address string) string { return strconv.Itoa(i) + "|" + address }
+
+// withoutRefused drops the routes that refused address recently.
+func (p *routePool) withoutRefused(order []int, address string) []int {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	now := p.clock()
+	out := make([]int, 0, len(order))
+	for _, i := range order {
+		if !now.Before(p.refused[refusedKey(i, address)]) {
+			out = append(out, i)
+		}
+	}
+	return out
+}
+
+func (p *routePool) markRefused(i int, address string) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	now := p.clock()
+	if p.refused == nil {
+		p.refused = map[string]time.Time{}
+	}
+	if len(p.refused) >= 1024 {
+		for k, until := range p.refused {
+			if !now.Before(until) {
+				delete(p.refused, k)
+			}
+		}
+	}
+	p.refused[refusedKey(i, address)] = now.Add(refusedFor)
 }
 
 // order lists the routes that can carry ip in priority order, the ones that
