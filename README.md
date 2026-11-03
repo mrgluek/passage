@@ -71,6 +71,20 @@ The proxy listens on `127.0.0.1` with a random port, username and password
 made on the phone. Settings can turn the password off for apps that can't
 send one, or make a new port and password.
 
+## On a computer
+
+Releases also have `passage-cli` for Linux and macOS (`amd64`, `arm64`):
+the same proxy without the app. Unpack the archive for your system and run
+
+```
+passage-cli -link-file link.txt
+```
+
+with a link saved in `link.txt` (or no flags to run without one), then set
+the SOCKS5 proxy `127.0.0.1:18000` in the other app. `passage-cli -h` lists
+the options. On macOS, allow the unsigned binary once with
+`xattr -d com.apple.quarantine passage-cli`.
+
 ## Build
 
 See [AGENTS.md](AGENTS.md).
