@@ -7,6 +7,7 @@
 // Point a SOCKS5 client at 127.0.0.1:18000 (no auth unless -user is set).
 // Like the app, it puts this machine's own DNS servers (from resolv.conf)
 // first among the tunnel's resolver paths; -system-dns=false turns that off.
+// iroh routes run the passage-iroh helper from next to this binary, or -iroh.
 package main
 
 import (
@@ -17,6 +18,7 @@ import (
 	"net"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strings"
 	"syscall"
 	"time"
@@ -36,6 +38,7 @@ func main() {
 	pass := flag.String("pass", "", "SOCKS5 password")
 	every := flag.Duration("status", time.Minute, "print a status line this often (0 = never)")
 	paths := flag.Bool("paths", false, "also print one line per resolver path with each status")
+	iroh := flag.String("iroh", "", "iroh helper binary (default: passage-iroh next to passage-cli)")
 	flag.Parse()
 
 	if *linkFile != "" {
@@ -62,6 +65,14 @@ func main() {
 	}
 	cfg.Mode, cfg.Listen, cfg.User, cfg.Pass = *mode, *listen, *user, *pass
 	cfg.Operator = *operator
+	cfg.IrohBinary = irohHelper(*iroh)
+	cfg.PrivateDir = privateDir()
+	for _, r := range cfg.Routes {
+		if r.Type == "iroh" && cfg.IrohBinary == "" {
+			fmt.Fprintln(os.Stderr, "passage-cli: no passage-iroh helper found, iroh routes will fail")
+			break
+		}
+	}
 	if *systemDNS {
 		cfg.SystemResolvers = systemResolvers()
 	}
@@ -113,6 +124,38 @@ func main() {
 			}
 		}
 	}
+}
+
+// irohHelper returns the helper's absolute path, or "" if there is none.
+func irohHelper(path string) string {
+	if path == "" {
+		exe, err := os.Executable()
+		if err != nil {
+			return ""
+		}
+		if exe, err = filepath.EvalSymlinks(exe); err != nil {
+			return ""
+		}
+		path = filepath.Join(filepath.Dir(exe), "passage-iroh")
+	}
+	path, err := filepath.Abs(path)
+	if err != nil {
+		return ""
+	}
+	if fi, err := os.Stat(path); err != nil || fi.IsDir() {
+		return ""
+	}
+	return path
+}
+
+// privateDir is where iroh keeps its socket and session key. The user cache
+// directory keeps the socket path short; macOS limits it to 104 bytes.
+func privateDir() string {
+	base, err := os.UserCacheDir()
+	if err != nil {
+		base = os.TempDir()
+	}
+	return filepath.Join(base, "passage")
 }
 
 // systemResolvers reads this machine's DNS servers. With systemd-resolved,

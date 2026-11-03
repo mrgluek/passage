@@ -46,11 +46,16 @@ Shared libraries for `arm64-v8a` and `armeabi-v7a`, into
 scripts/build-native.sh
 ```
 
-`passage-cli` archives for Linux and macOS (amd64, arm64):
+`passage-cli` archives for Linux and macOS (amd64, arm64), each with the
+iroh helper `passage-iroh` built from the same pinned source as Android:
 
 ```bash
-scripts/build-cli.sh <version> <out-dir>
+scripts/build-cli.sh <version> <out-dir> [os/arch ...]
 ```
+
+The helper needs Rust for each target: macOS targets build on macOS, Linux
+ones (static musl) on Linux of the same architecture with `musl-tools`.
+`release.yml` builds each platform on its own runner.
 
 Android app (from `android/`):
 

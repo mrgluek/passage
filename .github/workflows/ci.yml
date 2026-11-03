@@ -56,13 +56,16 @@ jobs:
           go vet ./tunnel ./cmd/passage-cli
           go test -race ./...
 
-      - name: Build passage-cli
-        run: scripts/build-cli.sh ci "$RUNNER_TEMP/cli"
 
       - name: Set up Rust
         run: |
           rustup toolchain install 1.99.1 --profile minimal
           rustup default 1.99.1
+          sudo apt-get install -y -qq musl-tools
+
+      # One platform with the iroh helper; releases build all four.
+      - name: Build passage-cli
+        run: scripts/build-cli.sh ci "$RUNNER_TEMP/cli" linux/amd64
 
       - name: Build libpassage.so
         env:

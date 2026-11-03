@@ -82,8 +82,9 @@ passage-cli -link-file link.txt
 
 with a link saved in `link.txt` (or no flags to run without one), then set
 the SOCKS5 proxy `127.0.0.1:18000` in the other app. `passage-cli -h` lists
-the options. On macOS, allow the unsigned binary once with
-`xattr -d com.apple.quarantine passage-cli`.
+the options. Keep `passage-iroh` next to `passage-cli`: some links need it.
+On macOS, allow the unsigned binaries once with
+`xattr -dr com.apple.quarantine <unpacked folder>`.
 
 ## Build
 
