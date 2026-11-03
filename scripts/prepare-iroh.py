@@ -1,5 +1,9 @@
 #!/usr/bin/env python3
-"""Build a pinned Android helper with explicit relay selection and 16-KB alignment."""
+"""Build the pinned iroh helper with explicit relay selection.
+
+No arguments: both Android ABIs, 16-KB aligned, into the Android project.
+`desktop <rust-target> <out-file>`: one Linux or macOS binary for passage-cli.
+"""
 import hashlib
 import os
 from pathlib import Path
@@ -8,6 +12,7 @@ import re
 import shutil
 import struct
 import subprocess
+import sys
 import tarfile
 import tempfile
 import urllib.request
@@ -32,14 +37,7 @@ def aligned(path):
             loads.append(struct.unpack_from("<Q" if wide else "<I", data, at + (48 if wide else 28))[0])
     return bool(loads) and min(loads) >= 16384
 
-outputs = {abi: ROOT / "android/app/src/main/nativeLibs" / abi / "libpassage_iroh.so" for abi in TARGETS}
-stamp = ROOT / "android/app/src/main/nativeLibs/.iroh-build"
-expected = REV + " relay-only-v1 16384"
-if stamp.exists() and stamp.read_text().strip() == expected and all(aligned(p) for p in outputs.values()):
-    raise SystemExit(0)
-ndk = Path(os.environ["ANDROID_HOME"]) / "ndk/27.2.12479018/toolchains/llvm/prebuilt" / ("darwin-x86_64" if platform.system() == "Darwin" else "linux-x86_64")
-with tempfile.TemporaryDirectory(prefix="passage-iroh-build-") as temporary:
-    work = Path(temporary)
+def prepare(work):
     archive = work / "source.tar.gz"
     with urllib.request.urlopen("https://codeload.github.com/weavedwires/dumbpipe-over-chatmail/tar.gz/" + REV, timeout=60) as response:
         archive.write_bytes(response.read(4 * 1024 * 1024))
@@ -67,23 +65,56 @@ with tempfile.TemporaryDirectory(prefix="passage-iroh-build-") as temporary:
     with manifest.open("a") as manifest_file:
         manifest_file.write('\n[patch.crates-io]\niroh = { path = "vendor/iroh-0.35.0" }\n')
     shutil.copyfile(ROOT / "scripts/iroh.Cargo.lock", source / "Cargo.lock")
-    for abi, (target, clang) in TARGETS.items():
-        env = dict(os.environ)
-        env.setdefault("CARGO_TARGET_DIR", str(ROOT / "android/build/iroh-target"))
-        name = target.upper().replace("-", "_")
-        compiler = str(ndk / "bin" / (clang + "24-clang"))
-        env["CARGO_TARGET_" + name + "_LINKER"] = compiler
-        env["CC_" + target.replace("-", "_")] = compiler
-        env["AR_" + target.replace("-", "_")] = str(ndk / "bin/llvm-ar")
-        flags = "-C link-arg=-Wl,-z,max-page-size=16384"
-        if env.get("PASSAGE_RUST_SYSROOT"):
-            flags += " --sysroot=" + env["PASSAGE_RUST_SYSROOT"]
-        else:
-            subprocess.run(["rustup", "target", "add", target], check=True)
-        env["CARGO_TARGET_" + name + "_RUSTFLAGS"] = flags
-        subprocess.run(["cargo", "build", "--locked", "--release", "--target", target], cwd=source, env=env, check=True)
-        binary = Path(env["CARGO_TARGET_DIR"]) / target / "release/dumbpipe"
-        if not aligned(binary): raise SystemExit("helper does not have 16-KB alignment")
-        outputs[abi].parent.mkdir(parents=True, exist_ok=True)
-        shutil.copyfile(binary, outputs[abi]); outputs[abi].chmod(0o755)
+    return source
+
+def android():
+    outputs = {abi: ROOT / "android/app/src/main/nativeLibs" / abi / "libpassage_iroh.so" for abi in TARGETS}
+    stamp = ROOT / "android/app/src/main/nativeLibs/.iroh-build"
+    expected = REV + " relay-only-v1 16384"
+    if stamp.exists() and stamp.read_text().strip() == expected and all(aligned(p) for p in outputs.values()):
+        return
+    ndk = Path(os.environ["ANDROID_HOME"]) / "ndk/27.2.12479018/toolchains/llvm/prebuilt" / ("darwin-x86_64" if platform.system() == "Darwin" else "linux-x86_64")
+    with tempfile.TemporaryDirectory(prefix="passage-iroh-build-") as temporary:
+        source = prepare(Path(temporary))
+        for abi, (target, clang) in TARGETS.items():
+            env = dict(os.environ)
+            env.setdefault("CARGO_TARGET_DIR", str(ROOT / "android/build/iroh-target"))
+            name = target.upper().replace("-", "_")
+            compiler = str(ndk / "bin" / (clang + "24-clang"))
+            env["CARGO_TARGET_" + name + "_LINKER"] = compiler
+            env["CC_" + target.replace("-", "_")] = compiler
+            env["AR_" + target.replace("-", "_")] = str(ndk / "bin/llvm-ar")
+            flags = "-C link-arg=-Wl,-z,max-page-size=16384"
+            if env.get("PASSAGE_RUST_SYSROOT"):
+                flags += " --sysroot=" + env["PASSAGE_RUST_SYSROOT"]
+            else:
+                subprocess.run(["rustup", "target", "add", target], check=True)
+            env["CARGO_TARGET_" + name + "_RUSTFLAGS"] = flags
+            subprocess.run(["cargo", "build", "--locked", "--release", "--target", target], cwd=source, env=env, check=True)
+            binary = Path(env["CARGO_TARGET_DIR"]) / target / "release/dumbpipe"
+            if not aligned(binary): raise SystemExit("helper does not have 16-KB alignment")
+            outputs[abi].parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(binary, outputs[abi]); outputs[abi].chmod(0o755)
     stamp.write_text(expected + "\n")
+
+def desktop(target, output):
+    with tempfile.TemporaryDirectory(prefix="passage-iroh-build-") as temporary:
+        source = prepare(Path(temporary))
+        env = dict(os.environ)
+        env.setdefault("CARGO_TARGET_DIR", str(ROOT / "core/build/iroh-target"))
+        if target.endswith("-musl"):
+            env.setdefault("CC_" + target.replace("-", "_"), "musl-gcc")
+        if shutil.which("rustup"):
+            subprocess.run(["rustup", "target", "add", target], check=True)
+        subprocess.run(["cargo", "build", "--locked", "--release", "--target", target], cwd=source, env=env, check=True)
+        output = Path(output)
+        output.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(Path(env["CARGO_TARGET_DIR"]) / target / "release/dumbpipe", output)
+        output.chmod(0o755)
+
+if len(sys.argv) == 4 and sys.argv[1] == "desktop":
+    desktop(sys.argv[2], sys.argv[3])
+elif len(sys.argv) == 1:
+    android()
+else:
+    raise SystemExit("usage: prepare-iroh.py [desktop <rust-target> <out-file>]")
