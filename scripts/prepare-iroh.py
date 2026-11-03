@@ -62,6 +62,11 @@ def prepare(work):
     with tarfile.open(crate) as archive: archive.extractall(vendor, filter="data")
     utilities = vendor / "iroh-0.35.0/src/test_utils.rs"
     utilities.write_text(utilities.read_text().replace("let config = ServerConfig {", "let config = ServerConfig {\n        metrics_addr: None,", 1))
+    # Relay only: no port mapping requests to the local router.
+    magicsock = vendor / "iroh-0.35.0/src/magicsock.rs"
+    old = "portmapper::Client::with_metrics(Default::default(), metrics)"
+    if old not in magicsock.read_text(): raise SystemExit("iroh port mapper not found")
+    magicsock.write_text(magicsock.read_text().replace(old, "portmapper::Client::with_metrics(portmapper::Config { enable_upnp: false, enable_pcp: false, enable_nat_pmp: false }, metrics)"))
     with manifest.open("a") as manifest_file:
         manifest_file.write('\n[patch.crates-io]\niroh = { path = "vendor/iroh-0.35.0" }\n')
     shutil.copyfile(ROOT / "scripts/iroh.Cargo.lock", source / "Cargo.lock")
@@ -70,7 +75,7 @@ def prepare(work):
 def android():
     outputs = {abi: ROOT / "android/app/src/main/nativeLibs" / abi / "libpassage_iroh.so" for abi in TARGETS}
     stamp = ROOT / "android/app/src/main/nativeLibs/.iroh-build"
-    expected = REV + " relay-only-v1 16384"
+    expected = REV + " relay-only-v2 16384"
     if stamp.exists() and stamp.read_text().strip() == expected and all(aligned(p) for p in outputs.values()):
         return
     ndk = Path(os.environ["ANDROID_HOME"]) / "ndk/27.2.12479018/toolchains/llvm/prebuilt" / ("darwin-x86_64" if platform.system() == "Darwin" else "linux-x86_64")
