@@ -9,13 +9,17 @@ import android.graphics.Paint
 import android.graphics.Typeface
 import android.os.Build
 import android.os.Bundle
+import android.text.Editable
 import android.text.InputType
+import android.text.TextWatcher
 import android.text.util.Linkify
+import android.view.Gravity
 import android.view.MenuItem
 import android.view.View
 import android.widget.Button
 import android.widget.CheckBox
 import android.widget.EditText
+import android.widget.ImageButton
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
@@ -133,10 +137,29 @@ class SettingsActivity : Activity() {
             inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS or InputType.TYPE_TEXT_VARIATION_URI
             textSize = 14f
         }
-        col.addView(myEdit)
+        val myClear = ImageButton(this).apply {
+            setImageResource(android.R.drawable.ic_menu_close_clear_cancel)
+            background = null
+            contentDescription = getString(R.string.clear)
+            setOnClickListener { myEdit.text.clear(); myEdit.requestFocus() }
+        }
+        myClear.visibility = if (myEdit.text.isEmpty()) View.INVISIBLE else View.VISIBLE
+        myEdit.addTextChangedListener(object : TextWatcher {
+            override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
+            override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {}
+            override fun afterTextChanged(s: Editable?) {
+                myClear.visibility = if (s.isNullOrEmpty()) View.INVISIBLE else View.VISIBLE
+            }
+        })
+        col.addView(LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            addView(myEdit, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+            addView(myClear)
+        })
         col.addView(Button(this).apply {
             text = getString(R.string.save)
-            setOnClickListener { saveMyRoute(myEdit.text.toString().trim()) }
+            setOnClickListener { saveMyRoute(myEdit) }
         })
         col.addView(Ui.hint(this, getString(R.string.my_route_help)))
 
@@ -250,12 +273,14 @@ class SettingsActivity : Activity() {
         }
     }
 
-    /** Saves My route (empty removes it) and restarts a running proxy. */
-    private fun saveMyRoute(value: String) {
-        if (value.isNotEmpty() && !Settings.validMyRoute(value)) {
+    /** Saves My route in its short form (empty removes it) and restarts a running proxy. */
+    private fun saveMyRoute(edit: EditText) {
+        val text = edit.text.toString().trim()
+        val value = if (text.isEmpty()) "" else Settings.normalizeMyRoute(text) ?: run {
             Toast.makeText(this, getString(R.string.my_route_invalid), Toast.LENGTH_LONG).show()
             return
         }
+        if (edit.text.toString() != value) edit.setText(value)
         if (value == settings.myRoute) return
         settings.myRoute = value
         Toast.makeText(this, getString(if (value.isEmpty()) R.string.my_route_removed else R.string.my_route_saved), Toast.LENGTH_SHORT).show()

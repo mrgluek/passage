@@ -139,7 +139,8 @@
     <string name="route_my">My</string>
     <string name="my_route_label">My route</string>
     <string name="my_route_hint">127.0.0.1:9050</string>
-    <string name="my_route_help">The address of your own SOCKS5 proxy, on this phone, in your network or on the internet; user:password@host:port if it needs a password. When Auto needs a route, this one is tried first, then the link\'s routes. Leave empty and save to remove it.</string>
+    <string name="clear">Clear</string>
+    <string name="my_route_help">The address of your own SOCKS5 proxy, on this phone, in your network or on the internet: host:port, user:password@host:port, or a socks5:// or t.me/socks link. When Auto needs a route, this one is tried first, then the link\'s routes. Leave empty and save to remove it.</string>
     <string name="my_route_invalid">Enter host:port, for example 127.0.0.1:9050</string>
     <string name="my_route_saved">My route saved</string>
     <string name="my_route_removed">My route removed</string>

@@ -86,7 +86,8 @@ type Config struct {
 	// StateFile keeps what the router learned across restarts (the smart
 	// route's strategy per network), in the app's private storage.
 	StateFile string `json:"state_file,omitempty"`
-	// My is the user's own SOCKS5 proxy, [user:pass@]host:port, added as the
+	// My is the user's own SOCKS5 proxy, [user:pass@]host:port (Normalize
+	// also takes socks5:// URLs and t.me/socks links), added as the
 	// "my" route at myPriority. It comes from the app's settings, never from a link.
 	My string `json:"my,omitempty"`
 }
@@ -174,7 +175,8 @@ func (c Config) Normalize() (Config, error) {
 		}
 	}
 	if c.My = strings.TrimSpace(c.My); c.My != "" {
-		if _, _, err := parseMy(c.My); err != nil {
+		var err error
+		if c.My, err = normalizeMy(c.My); err != nil {
 			return Config{}, err
 		}
 		c.TunnelIPv6 = true // the pool still gives IPv6 only to routes that allow it

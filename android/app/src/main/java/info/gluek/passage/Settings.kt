@@ -144,16 +144,55 @@ class Settings(context: Context) {
         /** Route types that can be chosen, as in the Go core's RouteKinds. */
         val ROUTE_KINDS = listOf("my", "wss", "iroh", "soar")
         /** The Go core's myPriority. */
-        private const val MY_PRIORITY = 5
+        private const val MY_PRIORITY = 10
 
-        /** Whether [s] reads as [user:pass@]host:port; the core checks it fully. */
-        fun validMyRoute(s: String): Boolean = try {
-            val uri = java.net.URI(if ("://" in s) s else "socks5://$s")
-            uri.scheme in listOf("socks5", "socks5h") && !uri.host.isNullOrEmpty() && uri.port in 1..65535 &&
-                uri.path.isNullOrEmpty() && uri.query == null
-        } catch (_: Exception) {
-            false
+        /**
+         * [s] in the stored form [user:pass@]host:port, or null if it is not a
+         * SOCKS5 address. Also takes socks://, socks5:// and socks5h:// URLs and
+         * t.me/socks or tg://socks links, like the Go core's parseMy.
+         */
+        fun normalizeMyRoute(s: String): String? {
+            try {
+                val text = s.trim()
+                val uri = java.net.URI(if ("://" in text) text else "socks5://$text")
+                val scheme = uri.scheme?.lowercase()
+                val host: String?
+                val port: Int
+                var user = ""
+                var pass = ""
+                when {
+                    scheme == "socks" || scheme == "socks5" || scheme == "socks5h" -> {
+                        if (!uri.rawPath.isNullOrEmpty() && uri.rawPath != "/" || uri.rawQuery != null) return null
+                        host = uri.host
+                        port = uri.port
+                        uri.rawUserInfo?.let {
+                            user = decode(it.substringBefore(':').replace("+", "%2B"))
+                            pass = decode(it.substringAfter(':', "").replace("+", "%2B"))
+                        }
+                    }
+                    scheme == "tg" && uri.host.equals("socks", true) ||
+                        (scheme == "https" || scheme == "http") && (uri.host.equals("t.me", true) || uri.host.equals("telegram.me", true)) &&
+                        uri.rawPath?.trimEnd('/') == "/socks" -> {
+                        val q = (uri.rawQuery ?: "").split('&').filter { '=' in it }
+                            .associate { decode(it.substringBefore('=')) to decode(it.substringAfter('=')) }
+                        host = q["server"]
+                        port = q["port"]?.toIntOrNull() ?: -1
+                        user = q["user"] ?: ""
+                        pass = q["pass"] ?: ""
+                    }
+                    else -> return null
+                }
+                if (host.isNullOrEmpty() || port !in 1..65535 || user.isEmpty() && pass.isNotEmpty()) return null
+                val hostPort = (if (':' in host && !host.startsWith("[")) "[$host]" else host) + ":$port"
+                return if (user.isEmpty()) hostPort else "${encode(user)}:${encode(pass)}@$hostPort"
+            } catch (_: Exception) {
+                return null
+            }
         }
+
+        /** Query decoding: + is a space, as in Go's url.ParseQuery. */
+        private fun decode(s: String) = java.net.URLDecoder.decode(s, "UTF-8")
+        private fun encode(s: String) = java.net.URLEncoder.encode(s, "UTF-8").replace("+", "%20")
         // Below Linux's ephemeral range (32768-60999): a client retrying a
         // stopped proxy could otherwise get the port as its own source port,
         // connect to itself and block the restart for a minute.
