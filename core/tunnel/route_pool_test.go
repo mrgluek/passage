@@ -171,3 +171,24 @@ func TestDestinationFailureDoesNotPenalizeRoute(t *testing.T) {
 	}
 	conn.Close()
 }
+
+func TestUnreachableDestinationIsSkippedBriefly(t *testing.T) {
+	now := time.Unix(1000, 0)
+	fail := errDestinationRefused
+	primary := &poolFixture{dial: func(context.Context, string, string) (net.Conn, error) { return nil, fail }}
+	pool := &routePool{clients: []soarClient{primary}, ipv6: []bool{false}, now: func() time.Time { return now }}
+	for _, c := range []struct {
+		err  error
+		skip time.Duration
+	}{{errDestinationRefused, refusedFor}, {errDestinationUnreachable, unreachableFor}} {
+		fail = c.err
+		pool.refused = nil
+		pool.DialContext(context.Background(), "tcp", "149.154.175.53:443")
+		if got := pool.refused[refusedKey(0, "149.154.175.53:443")].Sub(now); got != c.skip {
+			t.Fatalf("%v: skipped for %v, want %v", c.err, got, c.skip)
+		}
+		if len(pool.failedUntil) != 0 {
+			t.Fatalf("%v penalized the route", c.err)
+		}
+	}
+}

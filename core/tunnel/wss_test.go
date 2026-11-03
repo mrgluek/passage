@@ -81,6 +81,9 @@ func wssFixture(t *testing.T, limit int, handler func(net.Conn)) (*WSSClient, *w
 			if strings.HasPrefix(host, "denied.") {
 				return nil, 1
 			}
+			if strings.HasPrefix(host, "unreachable.") {
+				return nil, 2
+			}
 			c, err := net.Dial("tcp", ln.Addr().String())
 			if err != nil {
 				return nil, 2
@@ -260,6 +263,12 @@ func TestWSSDestinationFailureDoesNotPenalizeRoute(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
 	if _, err := client.DialContext(ctx, "tcp", "denied.example.org:443"); !errors.Is(err, errDestinationRefused) {
+		t.Fatal(err)
+	}
+	if _, err := client.DialContext(ctx, "tcp", "denied.example.org:443"); errors.Is(err, errDestinationUnreachable) {
+		t.Fatal("policy refusal reported as unreachable")
+	}
+	if _, err := client.DialContext(ctx, "tcp", "unreachable.example.org:443"); !errors.Is(err, errDestinationUnreachable) || !errors.Is(err, errDestinationRefused) {
 		t.Fatal(err)
 	}
 	pool.DialContext(ctx, "tcp", "denied.example.org:443")

@@ -31,8 +31,12 @@ const (
 var routeStagger = 2 * time.Second
 
 // A destination a route refused is not asked of that route again for
-// refusedFor: apps retry at once, and each ask costs the exit work.
-const refusedFor = 30 * time.Second
+// refusedFor: apps retry at once, and each ask costs the exit work. One the
+// exit could not reach is skipped only for unreachableFor.
+const (
+	refusedFor     = 30 * time.Second
+	unreachableFor = 5 * time.Second
+)
 
 type routePool struct {
 	clients     []soarClient
@@ -179,7 +183,7 @@ func (p *routePool) DialContext(ctx context.Context, network, address string) (n
 			}
 			if errors.Is(r.err, errDestinationRefused) {
 				refusals++
-				p.markRefused(r.i, address)
+				p.markRefused(r.i, address, errors.Is(r.err, errDestinationUnreachable))
 			} else {
 				p.mark(r.i, true)
 			}
@@ -221,7 +225,7 @@ func (p *routePool) withoutRefused(order []int, address string) []int {
 	return out
 }
 
-func (p *routePool) markRefused(i int, address string) {
+func (p *routePool) markRefused(i int, address string, unreachable bool) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	now := p.clock()
@@ -235,7 +239,11 @@ func (p *routePool) markRefused(i int, address string) {
 			}
 		}
 	}
-	p.refused[refusedKey(i, address)] = now.Add(refusedFor)
+	skip := refusedFor
+	if unreachable {
+		skip = unreachableFor
+	}
+	p.refused[refusedKey(i, address)] = now.Add(skip)
 }
 
 // order lists the routes that can carry ip in priority order, the ones that
