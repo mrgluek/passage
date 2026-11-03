@@ -45,7 +45,9 @@ func startIroh(ctx context.Context, r links.Route, binaryPath string, privateDir
 		return nil, nil, err
 	}
 	childCtx, cancel := context.WithCancel(ctx)
-	cmd := exec.CommandContext(childCtx, binaryPath, append(listen, "--relay", p.Relay, "--no-direct", p.Ticket)...)
+	// Loopback only: relay traffic needs no listening socket on the network.
+	args := append(listen, "--relay", p.Relay, "--no-direct", "--ipv4-addr", "127.0.0.1:0", "--ipv6-addr", "[::1]:0", p.Ticket)
+	cmd := exec.CommandContext(childCtx, binaryPath, args...)
 	for _, v := range os.Environ() {
 		if !strings.HasPrefix(v, "IROH_SECRET=") {
 			cmd.Env = append(cmd.Env, v)
