@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.5.2
+
+- When a server route cannot reach an address, Passage tries that route
+  again for it after a few seconds instead of half a minute, so apps no
+  longer stay on a slower route after a single failed connection.
+- The app title and the `passage-cli` start line show the Passage version.
+
 ## 0.5.1
 
 - On a computer, `passage-iroh` now listens only on the computer itself, so

@@ -27,6 +27,9 @@ import (
 	"github.com/mrgluek/passage/core/tunnel"
 )
 
+// version is set by scripts/build-cli.sh.
+var version = "dev"
+
 func main() {
 	link := flag.String("link", "", "Passage link (none: no tunnel)")
 	canaries := flag.String("canaries", "", "comma-separated host:port canaries, replacing the link's or the defaults")
@@ -88,8 +91,8 @@ func main() {
 		fmt.Fprintln(os.Stderr, "passage-cli:", err)
 		os.Exit(1)
 	}
-	fmt.Fprintf(os.Stderr, "SOCKS5 on %s, mode %s, %d resolvers (%d system, %d from the link)\n",
-		t.Addr(), cfg.Mode, len(cfg.Effective()), len(cfg.SystemResolvers), len(cfg.Resolvers))
+	fmt.Fprintf(os.Stderr, "Passage %s: SOCKS5 on %s, mode %s, %d resolvers (%d system, %d from the link)\n",
+		version, t.Addr(), cfg.Mode, len(cfg.Effective()), len(cfg.SystemResolvers), len(cfg.Resolvers))
 
 	sig := make(chan os.Signal, 1)
 	signal.Notify(sig, os.Interrupt, syscall.SIGTERM)

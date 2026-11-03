@@ -42,7 +42,7 @@ for target in "${targets[@]}"; do
   name="passage-cli-$version-$goos-$goarch"
   mkdir "$work/$name"
   CGO_ENABLED=0 GOOS=$goos GOARCH=$goarch \
-    go build -trimpath -buildvcs=false -ldflags="$link_flags -s -w -buildid=" \
+    go build -trimpath -buildvcs=false -ldflags="$link_flags -X main.version=$version -s -w -buildid=" \
     -o "$work/$name/passage-cli$exe" ./cmd/passage-cli
   if [[ -n "${PASSAGE_IROH_DIR:-}" ]]; then
     install -m 755 "$PASSAGE_IROH_DIR/$goos-$goarch/passage-iroh$exe" "$work/$name/passage-iroh$exe"
