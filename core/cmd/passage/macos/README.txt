@@ -4,6 +4,10 @@ Requires macOS 13 or later. Move Passage.app to Applications before
 enabling "Start Passage when I sign in" in its settings. At login it
 starts in the menu bar and restores the saved proxy state. Opening
 Passage again shows the existing window. Choose Quit to stop it.
+The website's "Open in Passage" button opens passage:// links in the app.
+Passage asks for confirmation before importing them.
+After replacing a build, quit the old copy and open the installed app once
+to register its link handler.
 
 This build has an ad hoc signature. It is not signed with an Apple
 Developer ID and is not notarized. macOS may block the first launch.

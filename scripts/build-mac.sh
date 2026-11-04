@@ -46,6 +46,11 @@ cat > "$app/Contents/Info.plist" <<PLIST
   <key>CFBundleName</key><string>Passage</string>
   <key>CFBundleExecutable</key><string>passage</string>
   <key>CFBundlePackageType</key><string>APPL</string>
+  <key>CFBundleURLTypes</key><array><dict>
+    <key>CFBundleURLName</key><string>info.gluek.passage.link</string>
+    <key>CFBundleTypeRole</key><string>Editor</string>
+    <key>CFBundleURLSchemes</key><array><string>passage</string></array>
+  </dict></array>
   <key>CFBundleShortVersionString</key><string>$bundle_version</string>
   <key>CFBundleVersion</key><string>$bundle_version</string>
   <key>CFBundleIconFile</key><string>Passage</string>

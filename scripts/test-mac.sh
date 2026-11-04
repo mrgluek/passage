@@ -21,6 +21,8 @@ html.write_text(html.read_text().replace("</body>", "<script>" + script + "</scr
 (work / "config/passage.ini").write_text("[proxy]\nrunning=false\nauth=false\n")
 PY
 cd "$root/core"
+export PASSAGE_SMOKE_LINK
+PASSAGE_SMOKE_LINK=$(go run ./cmd/passage/testdata/mac-smoke-link.go)
 CGO_ENABLED=1 go build -race -o "$work/passage-smoke" "./${work##*/}"
 "$work/passage-smoke" -dir "$work/config"
 "${PYTHON:-python3}" - "$work/config" <<'PY'

@@ -98,6 +98,10 @@ The macOS menu bar app currently has a development build (macOS 13 or later).
 Move `Passage.app` to Applications before enabling **Start Passage when I
 sign in** in its settings. It starts in the menu bar at login and restores
 the saved proxy state. Opening Passage again shows its existing window.
+The website's **Open in Passage** button opens received `passage://` links
+in the app. Passage asks for confirmation before importing them.
+After replacing a build, quit the old copy and open the installed app once
+to register its link handler.
 
 **The macOS app is not signed with an Apple Developer ID and is not
 notarized.** macOS may block it on first launch. After trying to open it,
