@@ -25,7 +25,7 @@ type updateTransport interface {
 
 type desktopUpdate struct {
 	state       string
-	err         string
+	err, detail string
 	offer       *update.Offer
 	done, total int64
 	archive     string
@@ -38,6 +38,7 @@ type updateView struct {
 	State   string `json:"state"`
 	Version string `json:"version"`
 	Error   string `json:"error"`
+	Detail  string `json:"detail"`
 	Done    int64  `json:"done"`
 	Total   int64  `json:"total"`
 }
@@ -49,7 +50,7 @@ func (a *App) updatesEnabled() bool {
 
 func (a *App) updateViewLocked() updateView {
 	u := a.updater
-	v := updateView{Ready: u.archive != "" && u.cancel == nil && u.state != "installing", Enabled: a.updatesEnabled(), State: u.state, Error: u.err, Done: u.done, Total: u.total}
+	v := updateView{Ready: u.archive != "" && u.cancel == nil && u.state != "installing", Enabled: a.updatesEnabled(), State: u.state, Error: u.err, Detail: u.detail, Done: u.done, Total: u.total}
 	if v.State == "" {
 		v.State = "idle"
 	}
@@ -112,7 +113,7 @@ func (a *App) beginCheckLocked(now time.Time) {
 	a.settings.NextUpdate = nextUpdate(now)
 	a.saveSettings()
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
-	a.updater.state, a.updater.err, a.updater.cancel = "checking", "", cancel
+	a.updater.state, a.updater.err, a.updater.detail, a.updater.cancel = "checking", "", "", cancel
 	client, target := a.updateClientLocked(), a.os.updateTarget()
 	go func() {
 		offer, err := client.Check(ctx, a.version, target)
@@ -124,7 +125,7 @@ func (a *App) beginCheckLocked(now time.Time) {
 			a.updater.state = "cancelled"
 		case err != nil:
 			a.event("update check failed: %v", err)
-			a.updater.state, a.updater.err = "error", a.t.f("update_check_failed")
+			a.updater.state, a.updater.err, a.updater.detail = "error", a.t.f("update_check_failed"), err.Error()
 		default:
 			keep := offer != nil && a.updater.offer != nil && offer.Version == a.updater.offer.Version && offer.File == a.updater.offer.File
 			a.updater.offer = offer
@@ -167,7 +168,7 @@ func (a *App) downloadUpdate() error {
 	offer, client := a.updater.offer, a.updateClientLocked()
 	dest := filepath.Join(cache, offer.File.SHA256+".zip")
 	ctx, cancel := context.WithCancel(context.Background())
-	a.updater.state, a.updater.err, a.updater.cancel = "downloading", "", cancel
+	a.updater.state, a.updater.err, a.updater.detail, a.updater.cancel = "downloading", "", "", cancel
 	a.updater.done, a.updater.total = 0, offer.File.Size
 	go func() {
 		err := client.Download(ctx, offer, dest, func(done, total int64) {
@@ -183,7 +184,7 @@ func (a *App) downloadUpdate() error {
 			a.updater.state = "cancelled"
 		case err != nil:
 			a.event("update download failed: %v", err)
-			a.updater.state, a.updater.err = "error", a.t.f("update_download_failed")
+			a.updater.state, a.updater.err, a.updater.detail = "error", a.t.f("update_download_failed"), err.Error()
 		default:
 			a.updater.state, a.updater.archive = "ready", dest
 		}
@@ -209,7 +210,7 @@ func (a *App) installUpdate() error {
 		return errors.New("download the update first")
 	}
 	archive, version, file := a.updater.archive, a.updater.offer.Version, a.updater.offer.File
-	a.updater.state, a.updater.err = "installing", ""
+	a.updater.state, a.updater.err, a.updater.detail = "installing", "", ""
 	a.mu.Unlock()
 	a.changed()
 	go func() {
