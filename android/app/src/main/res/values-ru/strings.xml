@@ -17,6 +17,7 @@
 
     <string name="save">Сохранить</string>
 
+    <string name="route_menu">Маршруты</string>
     <string name="route_label">Маршрут</string>
     <string name="mode_auto">Авто</string>
     <string name="mode_off">Напрямую</string>

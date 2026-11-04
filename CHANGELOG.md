@@ -1,7 +1,9 @@
 # Changelog
 
-## Unreleased
+## 0.6.0
 
+- Adds a new connection type for links (HTTP).
+- A shorter route bar lists individual link routes with their priorities.
 - Passage for Windows: `passage.exe` shows a window like the phone app's and
   keeps running in the notification area. It is portable: settings and the
   link stay next to it, in `passage.ini` and `link.txt`.

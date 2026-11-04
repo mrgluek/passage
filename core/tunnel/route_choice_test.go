@@ -160,3 +160,127 @@ func TestTelegramStartsOnTheTunnelWhereItWasBlocked(t *testing.T) {
 		t.Fatalf("telegram %s/%s, want the tunnel at once", g.Route, g.State)
 	}
 }
+
+func TestRoutePoolSelectsOneIDWithoutFallback(t *testing.T) {
+	var used []string
+	fixture := func(id string) *poolFixture {
+		return &poolFixture{dial: func(context.Context, string, string) (net.Conn, error) {
+			used = append(used, id)
+			return nil, errors.New("down")
+		}}
+	}
+	p := &routePool{clients: []soarClient{fixture("first"), fixture("second")}, ipv6: []bool{false, false}, kinds: []string{"wss", "wss"}, ids: []string{"first", "second"}}
+	if !p.restrict("route:second") {
+		t.Fatal("installed ID refused")
+	}
+	p.DialContext(context.Background(), "tcp", "example.org:443")
+	if len(used) != 1 || used[0] != "second" {
+		t.Fatalf("tried %v", used)
+	}
+	if p.restrict("route:missing") || p.only != "route:second" {
+		t.Fatal("missing ID changed selection")
+	}
+	if !p.restrict("wss") || len(p.order(nil)) != 2 {
+		t.Fatal("legacy type selection lost")
+	}
+}
+
+func TestRouteIDDoesNotCollideWithMy(t *testing.T) {
+	p := &routePool{clients: []soarClient{&poolFixture{}, &poolFixture{}}, ipv6: []bool{false, false}, kinds: []string{"my", "wss"}, ids: []string{"my", "my"}}
+	p.restrict("route:my")
+	if order := p.order(nil); len(order) != 1 || order[0] != 1 {
+		t.Fatalf("ID selected %v", order)
+	}
+	p.restrict("my")
+	if order := p.order(nil); len(order) != 1 || order[0] != 0 {
+		t.Fatalf("My selected %v", order)
+	}
+}
+
+func TestRouteSelectionDiscardsPendingOldConnection(t *testing.T) {
+	entered, release := make(chan struct{}), make(chan struct{})
+	conn, peer := net.Pipe()
+	defer peer.Close()
+	p := &routePool{clients: []soarClient{&poolFixture{dial: func(context.Context, string, string) (net.Conn, error) { close(entered); <-release; return conn, nil }}, &poolFixture{}}, ipv6: []bool{false, false}, kinds: []string{"wss", "wss"}, ids: []string{"first", "second"}}
+	p.restrict("route:first")
+	done := make(chan error, 1)
+	go func() {
+		c, err := p.DialContext(context.Background(), "tcp", "example.org:443")
+		if c != nil {
+			c.Close()
+		}
+		done <- err
+	}()
+	<-entered
+	p.restrict("route:second")
+	close(release)
+	if err := <-done; err == nil {
+		t.Fatal("old route returned after selection changed")
+	}
+	peer.SetReadDeadline(time.Now().Add(time.Second))
+	if _, err := peer.Read(make([]byte, 1)); err != io.EOF {
+		t.Fatalf("old connection not closed: %v", err)
+	}
+}
+
+func TestRouteIDModeAndConnectionSwitch(t *testing.T) {
+	first, second := wssRoute(), wssRoute()
+	first.ID = "first"
+	second.ID = "second"
+	tt, err := Start(Config{Mode: "route:first", Routes: []links.Route{first, second}, Listen: "127.0.0.1:0"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tt.Close()
+	if tt.Status(0).Mode != "route:first" {
+		t.Fatal("route ID not selected")
+	}
+	local, localPeer := net.Pipe()
+	defer localPeer.Close()
+	remote, remotePeer := net.Pipe()
+	defer remotePeer.Close()
+	tracked := &tracked{group: tt.other, route: RouteTunnel, local: local, remote: remote}
+	tt.mu.Lock()
+	tt.conns[tracked] = struct{}{}
+	tt.mu.Unlock()
+	if err := tt.SetMode("route:missing"); err == nil || tt.Status(0).Mode != "route:first" {
+		t.Fatal("unknown ID changed mode")
+	}
+	if err := tt.SetMode("route:second"); err != nil {
+		t.Fatal(err)
+	}
+	localPeer.SetReadDeadline(time.Now().Add(time.Second))
+	if _, err := localPeer.Read(make([]byte, 1)); err != io.EOF {
+		t.Fatalf("old local connection kept: %v", err)
+	}
+	remotePeer.SetReadDeadline(time.Now().Add(time.Second))
+	if _, err := remotePeer.Read(make([]byte, 1)); err != io.EOF {
+		t.Fatalf("old remote connection kept: %v", err)
+	}
+	if tt.Status(0).Mode != "route:second" {
+		t.Fatal("new ID not reported")
+	}
+	if err := tt.SetMode(ModeAuto); err != nil || tt.client.(*routePool).only != "" {
+		t.Fatal("Auto did not lift selection")
+	}
+}
+
+func TestRemovedRouteIDFallsBackToAuto(t *testing.T) {
+	tt, err := Start(Config{Mode: "route:removed", Routes: []links.Route{wssRoute()}, Listen: "127.0.0.1:0"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tt.Close()
+	if tt.Status(0).Mode != ModeAuto {
+		t.Fatal("removed ID did not fall back to Auto")
+	}
+	for _, mode := range []string{"route:", "route:bad id", "route:UPPER"} {
+		if _, err := (Config{Mode: mode, Routes: []links.Route{wssRoute()}}).Normalize(); err == nil {
+			t.Fatalf("accepted %q", mode)
+		}
+	}
+	legacy := &Tunnel{client: &poolFixture{}}
+	if !legacy.restrict("route:legacy-dns") {
+		t.Fatal("legacy route ID refused")
+	}
+}

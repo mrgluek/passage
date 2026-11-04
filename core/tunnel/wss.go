@@ -63,6 +63,7 @@ var (
 
 // WSSClient opens TCP streams through a WebSocket exit, several per session.
 type WSSClient struct {
+	httpMode   bool
 	params     links.WSSParams
 	httpClient *http.Client
 	mu         sync.Mutex
@@ -207,6 +208,9 @@ func (c *WSSClient) reserve(ctx context.Context) (*wssSession, *wssStream, error
 	}
 }
 func (c *WSSClient) dialSession(ctx context.Context) (*wssSession, error) {
+	if c.httpMode {
+		return c.dialHTTPSession(ctx)
+	}
 	token, nonce := wssToken(c.params.Key, time.Now())
 	ws, response, err := websocket.Dial(ctx, c.params.Endpoint, &websocket.DialOptions{HTTPClient: c.httpClient, Subprotocols: []string{token}, CompressionMode: websocket.CompressionDisabled})
 	if err != nil {
@@ -340,11 +344,17 @@ type wssSession struct {
 }
 
 func newWSSSession(parent context.Context, ws *websocket.Conn, rec *wssRecords, limit int, accept func(string, uint16) (net.Conn, byte), onClose func(*wssSession)) *wssSession {
-	ws.SetReadLimit(wssMessageLimit)
+	if ws != nil {
+		ws.SetReadLimit(wssMessageLimit)
+	}
 	life, cancel := context.WithCancel(parent)
-	rec.conn = websocket.NetConn(life, ws, websocket.MessageBinary)
+	if ws != nil {
+		rec.conn = websocket.NetConn(life, ws, websocket.MessageBinary)
+	}
 	s := &wssSession{ws: ws, rec: rec, life: life, cancel: cancel, accept: accept, onClose: onClose, ready: make(chan struct{}), done: make(chan struct{}), streams: map[uint32]*wssStream{}, limit: limit}
-	go s.keepAlive()
+	if ws != nil {
+		go s.keepAlive()
+	}
 	return s
 }
 func (s *wssSession) active() bool { s.mu.Lock(); defer s.mu.Unlock(); return len(s.streams) > 0 }
@@ -565,7 +575,11 @@ func (s *wssSession) fail(err error) {
 	s.mu.Unlock()
 	close(s.done)
 	s.cancel()
-	s.ws.CloseNow()
+	if s.ws != nil {
+		s.ws.CloseNow()
+	} else {
+		s.rec.conn.Close()
+	}
 	for _, st := range streams {
 		st.reset(io.ErrUnexpectedEOF)
 	}
