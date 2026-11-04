@@ -2,11 +2,11 @@
 
 **You shall pass.**
 
-A local SOCKS5 proxy for Android. Messaging apps on the phone that support a
-SOCKS5 proxy connect to it on `127.0.0.1`, and Passage picks the best
-available connection for them automatically. The same proxy runs on Windows
-as an app in the notification area, and on Linux, macOS and Windows as
-`passage-cli` ([On a computer](#on-a-computer)).
+A local SOCKS5 proxy for messaging apps on Android, Windows, Linux and macOS.
+Apps that support a SOCKS5 proxy connect to it on `127.0.0.1`, and Passage
+picks the best available connection for them automatically. Android and
+Windows (10 or later, nothing else to install) have an app; Linux, macOS and
+Windows can run it as `passage-cli` ([On a computer](#on-a-computer)).
 
 Website: <https://passage.gluek.info>
 
@@ -83,14 +83,16 @@ send one, or make a new port and password.
 
 ## On a computer
 
-On Windows, unpack `passage-<version>-windows-amd64.zip` and run
-`passage.exe`. It shows a window like the phone app's and keeps running in
-the notification area when the window is closed. Everything stays in the
-unpacked folder: settings in `passage.ini`, the link in `link.txt` (one
-link per line) and the app history in `passage.log`. Put a new `link.txt` there to update the link; Passage reads
-it again within a few seconds. The window needs the Microsoft Edge WebView2
-Runtime, which Windows 10 and 11 usually have. SmartScreen may warn about an
-unsigned program first.
+On Windows 10 or later, unpack `passage-<version>-windows-amd64.zip` and run
+`passage.exe`; there is nothing else to install. It shows a window like the
+phone app's and keeps running in the notification area when the window is
+closed. Everything stays in the unpacked folder: settings in `passage.ini`,
+the link in `link.txt` (one link per line) and the app history in
+`passage.log`. Put a new `link.txt` there to update the link; Passage reads
+it again within a few seconds. The window uses the Microsoft Edge WebView2
+Runtime that comes with Windows; on a system without it, Passage offers the
+download and the proxy keeps working. SmartScreen may warn about an unsigned
+program first.
 
 Releases also have `passage-cli` for Linux and macOS (`amd64`, `arm64`) and
 Windows (`amd64`): the same proxy without the app. Unpack the archive for
