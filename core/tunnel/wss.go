@@ -9,12 +9,14 @@ import (
 	"crypto/hmac"
 	"crypto/rand"
 	"crypto/sha256"
+	"crypto/tls"
 	"encoding/base64"
 	"encoding/binary"
 	"errors"
 	"io"
 	"net"
 	"net/http"
+	"net/http/httptrace"
 	"os"
 	"slices"
 	"sync"
@@ -84,6 +86,7 @@ func NewWSSClient(params links.WSSParams) (*WSSClient, error) {
 	// connections through environment HTTP proxies.
 	transport := http.DefaultTransport.(*http.Transport).Clone()
 	transport.Proxy = nil
+	transport.DialContext = countingDial(transport.DialContext)
 	return &WSSClient{params: params, httpClient: &http.Client{Transport: transport, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}, life: life, cancel: cancel}, nil
 }
 
@@ -212,7 +215,13 @@ func (c *WSSClient) dialSession(ctx context.Context) (*wssSession, error) {
 		return c.dialHTTPSession(ctx)
 	}
 	token, nonce := wssToken(c.params.Key, time.Now())
-	ws, response, err := websocket.Dial(ctx, c.params.Endpoint, &websocket.DialOptions{HTTPClient: c.httpClient, Subprotocols: []string{token}, CompressionMode: websocket.CompressionDisabled})
+	var wire *countingConn
+	trace := httptrace.WithClientTrace(ctx, &httptrace.ClientTrace{GotConn: func(info httptrace.GotConnInfo) {
+		if secure, ok := info.Conn.(*tls.Conn); ok {
+			wire, _ = secure.NetConn().(*countingConn)
+		}
+	}})
+	ws, response, err := websocket.Dial(trace, c.params.Endpoint, &websocket.DialOptions{HTTPClient: c.httpClient, Subprotocols: []string{token}, CompressionMode: websocket.CompressionDisabled})
 	if err != nil {
 		if response != nil && response.Body != nil {
 			response.Body.Close()
@@ -228,6 +237,7 @@ func (c *WSSClient) dialSession(ctx context.Context) (*wssSession, error) {
 	}
 	key := c.params.Key
 	s := newWSSSession(c.life, ws, &wssRecords{seal: wssAEAD(wssKey(key, nonce, "c2s"))}, 1, nil, c.forget)
+	s.wire = wire
 	go s.run(func() error {
 		salt := make([]byte, wssSalt)
 		if _, err := io.ReadFull(s.rec.conn, salt); err != nil {
@@ -247,6 +257,20 @@ func (c *WSSClient) dialSession(ctx context.Context) (*wssSession, error) {
 		return nil, ctx.Err()
 	}
 }
+
+// received is the bytes read from the network by the live sessions.
+func (c *WSSClient) received() int64 {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	var n int64
+	for _, s := range c.sessions {
+		if s.wire != nil {
+			n += s.wire.n.Load()
+		}
+	}
+	return n
+}
+
 func (c *WSSClient) forget(s *wssSession) {
 	c.mu.Lock()
 	c.sessions = slices.DeleteFunc(c.sessions, func(x *wssSession) bool { return x == s })
@@ -332,6 +356,7 @@ type wssSession struct {
 	cancel  context.CancelFunc
 	accept  func(host string, port uint16) (net.Conn, byte)
 	onClose func(*wssSession)
+	wire    *countingConn // nil on the exit side
 	ready   chan struct{} // closed when HELLO arrives
 	done    chan struct{}
 	mu      sync.Mutex

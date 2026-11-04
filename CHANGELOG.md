@@ -11,6 +11,8 @@
   there at once the next time, instead of checking again first.
 - Choosing another server route type now moves open connections to it at
   once.
+- The network test shows how far each server route gets, step by step.
+- `passage-cli -test` runs the network test once and prints it as JSON.
 
 ## 0.5.2
 

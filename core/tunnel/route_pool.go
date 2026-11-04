@@ -44,6 +44,7 @@ type routePool struct {
 	ipv6        []bool
 	kinds       []string // route type per client, reported as the connection's via
 	ids         []string
+	servers     []routeServer
 	established atomic.Bool
 	mu          sync.Mutex
 	failedUntil map[int]time.Time
@@ -68,6 +69,7 @@ func newRoutePool(cfg Config) (soarClient, error) {
 	}
 	for _, r := range routes {
 		var client soarClient
+		var server routeServer
 		switch r.Type {
 		case "my":
 			c, err := newMyClient(cfg.My)
@@ -76,6 +78,7 @@ func newRoutePool(cfg Config) (soarClient, error) {
 				return nil, err
 			}
 			client = c
+			server.addr, _, _ = parseMy(cfg.My)
 		case "soar":
 			params, err := links.Params[links.SoarParams](r)
 			if err != nil {
@@ -96,24 +99,31 @@ func newRoutePool(cfg Config) (soarClient, error) {
 				p.Close()
 				return nil, err
 			}
-			client, err = NewHTTPClient(params)
+			c, err := NewHTTPClient(params)
 			if err != nil {
 				p.Close()
 				return nil, err
 			}
+			client = c
+			server = httpServer(params, c)
 		case "wss":
 			params, err := links.Params[links.WSSParams](r)
 			if err != nil {
 				p.Close()
 				return nil, err
 			}
-			client, err = NewWSSClient(params)
+			c, err := NewWSSClient(params)
 			if err != nil {
 				p.Close()
 				return nil, err
 			}
+			client = c
+			server = wssServer(params, c)
 		case "iroh":
 			client = &irohClient{route: r, binary: cfg.IrohBinary, dir: cfg.PrivateDir, dns: cfg.SystemResolvers}
+			if params, err := links.Params[links.IrohParams](r); err == nil {
+				server = urlServer(params.Relay)
+			}
 		default:
 			continue
 		}
@@ -121,6 +131,7 @@ func newRoutePool(cfg Config) (soarClient, error) {
 		p.ipv6 = append(p.ipv6, r.IPv6)
 		p.kinds = append(p.kinds, r.Type)
 		p.ids = append(p.ids, r.ID)
+		p.servers = append(p.servers, server)
 	}
 	if len(p.clients) == 0 {
 		return nil, errors.New("no supported routes")
@@ -360,9 +371,10 @@ func (p *routePool) states() []RouteState {
 
 // tunnelWay is one tunnel route as a column of the network test.
 type tunnelWay struct {
-	name string
-	dial dialFunc
-	ipv6 bool
+	name   string
+	dial   dialFunc
+	ipv6   bool
+	server routeServer
 }
 
 // ways names each route by its type, or by its ID when two share a type.
@@ -377,7 +389,10 @@ func (p *routePool) ways() []tunnelWay {
 		if count[name] > 1 {
 			name = p.ids[i]
 		}
-		out[i] = tunnelWay{name, c.DialContext, p.ipv6[i]}
+		out[i] = tunnelWay{name: name, dial: c.DialContext, ipv6: p.ipv6[i]}
+		if i < len(p.servers) {
+			out[i].server = p.servers[i]
+		}
 	}
 	return out
 }
