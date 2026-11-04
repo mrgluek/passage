@@ -123,6 +123,19 @@ func TestCheck(t *testing.T) {
 	}
 }
 
+func TestCheckReportsEverySource(t *testing.T) {
+	r := newRelease(t, "1.2.0", []byte("x"))
+	other, _, _ := ed25519.GenerateKey(nil)
+	good := serve(t, r, nil)
+	missing := httptest.NewServer(http.NotFoundHandler())
+	defer missing.Close()
+	c := &Client{Key: other, Sources: []string{good, missing.URL}}
+	_, err := c.Check(context.Background(), "1.1.0", "arm64")
+	if err == nil || !strings.Contains(err.Error(), "signature") || !strings.Contains(err.Error(), "404") {
+		t.Fatal(err)
+	}
+}
+
 func TestCheckRejectsForeignManifest(t *testing.T) {
 	r := newRelease(t, "1.2.0", []byte("x"))
 	other, _, _ := ed25519.GenerateKey(nil)

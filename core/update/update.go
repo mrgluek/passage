@@ -217,11 +217,11 @@ func (c *Client) Check(ctx context.Context, current, target string) (*Offer, err
 	close(answers)
 
 	var offer *Offer
-	var failure error
+	var failures []error
 	reached := false
 	for a := range answers {
 		if a.err != nil {
-			failure = a.err
+			failures = append(failures, a.err)
 			continue
 		}
 		reached = true
@@ -236,8 +236,8 @@ func (c *Client) Check(ctx context.Context, current, target string) (*Offer, err
 			offer.Sources = append(offer.Sources, a.source)
 		}
 	}
-	if !reached && failure != nil {
-		return nil, failure
+	if !reached && len(failures) > 0 {
+		return nil, errors.Join(failures...)
 	}
 	return offer, nil
 }
@@ -251,7 +251,7 @@ func (c *Client) manifest(ctx context.Context, source string) (Manifest, error) 
 			if err == nil {
 				return m, nil
 			}
-			last = err
+			last = fmt.Errorf("%s: %w", source, err)
 			continue
 		}
 		last = err

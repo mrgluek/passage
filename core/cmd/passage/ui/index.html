@@ -22,6 +22,7 @@ header h1 { flex: 1; margin: 0; font-size: 16px; font-weight: 600; }
 main { padding: 4px 16px 24px; max-width: 720px; }
 h2 { margin: 20px 0 4px; font-size: 14px; font-weight: 600; }
 .hint { color: var(--muted); font-size: 13px; margin: 2px 0; white-space: pre-line; }
+#updateStatus { margin: 8px 0 0; }
 #updateDetail { overflow-wrap: anywhere; user-select: text; }
 .warn { color: var(--warn); }
 .row { display: flex; align-items: center; gap: 8px; }
@@ -134,7 +135,7 @@ a { color: var(--accent); cursor: pointer; text-decoration: underline; }
   <button id="newAccess" data-t="new_access"></button>
   <p class="hint" data-t="new_access_help"></p>
 
-  <div id="updateSettings" class="hidden"><h2 data-t="updates"></h2><p id="updateStatus" aria-live="polite"></p><p id="updateDetail" class="hint hidden"></p><progress id="updateProgress" class="hidden"></progress><div><button id="updateCheck" data-t="update_check"></button><button id="updateDownload" data-t="update_download"></button><button id="updateCancel" data-t="cancel"></button><button id="updateInstall" data-t="update_install"></button></div><label class="check"><input type="checkbox" id="autoUpdate"><span data-t="update_auto"></span></label><p class="hint" data-t="update_help"></p></div>
+  <div id="updateSettings" class="hidden"><h2 data-t="updates"></h2><div><button id="updateCheck" data-t="update_check"></button><button id="updateDownload" data-t="update_download"></button><button id="updateCancel" data-t="cancel"></button><button id="updateInstall" data-t="update_install"></button></div><p id="updateStatus" aria-live="polite"></p><p id="updateDetail" class="hint hidden"></p><progress id="updateProgress" class="hidden"></progress><label class="check"><input type="checkbox" id="autoUpdate"><span data-t="update_auto"></span></label><p class="hint" data-t="update_help"></p></div>
   <h2 data-t="startup_label"></h2>
   <label class="check"><input type="checkbox" id="autostart"><span data-t="autostart"></span></label>
   <p class="hint" data-t="autostart_help"></p>
