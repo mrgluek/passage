@@ -35,6 +35,8 @@ config.read(folder / "passage.ini")
 with socket.socket() as sock:
     sock.settimeout(1)
     assert sock.connect_ex(("127.0.0.1", config.getint("proxy", "port"))) != 0, "proxy still listening after Quit"
-assert "app quit" in (folder / "passage.log").read_text().splitlines()[-1], "missing shutdown event"
+events = (folder / "passage.log").read_text().splitlines()
+assert "app quit" in events[-1], "missing shutdown event"
+assert sum("app start" in line for line in events) == 1, "second process initialized the app"
 print("Shutdown passed: app quit logged and proxy listener closed")
 PY

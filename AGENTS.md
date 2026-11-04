@@ -69,7 +69,9 @@ scripts/build-mac.sh <version> <out-dir> [arm64|amd64]
 ```
 
 This produces an ad hoc signed `.app` in a ZIP archive. It is not yet
-Developer ID signed or notarized. Launch at login is not yet supported.
+Developer ID signed or notarized. Launch at login uses `SMAppService`;
+install the app in Applications before enabling it. Repeated launches
+open the running app's window; `-dir` configurations have separate instances.
 Run `scripts/test-mac.sh` in a macOS desktop session to check the native
 window, HTML bridge and shutdown with a separate test configuration.
 

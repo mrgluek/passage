@@ -20,7 +20,8 @@ bundle_version=$version
 [[ $bundle_version =~ ^[0-9]+(\.[0-9]+){0,2}$ ]] || bundle_version=0.0.0
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
-app="$work/Passage.app"
+package="$work/package"
+app="$package/Passage.app"
 mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
 link_flags=""
 if [[ -n "${PASSAGE_LINK_AUTHOR_KEY:-}" ]]; then
@@ -64,8 +65,9 @@ for size in 16 32 128 256 512; do
 done
 iconutil -c icns "$icons" -o "$app/Contents/Resources/Passage.icns"
 cp "$root/LICENSE" "$app/Contents/Resources/"
+cp "$root/core/cmd/passage/macos/README.txt" "$package/README.txt"
 codesign --force --sign - "$app/Contents/MacOS/passage-iroh"
 codesign --force --sign - "$app"
 archive="$out/passage-$version-darwin-$arch.zip"
-ditto -c -k --keepParent "$app" "$archive"
+ditto -c -k "$package" "$archive"
 echo "$archive"

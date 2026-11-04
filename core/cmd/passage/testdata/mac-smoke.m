@@ -1,5 +1,51 @@
 // Appended to the native bridge by scripts/test-mac.sh.
 static int smokeAttempts;
+static NSTask *smokeSecond;
+
+static void smokeReopened(NSWindow *original, WKWebView *view, BOOL secondProcess) {
+    if (++smokeAttempts > 100) {
+        fprintf(stderr, "SMOKE FAILED: reopen timed out\n");
+        exit(2);
+    }
+    if (!original.visible || (secondProcess && smokeSecond.running)) {
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 100 * NSEC_PER_MSEC), dispatch_get_main_queue(), ^{
+            smokeReopened(original, view, secondProcess);
+        });
+        return;
+    }
+    if (passage.window != original || passage.webview != view ||
+        (secondProcess && smokeSecond.terminationStatus != 0)) {
+        fprintf(stderr, "SMOKE FAILED: window reuse or second process\n");
+        exit(2);
+    }
+    if (!secondProcess) {
+        [original performClose:nil];
+        smokeSecond = [NSTask new];
+        NSArray<NSString *> *args = NSProcessInfo.processInfo.arguments;
+        smokeSecond.executableURL = [NSURL fileURLWithPath:args.firstObject];
+        smokeSecond.arguments = [args subarrayWithRange:NSMakeRange(1, args.count - 1)];
+        NSError *error = nil;
+        if (![smokeSecond launchAndReturnError:&error]) {
+            fprintf(stderr, "SMOKE FAILED: second process: %s\n", error.description.UTF8String);
+            exit(2);
+        }
+        smokeAttempts = 0;
+        smokeReopened(original, view, YES);
+        return;
+    }
+    [view takeSnapshotWithConfiguration:nil completionHandler:^(NSImage *image, NSError *error) {
+        if (!image || error) { fprintf(stderr, "SMOKE FAILED: snapshot\n"); exit(2); }
+        NSBitmapImageRep *bitmap = [[NSBitmapImageRep alloc] initWithData:image.TIFFRepresentation];
+        NSString *path = NSProcessInfo.processInfo.environment[@"PASSAGE_SMOKE_IMAGE"];
+        if (path) {
+            [[bitmap representationUsingType:NSBitmapImageFileTypePNG properties:@{}]
+                writeToFile:path atomically:YES];
+        }
+        fprintf(stderr, "SMOKE PASSED: bridge, Finder reopen, second process, window reuse, render\n");
+        passageQuit();
+    }];
+}
+
 static void smokePoll(void) {
     if (++smokeAttempts > 100) {
         fprintf(stderr, "SMOKE FAILED: timed out\n");
@@ -16,23 +62,14 @@ static void smokePoll(void) {
                 WKWebView *view = passage.webview;
                 [original performClose:nil];
                 if (original.visible) { fprintf(stderr, "SMOKE FAILED: close\n"); exit(2); }
-                passageShowWindow("");
-                dispatch_async(dispatch_get_main_queue(), ^{
-                    if (passage.window != original || passage.webview != view || !original.visible) {
-                        fprintf(stderr, "SMOKE FAILED: reuse\n"); exit(2);
-                    }
-                    [view takeSnapshotWithConfiguration:nil completionHandler:^(NSImage *image, NSError *error) {
-                        if (!image || error) { fprintf(stderr, "SMOKE FAILED: snapshot\n"); exit(2); }
-                        NSBitmapImageRep *bitmap = [[NSBitmapImageRep alloc] initWithData:image.TIFFRepresentation];
-                        NSString *path = NSProcessInfo.processInfo.environment[@"PASSAGE_SMOKE_IMAGE"];
-                        if (path) {
-                            [[bitmap representationUsingType:NSBitmapImageFileTypePNG properties:@{}]
-                                writeToFile:path atomically:YES];
-                        }
-                        fprintf(stderr, "SMOKE PASSED: init, view, settings, licenses, error reply, close/reopen, render\n");
-                        passageQuit();
-                    }];
-                });
+                NSAppleEventDescriptor *target = [NSAppleEventDescriptor descriptorWithProcessIdentifier:NSProcessInfo.processInfo.processIdentifier];
+                NSAppleEventDescriptor *event = [NSAppleEventDescriptor appleEventWithEventClass:kCoreEventClass
+                    eventID:kAEReopenApplication targetDescriptor:target returnID:kAutoGenerateReturnID transactionID:kAnyTransactionID];
+                NSError *sendError = nil;
+                [event sendEventWithOptions:NSAppleEventSendNoReply timeout:1 error:&sendError];
+                if (sendError) { fprintf(stderr, "SMOKE FAILED: reopen event\n"); exit(2); }
+                smokeAttempts = 0;
+                smokeReopened(original, view, NO);
             } else {
                 dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 100 * NSEC_PER_MSEC), dispatch_get_main_queue(), ^{ smokePoll(); });
             }

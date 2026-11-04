@@ -2,7 +2,80 @@
 
 #import <Cocoa/Cocoa.h>
 #import <WebKit/WebKit.h>
+#import <ServiceManagement/ServiceManagement.h>
 #include "mac_darwin.h"
+
+static BOOL loginLaunch;
+
+@interface PassageLifecycle : NSObject
+@end
+
+@implementation PassageLifecycle
+- (void)reopen:(NSAppleEventDescriptor *)event withReplyEvent:(NSAppleEventDescriptor *)reply {
+    passageOpen();
+}
+@end
+
+void passagePrepare(void) {
+    static PassageLifecycle *lifecycle;
+    lifecycle = [PassageLifecycle new];
+    [[NSNotificationCenter defaultCenter] addObserverForName:NSApplicationDidFinishLaunchingNotification
+        object:nil queue:nil usingBlock:^(NSNotification *notification) {
+            NSAppleEventDescriptor *event = NSAppleEventManager.sharedAppleEventManager.currentAppleEvent;
+            loginLaunch = event.eventID == kAEOpenApplication &&
+                [event paramDescriptorForKeyword:keyAEPropData].enumCodeValue == keyAELaunchedAsLogInItem;
+            [NSAppleEventManager.sharedAppleEventManager setEventHandler:lifecycle
+                andSelector:@selector(reopen:withReplyEvent:)
+                forEventClass:kCoreEventClass andEventID:kAEReopenApplication];
+        }];
+}
+
+static void passageOnMain(dispatch_block_t block) {
+    if (NSThread.isMainThread) block();
+    else dispatch_sync(dispatch_get_main_queue(), block);
+}
+
+int passageWasLoginLaunch(void) {
+    __block BOOL launched;
+    passageOnMain(^{ launched = loginLaunch; });
+    return launched;
+}
+
+int passageAutostart(void) {
+    __block BOOL enabled;
+    passageOnMain(^{ enabled = SMAppService.mainAppService.status == SMAppServiceStatusEnabled; });
+    return enabled;
+}
+
+char *passageSetAutostart(int enabled) {
+    __block char *message = NULL;
+    passageOnMain(^{
+        @autoreleasepool {
+            if (![NSBundle.mainBundle.bundlePath.pathExtension isEqualToString:@"app"]) {
+                message = strdup("Run Passage.app to change launch at login.");
+                return;
+            }
+            SMAppService *service = SMAppService.mainAppService;
+            NSError *error = nil;
+            BOOL success = YES;
+            if (enabled && service.status != SMAppServiceStatusEnabled &&
+                service.status != SMAppServiceStatusRequiresApproval) {
+                success = [service registerAndReturnError:&error];
+            } else if (!enabled && service.status != SMAppServiceStatusNotRegistered) {
+                success = [service unregisterAndReturnError:&error];
+            }
+            if (enabled && service.status == SMAppServiceStatusRequiresApproval) {
+                [SMAppService openSystemSettingsLoginItems];
+                message = strdup("Allow Passage in System Settings > General > Login Items, then enable launch at login again.");
+            } else if (!success) {
+                message = strdup((error.localizedDescription ?: @"Could not change launch at login.").UTF8String);
+            } else if (enabled && service.status != SMAppServiceStatusEnabled) {
+                message = strdup("macOS did not enable launch at login. Check Passage in System Settings > General > Login Items.");
+            }
+        }
+    });
+    return message;
+}
 
 @interface PassageWindow : NSObject <WKScriptMessageHandler, WKNavigationDelegate, NSWindowDelegate>
 @property(strong) NSWindow *window;
