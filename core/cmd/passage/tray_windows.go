@@ -89,7 +89,7 @@ func (d *desktop) update() {
 		systray.SetIcon(iconOff)
 	}
 	systray.SetTooltip(st.Tooltip)
-	if d.shown == nil || !slices.Equal(d.shown.Kinds, st.Kinds) {
+	if d.shown == nil || d.shown.My != st.My || !slices.Equal(d.shown.Routes, st.Routes) {
 		d.buildMenu(st)
 	}
 	t := d.app.t
@@ -117,19 +117,19 @@ func (d *desktop) buildMenu(st trayState) {
 	onClick(d.toggle, func() { d.app.setRunning(!d.app.trayState().Running) })
 	route := systray.AddMenuItem(t.f("route_label"), "")
 	d.routes = map[string]*systray.MenuItem{}
-	modes := append(append([]string{tunnel.ModeAuto}, st.Kinds...), tunnel.ModeOff)
-	for _, mode := range modes {
-		label := routeLabel(t, mode)
-		switch mode {
-		case tunnel.ModeAuto:
-			label = t.f("mode_auto")
-		case tunnel.ModeOff:
-			label = t.f("mode_off")
-		}
+	add := func(mode, label string) {
 		item := route.AddSubMenuItemCheckbox(label, "", false)
 		d.routes[mode] = item
 		onClick(item, func() { d.app.setMode(mode) })
 	}
+	add(tunnel.ModeAuto, t.f("mode_auto"))
+	if st.My {
+		add("my", t.f("route_my"))
+	}
+	for _, r := range st.Routes {
+		add(r.Mode, r.Label)
+	}
+	add(tunnel.ModeOff, t.f("mode_off"))
 	systray.AddSeparator()
 	onClick(systray.AddMenuItem(t.f("tray_quit"), ""), systray.Quit)
 }

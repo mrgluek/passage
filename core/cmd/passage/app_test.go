@@ -86,16 +86,61 @@ func TestImportLinks(t *testing.T) {
 	}
 }
 
-func TestLinkKinds(t *testing.T) {
+func TestInstalledRoutes(t *testing.T) {
 	cfg := tunnel.Config{Routes: []links.Route{
 		{ID: "b", Type: "iroh", Priority: 20},
 		{ID: "a", Type: "wss", Priority: 10},
 		{ID: "c", Type: "wss", Priority: 30},
+		{ID: "wss", Type: "wss", Priority: 40},
+		{ID: "z", Type: "future", Priority: 5},
 	}}
-	if got := linkKinds(cfg, "127.0.0.1:9050"); !slices.Equal(got, []string{"my", "wss", "iroh"}) {
-		t.Fatal(got)
+	got := installedRoutes(cfg)
+	var modes, labels []string
+	for _, r := range got {
+		modes, labels = append(modes, r.Mode), append(labels, r.Label)
 	}
-	if got := linkKinds(tunnel.Config{Zone: "t.example.org"}, ""); !slices.Equal(got, []string{"soar"}) {
+	if !slices.Equal(modes, []string{"route:a", "route:b", "route:c", "route:wss"}) {
+		t.Fatal(modes)
+	}
+	if !slices.Equal(labels, []string{"10 a (wss)", "20 b (iroh)", "30 c (wss)", "40 wss"}) {
+		t.Fatal(labels)
+	}
+	if r := installedRoutes(tunnel.Config{Zone: "t.example.org"}); len(r) != 1 || r[0].Mode != "route:legacy-dns" || r[0].Type != "soar" {
+		t.Fatal(r)
+	}
+	if r := installedRoutes(tunnel.Config{}); r == nil || len(r) != 0 {
+		t.Fatal(r)
+	}
+}
+
+func TestModeMigratesToRoutes(t *testing.T) {
+	a := &App{}
+	a.linkCfg = tunnel.Config{Routes: []links.Route{
+		{ID: "b", Type: "wss", Priority: 20},
+		{ID: "a", Type: "iroh", Priority: 10},
+		{ID: "c", Type: "wss", Priority: 30},
+	}}
+	for saved, want := range map[string]string{
+		"auto": "auto", "off": "off", "route:c": "route:c",
+		"wss": "route:b", "always": "route:a", "soar": "auto", "my": "auto", "route:gone": "auto",
+	} {
+		a.settings.Mode = saved
+		if got := a.mode(); got != want {
+			t.Fatalf("%s: got %s, want %s", saved, got, want)
+		}
+	}
+	a.settings.My = "127.0.0.1:9050"
+	for saved, want := range map[string]string{"my": "my", "always": "my"} {
+		a.settings.Mode = saved
+		if got := a.mode(); got != want {
+			t.Fatalf("%s with My: got %s, want %s", saved, got, want)
+		}
+	}
+}
+
+func TestOnlyTypeFollowsChosenRoute(t *testing.T) {
+	s := tunnel.Status{Mode: "route:b", Tunnels: []tunnel.RouteState{{ID: "a", Type: "iroh"}, {ID: "b", Type: "wss"}}}
+	if got := onlyType(s); got != "wss" {
 		t.Fatal(got)
 	}
 }
@@ -123,8 +168,8 @@ func TestAppLinkFile(t *testing.T) {
 	if err := a.saveLink(testLink("t.example.org")); err != nil {
 		t.Fatal(err)
 	}
-	if !a.hasLink() || !slices.Equal(a.kinds(), []string{"soar"}) {
-		t.Fatalf("kinds %v", a.kinds())
+	if routes := a.routes(); !a.hasLink() || len(routes) != 1 || routes[0].Type != "soar" {
+		t.Fatalf("routes %v", routes)
 	}
 	// A file written by hand is picked up on the next tick.
 	os.WriteFile(filepath.Join(dir, linkName), []byte("broken\n"), 0600)

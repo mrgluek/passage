@@ -110,17 +110,38 @@ func (a *App) hasLink() bool {
 	return len(a.linkCfg.Routes) > 0 || a.linkCfg.Zone != ""
 }
 
-// kinds is the route types that can be chosen.
-func (a *App) kinds() []string { return linkKinds(a.linkCfg, a.settings.My) }
+// routes is the installed routes that can be chosen.
+func (a *App) routes() []routeChoice { return installedRoutes(a.linkCfg) }
 
-// mode is the saved choice, Auto when the route type is gone.
+// available reports whether mode can be chosen now.
+func (a *App) available(mode string) bool {
+	switch mode {
+	case tunnel.ModeAuto, tunnel.ModeOff:
+		return true
+	case "my":
+		return a.settings.My != ""
+	}
+	return slices.ContainsFunc(a.routes(), func(r routeChoice) bool { return r.Mode == mode })
+}
+
+// mode is the saved choice, Auto when the route is gone. An older choice of
+// a route type reads as the first route of that type.
 func (a *App) mode() string {
 	m := a.settings.Mode
-	if m == tunnel.ModeAuto || m == tunnel.ModeOff || slices.Contains(a.kinds(), m) {
+	if a.available(m) {
 		return m
 	}
-	if m == tunnel.ModeAlways && len(a.kinds()) > 0 {
-		return a.kinds()[0]
+	routes := a.routes()
+	if m == tunnel.ModeAlways {
+		if a.settings.My != "" && (len(routes) == 0 || myPriority <= routes[0].Priority) {
+			return "my"
+		}
+		if len(routes) > 0 {
+			return routes[0].Mode
+		}
+	}
+	if i := slices.IndexFunc(routes, func(r routeChoice) bool { return r.Type == m }); i >= 0 {
+		return routes[i].Mode
 	}
 	return tunnel.ModeAuto
 }
@@ -239,7 +260,7 @@ func (a *App) setMode(mode string) error {
 	a.mu.Lock()
 	defer a.changedAfter()
 	defer a.mu.Unlock()
-	if mode != tunnel.ModeAuto && mode != tunnel.ModeOff && !slices.Contains(a.kinds(), mode) {
+	if !a.available(mode) {
 		return fmt.Errorf("unknown route %q", mode)
 	}
 	a.settings.Mode = mode
@@ -257,13 +278,14 @@ type trayState struct {
 	Running bool
 	Tooltip string
 	Mode    string
-	Kinds   []string
+	Routes  []routeChoice
+	My      bool
 }
 
 func (a *App) trayState() trayState {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	st := trayState{Running: a.settings.Running, Mode: a.mode(), Kinds: a.kinds()}
+	st := trayState{Running: a.settings.Running, Mode: a.mode(), Routes: a.routes(), My: a.settings.My != ""}
 	switch {
 	case !st.Running:
 		st.Tooltip = "Passage: " + a.t.f("proxy_stopped")
@@ -283,34 +305,31 @@ func (a *App) trayState() trayState {
 
 // view is the home screen's state.
 type view struct {
-	Running   bool              `json:"running"`
-	Head      string            `json:"head"`
-	Line      string            `json:"line"`
-	Full      string            `json:"full"`
-	HasLink   bool              `json:"has_link"`
-	Mode      string            `json:"mode"`
-	Kinds     []string          `json:"kinds"`
-	Labels    map[string]string `json:"labels"`
-	Auth      bool              `json:"auth"`
-	Host      string            `json:"host"`
-	Port      int               `json:"port"`
-	User      string            `json:"user"`
-	Pass      string            `json:"pass"`
-	ProxyLink string            `json:"proxy_link"` // socks5://
-	TgLink    string            `json:"tg_link"`    // tg://socks
+	Running   bool          `json:"running"`
+	Head      string        `json:"head"`
+	Line      string        `json:"line"`
+	Full      string        `json:"full"`
+	HasLink   bool          `json:"has_link"`
+	Mode      string        `json:"mode"`
+	Routes    []routeChoice `json:"routes"`
+	My        bool          `json:"my"`
+	Auth      bool          `json:"auth"`
+	Host      string        `json:"host"`
+	Port      int           `json:"port"`
+	User      string        `json:"user"`
+	Pass      string        `json:"pass"`
+	ProxyLink string        `json:"proxy_link"` // socks5://
+	TgLink    string        `json:"tg_link"`    // tg://socks
 }
 
 func (a *App) view() view {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	s := a.settings
-	v := view{Running: s.Running, HasLink: a.hasLink(), Mode: a.mode(), Kinds: a.kinds(),
-		Labels: map[string]string{}, Auth: s.Auth, Host: host, Port: s.Port, ProxyLink: s.socksURL(), TgLink: s.proxyLink("tg://socks")}
+	v := view{Running: s.Running, HasLink: a.hasLink(), Mode: a.mode(), Routes: a.routes(),
+		My: s.My != "", Auth: s.Auth, Host: host, Port: s.Port, ProxyLink: s.socksURL(), TgLink: s.proxyLink("tg://socks")}
 	if s.Auth {
 		v.User, v.Pass = s.User, s.Pass
-	}
-	for _, k := range v.Kinds {
-		v.Labels[k] = routeLabel(a.t, k)
 	}
 	switch {
 	case s.Running && time.Now().Before(a.checking):

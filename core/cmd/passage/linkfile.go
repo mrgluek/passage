@@ -95,32 +95,38 @@ func describeLink(t tr, cfg tunnel.Config) string {
 	return t.f("link_ok_zone", cfg.Zone) + "\n" + ipv6
 }
 
-// linkKinds is the route types the imported links and My set up, in the
-// order the router tries them (as the app's Settings.routeKinds).
-func linkKinds(cfg tunnel.Config, my string) []string {
-	type route struct {
-		priority, mine int
-		id, kind       string
-	}
-	var routes []route
-	for _, r := range cfg.Routes {
-		routes = append(routes, route{int(r.Priority), 1, r.ID, r.Type})
+// routeChoice is one installed route that can be chosen (as the app's
+// Settings.Route).
+type routeChoice struct {
+	ID       string `json:"id"`
+	Type     string `json:"type"`
+	Priority int    `json:"priority"`
+	Mode     string `json:"mode"`
+	Label    string `json:"label"`
+}
+
+// installedRoutes is the routes the imported links set up, in the order the
+// router tries them.
+func installedRoutes(cfg tunnel.Config) []routeChoice {
+	out := []routeChoice{}
+	add := func(id, kind string, priority int) {
+		label := fmt.Sprintf("%d %s (%s)", priority, id, kind)
+		if id == kind {
+			label = fmt.Sprintf("%d %s", priority, id)
+		}
+		out = append(out, routeChoice{id, kind, priority, "route:" + id, label})
 	}
 	if len(cfg.Routes) == 0 && cfg.Zone != "" {
-		routes = append(routes, route{100, 1, "", "soar"})
+		add("legacy-dns", "soar", 100)
 	}
-	if my != "" {
-		routes = append(routes, route{myPriority, 0, "", "my"})
-	}
-	slices.SortStableFunc(routes, func(a, b route) int {
-		return cmp.Or(cmp.Compare(a.priority, b.priority), cmp.Compare(a.mine, b.mine), cmp.Compare(a.id, b.id))
-	})
-	out := []string{}
-	for _, r := range routes {
-		if slices.Contains(tunnel.RouteKinds, r.kind) && !slices.Contains(out, r.kind) {
-			out = append(out, r.kind)
+	for _, r := range cfg.Routes {
+		if r.Type != "my" && slices.Contains(tunnel.RouteKinds, r.Type) {
+			add(r.ID, r.Type, int(r.Priority))
 		}
 	}
+	slices.SortStableFunc(out, func(a, b routeChoice) int {
+		return cmp.Or(cmp.Compare(a.Priority, b.Priority), cmp.Compare(a.ID, b.ID))
+	})
 	return out
 }
 

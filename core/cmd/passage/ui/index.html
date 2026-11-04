@@ -36,6 +36,15 @@ button.icon svg { width: 24px; height: 24px; fill: var(--accent); display: block
 .segments div { flex: 1; text-align: center; padding: 6px 4px; border-radius: 16px; color: var(--accent);
   cursor: pointer; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .segments div.on { background: var(--accent); color: var(--on-accent); font-weight: 600; cursor: default; }
+.segments.withMenu div { flex: 0 0 auto; padding: 6px 14px; }
+.segments.withMenu div.menu { flex: 1; min-width: 0; display: flex; justify-content: center; gap: 2px; cursor: pointer; padding: 6px 8px; }
+.segments .menu span:first-child { overflow: hidden; text-overflow: ellipsis; }
+#homeRoutes, #settingsRoutes { position: relative; }
+.routeMenu { position: absolute; left: 0; right: 0; z-index: 5; max-height: 240px; overflow-y: auto; padding: 4px 0;
+  background: var(--bg); border: 1px solid var(--accent); border-radius: 10px; box-shadow: 0 2px 8px var(--shade); }
+.routeMenu div { padding: 7px 12px; cursor: pointer; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.routeMenu div:hover { background: var(--shade); }
+.routeMenu div.on { color: var(--accent); font-weight: 600; }
 .values { background: var(--shade); border-radius: 8px; padding: 6px 10px; }
 .values .v { display: flex; padding: 5px 0; cursor: pointer; }
 .values .v span:first-child { width: 80px; color: var(--muted); font-size: 12px; }
@@ -203,17 +212,65 @@ function copy(text, message) {
 }
 function tip(id, key) { $(id).title = t(key); $(id).setAttribute("aria-label", t(key)); }
 
-// The route choice: Auto, each route type, Direct.
+function closeRouteMenus() {
+  document.querySelectorAll(".routeMenu").forEach(m => m.remove());
+}
+document.addEventListener("click", closeRouteMenus);
+document.addEventListener("keydown", e => { if (e.key === "Escape") closeRouteMenus(); });
+
+function chooseRoute(mode) { call("setMode", mode).then(refresh, fail); }
+
+// The list of installed routes, under the Routes segment.
+function routeMenu(box, v) {
+  const menu = document.createElement("div");
+  menu.className = "routeMenu";
+  menu.setAttribute("role", "menu");
+  for (const r of v.routes) {
+    const item = document.createElement("div");
+    item.className = r.mode === v.mode ? "on" : "";
+    item.textContent = r.label;
+    item.title = r.label;
+    item.setAttribute("role", "menuitemradio");
+    item.setAttribute("aria-checked", r.mode === v.mode);
+    item.onclick = () => chooseRoute(r.mode);
+    menu.appendChild(item);
+  }
+  box.appendChild(menu);
+}
+
+// The route choice: Auto, My if set, the installed routes in a list, Direct.
 function segments(box, v) {
   box.innerHTML = "";
-  const choices = [["auto", t("mode_auto")], ...v.kinds.map(k => [k, v.labels[k]]), ["off", t("mode_off")]];
+  const fixed = v.routes.find(r => r.mode === v.mode);
+  const choices = [["auto", t("mode_auto")]];
+  if (v.my) choices.push(["my", t("route_my")]);
+  if (v.routes.length) choices.push(["routes", fixed ? fixed.id : t("route_menu")]);
+  choices.push(["off", t("mode_off")]);
   const row = document.createElement("div");
-  row.className = "segments";
+  row.className = v.routes.length ? "segments withMenu" : "segments";
   for (const [mode, label] of choices) {
     const d = document.createElement("div");
-    d.textContent = label;
-    if (mode === v.mode) d.className = "on";
-    else d.onclick = () => call("setMode", mode).then(refresh, fail);
+    if (mode === "routes") {
+      const name = document.createElement("span");
+      name.textContent = label;
+      const arrow = document.createElement("span");
+      arrow.textContent = "\u25BE";
+      d.append(name, arrow);
+      d.className = fixed ? "menu on" : "menu";
+      d.title = fixed ? fixed.label : label;
+      d.setAttribute("role", "button");
+      d.setAttribute("aria-haspopup", "menu");
+      d.onclick = e => {
+        e.stopPropagation();
+        const open = box.querySelector(".routeMenu");
+        closeRouteMenus();
+        if (!open) routeMenu(box, v);
+      };
+    } else {
+      d.textContent = label;
+      if (mode === v.mode) d.className = "on";
+      else d.onclick = () => chooseRoute(mode);
+    }
     row.appendChild(d);
   }
   box.appendChild(row);
@@ -221,7 +278,7 @@ function segments(box, v) {
 
 let last = null, shownRoutes = "", shownValues = "";
 function render(v) {
-  v.kinds = v.kinds || [];
+  v.routes = v.routes || [];
   last = v;
   $("head").textContent = v.head;
   $("line").textContent = v.line;
@@ -230,11 +287,10 @@ function render(v) {
     : "M8,5.5v13a1,1 0,0 0,1.5 0.86l10.2,-6.5a1,1 0,0 0,0 -1.72l-10.2,-6.5A1,1 0,0 0,8 5.5z");
   tip("startStop", v.running ? "action_stop" : "action_start");
   $("noLink").classList.toggle("hidden", v.has_link);
-  const routesKey = JSON.stringify([v.kinds, v.mode]);
+  const routesKey = JSON.stringify([v.routes, v.my, v.mode]);
   if (routesKey !== shownRoutes) {
     shownRoutes = routesKey;
-    const home = $("homeRoutes");
-    if (v.kinds.length) segments(home, v); else home.innerHTML = "";
+    segments($("homeRoutes"), v);
     segments($("settingsRoutes"), v);
   }
   const rows = [[t("proxy_host"), v.host], [t("proxy_port"), String(v.port)]];
