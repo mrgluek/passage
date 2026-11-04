@@ -1,0 +1,378 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Passage</title>
+<style>
+:root {
+  --bg: #ffffff; --fg: #1b1c1e; --muted: #5f6368; --accent: #185FA5; --on-accent: #ffffff;
+  --shade: rgba(0,0,0,.055); --line: rgba(0,0,0,.12); --warn: #a4372a;
+}
+@media (prefers-color-scheme: dark) {
+  :root { --bg: #1d1e20; --fg: #e8e9eb; --muted: #a0a4a8; --accent: #85B7EB; --on-accent: #0d2440;
+    --shade: rgba(255,255,255,.07); --line: rgba(255,255,255,.14); --warn: #f08b7e; }
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; background: var(--bg); color: var(--fg); }
+body { font: 14px/1.45 "Segoe UI", system-ui, sans-serif; user-select: none; }
+header { position: sticky; top: 0; z-index: 2; display: flex; align-items: center; gap: 4px;
+  padding: 8px 8px 8px 16px; background: var(--bg); border-bottom: 1px solid var(--line); }
+header h1 { flex: 1; margin: 0; font-size: 16px; font-weight: 600; }
+main { padding: 4px 16px 24px; max-width: 720px; }
+h2 { margin: 20px 0 4px; font-size: 14px; font-weight: 600; }
+.hint { color: var(--muted); font-size: 13px; margin: 2px 0; white-space: pre-line; }
+.warn { color: var(--warn); }
+.row { display: flex; align-items: center; gap: 8px; }
+.grow { flex: 1; min-width: 0; }
+button { font: inherit; color: var(--accent); background: transparent; border: 1px solid var(--accent);
+  border-radius: 6px; padding: 5px 14px; cursor: pointer; margin: 6px 0; }
+button:hover { background: var(--shade); }
+button.primary { background: var(--accent); color: var(--on-accent); }
+button.icon { border: none; border-radius: 50%; width: 36px; height: 36px; padding: 6px; margin: 0; }
+button.icon svg { width: 24px; height: 24px; fill: var(--accent); display: block; }
+.state { font-size: 18px; font-weight: 600; cursor: pointer; }
+.segments { display: flex; border: 1px solid var(--accent); border-radius: 18px; padding: 2px; margin: 4px 0; }
+.segments div { flex: 1; text-align: center; padding: 6px 4px; border-radius: 16px; color: var(--accent);
+  cursor: pointer; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.segments div.on { background: var(--accent); color: var(--on-accent); font-weight: 600; cursor: default; }
+.values { background: var(--shade); border-radius: 8px; padding: 6px 10px; }
+.values .v { display: flex; padding: 5px 0; cursor: pointer; }
+.values .v span:first-child { width: 80px; color: var(--muted); font-size: 12px; }
+.values .v span:last-child { flex: 1; font: 13px Consolas, monospace; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+pre { font: 12px/1.4 Consolas, monospace; white-space: pre-wrap; word-break: break-all; margin: 4px 0;
+  user-select: text; }
+textarea, input[type=text] { width: 100%; font: 13px Consolas, monospace; color: var(--fg); background: var(--bg);
+  border: 1px solid var(--line); border-radius: 6px; padding: 6px 8px; user-select: text; }
+textarea { min-height: 72px; resize: vertical; }
+label.check { display: flex; gap: 8px; align-items: center; margin: 6px 0; cursor: pointer; }
+a { color: var(--accent); cursor: pointer; text-decoration: underline; }
+.hidden { display: none !important; }
+#toast { position: fixed; left: 50%; bottom: 20px; transform: translateX(-50%); max-width: 90%;
+  background: var(--fg); color: var(--bg); padding: 8px 14px; border-radius: 8px; opacity: 0; transition: opacity .2s;
+  pointer-events: none; z-index: 5; }
+#toast.on { opacity: .92; }
+#modal { position: fixed; inset: 0; background: rgba(0,0,0,.4); display: flex; align-items: center; justify-content: center; z-index: 4; }
+#modal > div { background: var(--bg); border-radius: 10px; padding: 16px 18px; width: min(560px, 92vw); max-height: 86vh;
+  display: flex; flex-direction: column; box-shadow: 0 8px 30px rgba(0,0,0,.3); }
+#modal h3 { margin: 0 0 8px; font-size: 15px; }
+#modalBody { overflow: auto; white-space: pre-wrap; user-select: text; }
+#modal .buttons { display: flex; justify-content: flex-end; gap: 8px; margin-top: 10px; }
+</style>
+</head>
+<body>
+<header>
+  <button class="icon hidden" id="backBtn"><svg viewBox="0 0 24 24"><path d="M20 11H7.83l5.59-5.59L12 4l-8 8 8 8 1.41-1.41L7.83 13H20v-2z"/></svg></button>
+  <h1 id="title">Passage</h1>
+  <button class="icon" id="startStop"><svg viewBox="0 0 24 24"><path id="startStopPath"/></svg></button>
+  <button class="icon" id="settingsBtn"><svg viewBox="0 0 24 24"><path d="M19.14 12.94c.04-.3.06-.61.06-.94 0-.32-.02-.64-.07-.94l2.03-1.58a.49.49 0 0 0 .12-.61l-1.92-3.32a.488.488 0 0 0-.59-.22l-2.39.96c-.5-.38-1.03-.7-1.62-.94l-.36-2.54a.484.484 0 0 0-.48-.41h-3.84c-.24 0-.43.17-.47.41l-.36 2.54c-.59.24-1.13.57-1.62.94l-2.39-.96c-.22-.08-.47 0-.59.22L2.74 8.87c-.12.21-.08.47.12.61l2.03 1.58c-.05.3-.09.63-.09.94s.02.64.07.94l-2.03 1.58a.49.49 0 0 0-.12.61l1.92 3.32c.12.22.37.29.59.22l2.39-.96c.5.38 1.03.7 1.62.94l.36 2.54c.05.24.24.41.48.41h3.84c.24 0 .44-.17.47-.41l.36-2.54c.59-.24 1.13-.56 1.62-.94l2.39.96c.22.08.47 0 .59-.22l1.92-3.32c.12-.22.07-.47-.12-.61l-2.01-1.58zM12 15.6c-1.98 0-3.6-1.62-3.6-3.6s1.62-3.6 3.6-3.6 3.6 1.62 3.6 3.6-1.62 3.6-3.6 3.6z"/></svg></button>
+</header>
+
+<main id="home">
+  <div class="state" id="head"></div>
+  <div id="line"></div>
+  <div id="noLink" class="hidden">
+    <p class="hint" data-t="no_link"></p>
+    <button data-t="open_settings" id="openSettings"></button>
+  </div>
+  <div id="homeRoutes"></div>
+  <h2 data-t="connect_label"></h2>
+  <p class="hint" data-t="connect_help"></p>
+  <div class="row" style="margin-top:8px">
+    <div class="grow">
+      <div class="values" id="values"></div>
+    </div>
+    <div>
+      <button class="icon" id="copyLink"><svg viewBox="0 0 24 24"><path d="M16,1L4,1c-1.1,0 -2,0.9 -2,2v14h2L4,3h12L16,1zM19,5L8,5c-1.1,0 -2,0.9 -2,2v14c0,1.1 0.9,2 2,2h11c1.1,0 2,-0.9 2,-2L21,7c0,-1.1 -0.9,-2 -2,-2zM19,21L8,21L8,7h11v14z"/></svg></button><br>
+      <button class="icon" id="copyTg"><svg viewBox="0 0 24 24"><path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"/></svg></button>
+    </div>
+  </div>
+  <div class="row" style="margin-top:14px">
+    <h2 class="grow" style="margin:0" data-t="status_label"></h2>
+    <button class="icon" id="report"><svg viewBox="0 0 24 24"><path d="M20,8h-2.81c-0.45,-0.78 -1.07,-1.45 -1.82,-1.96L17,4.41 15.59,3l-2.17,2.17C12.96,5.06 12.49,5 12,5c-0.49,0 -0.96,0.06 -1.41,0.17L8.41,3 7,4.41l1.62,1.63C7.88,6.55 7.26,7.22 6.81,8L4,8v2h2.09c-0.05,0.33 -0.09,0.66 -0.09,1v1L4,12v2h2v1c0,0.34 0.04,0.67 0.09,1L4,16v2h2.81c1.04,1.79 2.97,3 5.19,3s4.15,-1.21 5.19,-3L20,18v-2h-2.09c0.05,-0.33 0.09,-0.66 0.09,-1v-1h2v-2h-2v-1c0,-0.34 -0.04,-0.67 -0.09,-1L20,10L20,8zM14,16h-4v-2h4v2zM14,12h-4v-2h4v2z"/></svg></button>
+  </div>
+  <pre id="status"></pre>
+</main>
+
+<main id="settings" class="hidden">
+  <h2 data-t="link_label" style="margin-top:8px"></h2>
+  <p class="hint" id="linkInfo"></p>
+  <p class="hint warn" id="linkError"></p>
+  <button id="changeLink" data-t="change_link"></button>
+  <div id="linkBox" class="hidden">
+    <textarea id="linkText" spellcheck="false"></textarea>
+    <button class="primary" id="saveLink" data-t="save"></button>
+  </div>
+  <p class="hint" data-t="link_file_help"></p>
+
+  <h2 data-t="route_label"></h2>
+  <div id="settingsRoutes"></div>
+  <p class="hint" data-t="route_hint"></p>
+
+  <h2 data-t="my_route_label"></h2>
+  <div class="row">
+    <input type="text" id="my" class="grow" spellcheck="false">
+    <button class="icon" id="myClear"><svg viewBox="0 0 24 24"><path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg></button>
+  </div>
+  <button id="saveMy" data-t="save"></button>
+  <p class="hint" data-t="my_route_help"></p>
+
+  <h2 data-t="access_label"></h2>
+  <label class="check"><input type="checkbox" id="auth"><span data-t="auth_switch"></span></label>
+  <p class="hint" data-t="auth_help"></p>
+  <button id="newAccess" data-t="new_access"></button>
+  <p class="hint" data-t="new_access_help"></p>
+
+  <h2 data-t="startup_label"></h2>
+  <label class="check"><input type="checkbox" id="autostart"><span data-t="autostart"></span></label>
+  <p class="hint" data-t="autostart_help"></p>
+
+  <h2 data-t="folder_label"></h2>
+  <pre id="folder"></pre>
+  <button id="openFolder" data-t="open_folder"></button>
+  <p class="hint" data-t="folder_help"></p>
+
+  <h2 data-t="about_label"></h2>
+  <p class="hint" id="about"></p>
+  <p class="hint"><span data-t="about_site"></span>: <a id="site"></a></p>
+  <p class="hint"><span data-t="about_source"></span>: <a id="source"></a></p>
+  <p class="hint"><a id="licenses" data-t="about_licenses"></a></p>
+</main>
+
+<div id="modal" class="hidden"><div>
+  <h3 id="modalTitle"></h3>
+  <div id="modalBody"></div>
+  <div class="buttons"><button id="modalCancel"></button><button class="primary" id="modalOk"></button></div>
+</div></div>
+<div id="toast"></div>
+
+<script>
+"use strict";
+// The bridge: the Windows window binds passageCall and answers through
+// passageReply; the development server answers over HTTP.
+const pending = {};
+let seq = 0;
+window.passageReply = (id, out) => {
+  const p = pending[id];
+  delete pending[id];
+  if (p) out.error ? p.reject(new Error(out.error)) : p.resolve(out.result);
+};
+function call(method, arg = null) {
+  if (window.passageCall) {
+    return new Promise((resolve, reject) => {
+      const id = ++seq;
+      pending[id] = { resolve, reject };
+      window.passageCall(id, method, arg);
+    });
+  }
+  return fetch("/call", { method: "POST", body: JSON.stringify({ token: window.passageToken, method, arg }) })
+    .then(r => r.json()).then(out => { if (out.error) throw new Error(out.error); return out.result; });
+}
+
+const $ = id => document.getElementById(id);
+let S = {}, info = {};
+// t formats like Go: %[1]s, %[2]d.
+function t(key, ...args) {
+  return (S[key] ?? key).replace(/%\[(\d+)\][sd]/g, (_, n) => String(args[n - 1]));
+}
+let toastTimer;
+function toast(text) {
+  $("toast").textContent = text;
+  $("toast").classList.add("on");
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => $("toast").classList.remove("on"), 2500);
+}
+const fail = e => toast(e.message || String(e));
+
+function modal(title, body, ok, cancel) {
+  return new Promise(resolve => {
+    $("modalTitle").textContent = title;
+    $("modalBody").textContent = body;
+    $("modalOk").textContent = ok;
+    $("modalCancel").textContent = cancel || "";
+    $("modalCancel").classList.toggle("hidden", !cancel);
+    $("modal").classList.remove("hidden");
+    const done = v => { $("modal").classList.add("hidden"); $("modalOk").onclick = $("modalCancel").onclick = null; resolve(v); };
+    $("modalOk").onclick = () => done(true);
+    $("modalCancel").onclick = () => done(false);
+  });
+}
+function copy(text, message) {
+  call("copy", text).then(() => toast(message)).catch(() =>
+    navigator.clipboard.writeText(text).then(() => toast(message), fail));
+}
+function tip(id, key) { $(id).title = t(key); $(id).setAttribute("aria-label", t(key)); }
+
+// The route choice: Auto, each route type, Direct.
+function segments(box, v) {
+  box.innerHTML = "";
+  const choices = [["auto", t("mode_auto")], ...v.kinds.map(k => [k, v.labels[k]]), ["off", t("mode_off")]];
+  const row = document.createElement("div");
+  row.className = "segments";
+  for (const [mode, label] of choices) {
+    const d = document.createElement("div");
+    d.textContent = label;
+    if (mode === v.mode) d.className = "on";
+    else d.onclick = () => call("setMode", mode).then(refresh, fail);
+    row.appendChild(d);
+  }
+  box.appendChild(row);
+}
+
+let last = null, shownRoutes = "", shownValues = "";
+function render(v) {
+  v.kinds = v.kinds || [];
+  last = v;
+  $("head").textContent = v.head;
+  $("line").textContent = v.line;
+  $("startStopPath").setAttribute("d", v.running
+    ? "M7,6h10a1,1 0,0 1,1 1v10a1,1 0,0 1,-1 1h-10a1,1 0,0 1,-1 -1v-10a1,1 0,0 1,1 -1z"
+    : "M8,5.5v13a1,1 0,0 0,1.5 0.86l10.2,-6.5a1,1 0,0 0,0 -1.72l-10.2,-6.5A1,1 0,0 0,8 5.5z");
+  tip("startStop", v.running ? "action_stop" : "action_start");
+  $("noLink").classList.toggle("hidden", v.has_link);
+  const routesKey = JSON.stringify([v.kinds, v.mode]);
+  if (routesKey !== shownRoutes) {
+    shownRoutes = routesKey;
+    const home = $("homeRoutes");
+    if (v.kinds.length) segments(home, v); else home.innerHTML = "";
+    segments($("settingsRoutes"), v);
+  }
+  const rows = [[t("proxy_host"), v.host], [t("proxy_port"), String(v.port)]];
+  if (v.auth) rows.push([t("proxy_user"), v.user], [t("proxy_pass"), v.pass]);
+  const valuesKey = JSON.stringify(rows);
+  if (valuesKey !== shownValues) {
+    shownValues = valuesKey;
+    const box = $("values");
+    box.innerHTML = "";
+    for (const [label, value] of rows) {
+      const r = document.createElement("div");
+      r.className = "v";
+      r.innerHTML = "<span></span><span></span>";
+      r.children[0].textContent = label;
+      r.children[1].textContent = value;
+      r.onclick = () => copy(value, t("value_copied", label));
+      box.appendChild(r);
+    }
+    if (!v.auth) {
+      const n = document.createElement("p");
+      n.className = "hint";
+      n.textContent = t("proxy_no_password");
+      box.appendChild(n);
+    }
+  }
+  $("status").textContent = v.full;
+}
+function refresh() { return call("view").then(render, fail); }
+
+function showLink(open) {
+  return call("link", open).then(l => {
+    $("linkInfo").textContent = l.info || "";
+    $("linkError").textContent = l.error || "";
+    // A saved link stays folded so its key is not on screen.
+    const unfold = open || !l.has || !!l.error;
+    $("linkBox").classList.toggle("hidden", !unfold);
+    $("changeLink").classList.toggle("hidden", unfold);
+    if (unfold && l.text !== undefined && document.activeElement !== $("linkText")) $("linkText").value = l.text || "";
+  }, fail);
+}
+function showSettings() {
+  call("settings").then(s => {
+    $("auth").checked = s.auth;
+    $("autostart").checked = s.autostart;
+    $("my").value = s.my;
+    $("myClear").classList.toggle("hidden", !s.my);
+    $("about").textContent = t("about_version", info.version, s.soar);
+  }, fail);
+  showLink(false);
+}
+function page(name) {
+  $("home").classList.toggle("hidden", name !== "home");
+  $("settings").classList.toggle("hidden", name !== "settings");
+  $("backBtn").classList.toggle("hidden", name !== "settings");
+  $("settingsBtn").classList.toggle("hidden", name === "settings");
+  $("title").textContent = name === "settings" ? t("settings") : "Passage " + info.version;
+  if (name === "settings") showSettings();
+  scrollTo(0, 0);
+}
+
+$("startStop").onclick = () => call(last && last.running ? "stop" : "start").then(refresh, fail);
+$("settingsBtn").onclick = $("openSettings").onclick = () => page("settings");
+$("backBtn").onclick = () => page("home");
+$("head").onclick = () => {
+  if (!last || !last.running) return toast(t("proxy_stopped"));
+  call("recheck").then(refresh);
+  setTimeout(refresh, 3100);
+};
+$("copyLink").onclick = () => last && copy(last.proxy_link, t("proxy_link_copied"));
+$("copyTg").onclick = () => last && copy(last.tg_link, t("tg_link_copied"));
+let reporting = false;
+$("report").onclick = () => {
+  if (reporting) return;
+  reporting = true;
+  if (last && last.running) modal(t("send_report"), t("testing_network"), t("close"));
+  call("report").then(() => {
+    $("modal").classList.add("hidden");
+    toast(t("report_copied"));
+  }, e => { $("modal").classList.add("hidden"); fail(e); }).finally(() => { reporting = false; refresh(); });
+};
+
+$("changeLink").onclick = () => showLink(true).then(() => $("linkText").focus());
+$("saveLink").onclick = async () => {
+  const text = $("linkText").value;
+  try {
+    const preview = await call("importPreview", text);
+    if (!await modal(t("import_title"), preview, t("save"), t("cancel"))) return;
+    await call("saveLink", text);
+    toast(t("saved"));
+    $("linkText").value = "";
+    showLink(false);
+    refresh();
+  } catch (e) { toast(t("link_error", e.message)); }
+};
+$("my").oninput = () => $("myClear").classList.toggle("hidden", !$("my").value);
+$("myClear").onclick = () => { $("my").value = ""; $("my").oninput(); $("my").focus(); };
+$("saveMy").onclick = () => call("saveMy", $("my").value).then(v => {
+  $("my").value = v;
+  $("my").oninput();
+  toast(t(v ? "my_route_saved" : "my_route_removed"));
+  refresh();
+}, fail);
+$("auth").onchange = () => call("setAuth", $("auth").checked).then(refresh, fail);
+$("newAccess").onclick = () => call("newAccess").then(() => { toast(t("new_access_done")); refresh(); }, fail);
+$("autostart").onchange = () => call("setAutostart", $("autostart").checked).catch(e => {
+  $("autostart").checked = !$("autostart").checked;
+  fail(e);
+});
+$("openFolder").onclick = () => call("openFolder").catch(fail);
+$("site").onclick = () => call("open", info.site).catch(fail);
+$("source").onclick = () => call("open", info.source).catch(fail);
+$("licenses").onclick = () => call("licenses").then(text => modal(t("about_licenses"), text, t("close")), fail);
+document.addEventListener("keydown", e => {
+  if (e.key !== "Escape" || $("modal").classList.contains("hidden")) return;
+  ($("modalCancel").classList.contains("hidden") ? $("modalOk") : $("modalCancel")).click();
+});
+
+call("init").then(i => {
+  info = i;
+  S = i.strings;
+  document.documentElement.lang = i.lang;
+  for (const el of document.querySelectorAll("[data-t]")) el.textContent = t(el.dataset.t);
+  $("linkText").placeholder = t("link_hint");
+  $("my").placeholder = t("my_route_hint");
+  $("folder").textContent = i.dir;
+  $("site").textContent = i.site;
+  $("source").textContent = i.source;
+  tip("settingsBtn", "settings");
+  tip("backBtn", "back");
+  tip("copyLink", "copy_proxy_link");
+  tip("copyTg", "copy_tg_link");
+  tip("report", "send_report");
+  tip("myClear", "clear");
+  page("home");
+  refresh();
+  // Only while the window is visible, as the app polls only on screen.
+  setInterval(() => { if (!document.hidden) refresh(); }, 2000);
+}, fail);
+</script>
+</body>
+</html>

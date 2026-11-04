@@ -6,7 +6,12 @@ other apps on the phone. It has two parts:
 - `core/`: the Go router (module `github.com/mrgluek/passage/core`).
   `tunnel/` is the router and SOCKS5 server, `cmd/libpassage` exports it as
   JNI methods of `info.gluek.passage.Native`, and `cmd/passage-cli` runs it
-  standalone on Linux or macOS.
+  standalone on Linux, macOS or Windows. `cmd/passage` is the Windows app
+  (`passage.exe`): a tray icon (`fyne.io/systray`) and a WebView2 window
+  (`jchv/go-webview2`) showing `ui/index.html`, with settings in
+  `passage.ini` and the link in `link.txt` next to the program. Its strings
+  are in `strings.go` (English and Russian). Elsewhere it serves the same
+  window on loopback for development (`go run ./cmd/passage -dir <folder>`).
 - `android/`: the Kotlin app (`info.gluek.passage`), a foreground service
   around that library, a home screen (state, proxy link, status) with
   start/stop, report and settings in the title bar, and a settings screen.
@@ -35,7 +40,7 @@ other apps on the phone. It has two parts:
 Go router (from `core/`; `cmd/libpassage` builds for Android only):
 
 ```bash
-go vet ./tunnel ./cmd/passage-cli
+go vet ./tunnel ./internal/... ./cmd/passage-cli ./cmd/passage
 go test -race ./...
 ```
 
@@ -47,8 +52,9 @@ scripts/build-native.sh
 ```
 
 `passage-cli` archives for Linux and macOS (amd64, arm64) and Windows
-(amd64, `.zip`), each with the iroh helper `passage-iroh` built from the
-same pinned source as Android:
+(amd64, `.zip`, with `passage.exe` too), each with the iroh helper
+`passage-iroh` built from the same pinned source as Android. `passage.exe`
+gets its icon and manifest from `go-winres`, run by the script:
 
 ```bash
 scripts/build-cli.sh <version> <out-dir> [os/arch ...]

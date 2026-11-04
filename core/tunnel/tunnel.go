@@ -64,7 +64,7 @@ type group struct {
 	used        time.Time // last CONNECT, for dropping the least recently used relay
 	route       Route
 	routeSince  time.Time
-	via         string               // route type of the last tunnel connection: iroh, soar
+	via         string               // route type of the newest open tunnel connection: iroh, soar
 	tunnelFails int                  // tunnel dial failures since the route last changed
 	hosts       map[string]time.Time // probe host -> last seen in a CONNECT
 	ports       map[string]string    // probe host -> port to probe
@@ -193,6 +193,8 @@ type tracked struct {
 	route  Route
 	local  net.Conn
 	remote net.Conn
+	via    string // route type, for a tunnel connection
+	opened time.Time
 }
 
 type routeStats struct {
@@ -306,6 +308,9 @@ func Start(cfg Config) (*Tunnel, error) {
 		}
 		t.established = t.client.Established
 	}
+	if t.mode == ModeAuto {
+		t.telegram.route = t.autoRouteLocked(t.telegram)
+	}
 
 	ln, err := net.Listen("tcp", cfg.Listen)
 	if err != nil {
@@ -371,6 +376,9 @@ func (t *Tunnel) relayLocked(host string) *group {
 	}
 	g := newGroup(host, kindRelay, initialRoute(t.mode))
 	g.seen = true
+	if t.mode == ModeAuto {
+		g.route = t.autoRouteLocked(g)
+	}
 	t.relays[host] = g
 	for len(t.relays) > maxRelayGroups {
 		var oldest *group
@@ -442,6 +450,17 @@ func (t *Tunnel) groupsLocked() []*group {
 		out = append(out, t.relays[n])
 	}
 	return out
+}
+
+// autoRouteLocked is where auto starts g: the tunnel when g had to use it
+// on this network before, else direct. Caller holds t.mu.
+func (t *Tunnel) autoRouteLocked(g *group) Route {
+	if g.kind == kindOther || t.ways[RouteTunnel].dial == nil || !knownBlocked(t.cfg, g.name) {
+		return RouteDirect
+	}
+	g.state, g.failStreak = "blocked", blockedAfter
+	t.log.add("%s used the tunnel on this network before: starting there", g.name)
+	return RouteTunnel
 }
 
 func initialRoute(mode string) Route {
@@ -550,8 +569,24 @@ func (t *Tunnel) SetMode(mode string) error {
 		case ModeOff:
 			t.setRouteLocked(g, RouteDirect, "mode off")
 		case ModeAuto:
-			// Start auto from direct; the monitor moves to the tunnel if needed.
-			t.setRouteLocked(g, RouteDirect, "mode auto")
+			// Start auto from direct, or from the tunnel where it was needed
+			// on this network; the monitor moves the group if needed.
+			t.setRouteLocked(g, t.autoRouteLocked(g), "mode auto")
+		}
+	}
+	if kind != "" && t.mode == ModeAlways {
+		// From one route type to another the groups stay on the tunnel, so
+		// close what went through another type: apps reconnect through this one.
+		for c := range t.conns {
+			if c.route == RouteTunnel && c.via != kind {
+				c.local.Close()
+				c.remote.Close()
+			}
+		}
+		for _, g := range t.groupsLocked() {
+			if g.via != kind {
+				g.via = ""
+			}
 		}
 	}
 	shown := cmp.Or(t.only, t.mode)
@@ -584,6 +619,33 @@ func (t *Tunnel) kickProbe() {
 
 // setRouteLocked changes g's route and closes g's connections on other
 // routes, so clients reconnect over the new route at once. Caller holds t.mu.
+// updateViaLocked shows the route type of g's newest open tunnel
+// connection, or none once they are all closed. Caller holds t.mu.
+func (t *Tunnel) updateViaLocked(g *group) {
+	var newest *tracked
+	for c := range t.conns {
+		if c.group == g && c.route == RouteTunnel && (newest == nil || c.opened.After(newest.opened)) {
+			newest = c
+		}
+	}
+	g.via = ""
+	if newest != nil {
+		g.via = newest.via
+	}
+}
+
+// viaOf is the route type a tunnel connection went through; a link
+// without a route list has only soar.
+func (t *Tunnel) viaOf(remote net.Conn) string {
+	if v := connVia(remote); v != "" {
+		return v
+	}
+	if t.cfg.Zone != "" {
+		return "soar"
+	}
+	return ""
+}
+
 func (t *Tunnel) setRouteLocked(g *group, r Route, reason string) {
 	if r == g.route {
 		return
@@ -684,7 +746,7 @@ func (t *Tunnel) handle(c net.Conn) {
 	}
 	c.SetDeadline(time.Time{})
 
-	tr := &tracked{group: g, route: route, local: c, remote: remote}
+	tr := &tracked{group: g, route: route, local: c, remote: remote, opened: time.Now()}
 	t.mu.Lock()
 	if t.ctx.Err() != nil {
 		t.mu.Unlock()
@@ -693,10 +755,8 @@ func (t *Tunnel) handle(c net.Conn) {
 	t.conns[tr] = struct{}{}
 	t.stats[route].Conns++
 	if route == RouteTunnel {
-		g.via = connVia(remote)
-		if g.via == "" && t.cfg.Zone != "" {
-			g.via = "soar"
-		}
+		tr.via = t.viaOf(remote)
+		g.via = tr.via
 	}
 	t.mu.Unlock()
 
@@ -718,6 +778,9 @@ func (t *Tunnel) handle(c net.Conn) {
 
 	t.mu.Lock()
 	delete(t.conns, tr)
+	if route == RouteTunnel {
+		t.updateViaLocked(g)
+	}
 	t.mu.Unlock()
 	// A direct connection that died young with almost nothing received:
 	// check now instead of at the next scheduled probe.
@@ -1236,8 +1299,17 @@ func (t *Tunnel) applyProbe(g *group, res probeResult) {
 		t.log.add("%s state %s -> %s (probe hosts %d/%d ok%s)", g.name, gs.state, state, res.RelayOK, res.Relays, via)
 	}
 	gs.failStreak, gs.okStreak, gs.state = fail, ok, state
-	if t.mode == ModeAuto {
-		t.setRouteLocked(g, route, state)
+	if t.mode != ModeAuto || g.kind == kindOther {
+		return
+	}
+	t.setRouteLocked(g, route, state)
+	// Remembered per network, so auto starts there next time; written by
+	// another goroutine, the state file is no reason to hold t.mu.
+	switch {
+	case state == "blocked" && route == RouteTunnel:
+		go rememberBlocked(t.cfg, g.name, true)
+	case state == "direct" && route == RouteDirect:
+		go rememberBlocked(t.cfg, g.name, false)
 	}
 }
 

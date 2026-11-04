@@ -17,14 +17,20 @@ import (
 	"golang.getoutline.org/sdk/transport/tlsfrag"
 )
 
-// knownStrategies remembers, per network, the strategy that worked last, in
-// memory and, when Config.StateFile is set, in that file, so it survives the
-// app being stopped. Networks are kept as hashes; at most maxKnownNetworks.
+// knownStrategies remembers, per network, the strategy that worked last and
+// the groups that had to use the tunnel, in memory and, when
+// Config.StateFile is set, in that file, so it survives the app being
+// stopped. Networks and groups are kept as hashes; at most maxKnownNetworks.
 var knownStrategies = struct {
 	sync.Mutex
-	m      map[string]knownStrategy
-	loaded map[string]bool // state files already read
-}{m: map[string]knownStrategy{}, loaded: map[string]bool{}}
+	m       map[string]knownStrategy
+	blocked map[string]map[string]time.Time // network -> group -> when
+	loaded  map[string]bool                 // state files already read
+}{m: map[string]knownStrategy{}, blocked: map[string]map[string]time.Time{}, loaded: map[string]bool{}}
+
+// blockedMemory is how long a group stays known as blocked on a network
+// without being seen blocked again.
+const blockedMemory = 14 * 24 * time.Hour
 
 type knownStrategy struct {
 	Name string    `json:"name"`
@@ -73,6 +79,67 @@ func rememberStrategy(c Config, name string) {
 	saveKnownLocked(c.StateFile)
 }
 
+func groupKey(name string) string {
+	sum := sha256.Sum256([]byte(name))
+	return hex.EncodeToString(sum[:8])
+}
+
+// knownBlocked reports whether group had to use the tunnel on c's network.
+// Only with a state file: a router without one starts from direct.
+func knownBlocked(c Config, group string) bool {
+	if c.StateFile == "" {
+		return false
+	}
+	knownStrategies.Lock()
+	defer knownStrategies.Unlock()
+	loadKnownLocked(c.StateFile)
+	at, ok := knownStrategies.blocked[networkKey(c)][groupKey(group)]
+	return ok && time.Since(at) < blockedMemory
+}
+
+// rememberBlocked records whether group has to use the tunnel on c's
+// network, and saves.
+func rememberBlocked(c Config, group string, blocked bool) {
+	if c.StateFile == "" {
+		return
+	}
+	knownStrategies.Lock()
+	defer knownStrategies.Unlock()
+	loadKnownLocked(c.StateFile)
+	k, g := networkKey(c), groupKey(group)
+	at, ok := knownStrategies.blocked[k][g]
+	if blocked == ok && (!ok || time.Since(at) < time.Hour) {
+		return // unchanged and recent: no write
+	}
+	if !blocked {
+		delete(knownStrategies.blocked[k], g)
+		if len(knownStrategies.blocked[k]) == 0 {
+			delete(knownStrategies.blocked, k)
+		}
+	} else {
+		if knownStrategies.blocked[k] == nil {
+			knownStrategies.blocked[k] = map[string]time.Time{}
+		}
+		knownStrategies.blocked[k][g] = time.Now().UTC()
+	}
+	for len(knownStrategies.blocked) > maxKnownNetworks {
+		oldest, oldestAt := "", time.Time{}
+		for key, groups := range knownStrategies.blocked {
+			var latest time.Time
+			for _, t := range groups {
+				if t.After(latest) {
+					latest = t
+				}
+			}
+			if oldest == "" || latest.Before(oldestAt) {
+				oldest, oldestAt = key, latest
+			}
+		}
+		delete(knownStrategies.blocked, oldest)
+	}
+	saveKnownLocked(c.StateFile)
+}
+
 func loadKnownLocked(path string) {
 	if path == "" || knownStrategies.loaded[path] {
 		return
@@ -83,7 +150,8 @@ func loadKnownLocked(path string) {
 		return
 	}
 	var f struct {
-		Strategies map[string]knownStrategy `json:"strategies"`
+		Strategies map[string]knownStrategy        `json:"strategies"`
+		Blocked    map[string]map[string]time.Time `json:"blocked"`
 	}
 	if json.Unmarshal(b, &f) != nil {
 		return
@@ -93,13 +161,23 @@ func loadKnownLocked(path string) {
 			knownStrategies.m[k] = v
 		}
 	}
+	for k, groups := range f.Blocked {
+		if knownStrategies.blocked[k] == nil {
+			knownStrategies.blocked[k] = map[string]time.Time{}
+		}
+		for g, at := range groups {
+			if at.After(knownStrategies.blocked[k][g]) {
+				knownStrategies.blocked[k][g] = at
+			}
+		}
+	}
 }
 
 func saveKnownLocked(path string) {
 	if path == "" {
 		return
 	}
-	b, err := json.Marshal(map[string]any{"strategies": knownStrategies.m})
+	b, err := json.Marshal(map[string]any{"strategies": knownStrategies.m, "blocked": knownStrategies.blocked})
 	if err != nil {
 		return
 	}

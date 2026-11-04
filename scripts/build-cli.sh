@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 # Builds passage-cli with the iroh helper as
-# passage-cli-<version>-<os>-<arch>.tar.gz (.zip for Windows) in <out-dir>.
+# passage-cli-<version>-<os>-<arch>.tar.gz in <out-dir>. Windows gets
+# passage-<version>-windows-<arch>.zip, which adds passage.exe, the app that
+# runs in the notification area.
 # Usage: build-cli.sh <version> <out-dir> [os/arch ...]
 # Targets: linux/amd64 linux/arm64 darwin/amd64 darwin/arm64 windows/amd64
 # windows/arm64 (default: the Linux and macOS ones).
@@ -23,7 +25,11 @@ if [[ -n "${PASSAGE_LINK_AUTHOR_KEY:-}" ]]; then
   link_flags="-X github.com/mrgluek/passage/core/tunnel.AuthorKey=$PASSAGE_LINK_AUTHOR_KEY"
 fi
 work=$(mktemp -d)
-trap 'rm -rf "$work"' EXIT
+syso="$root/core/cmd/passage/rsrc_windows.syso"
+trap 'rm -rf "$work" "$syso"' EXIT
+# go-winres wants a numeric version.
+file_version=$version
+[[ $file_version =~ ^[0-9]+(\.[0-9]+){0,3}$ ]] || file_version=0.0.0
 
 cd "$root/core"
 for target in "${targets[@]}"; do
@@ -40,10 +46,23 @@ for target in "${targets[@]}"; do
   exe=""
   [[ $goos == windows ]] && exe=.exe
   name="passage-cli-$version-$goos-$goarch"
+  [[ $goos == windows ]] && name="passage-$version-$goos-$goarch"
   mkdir "$work/$name"
   CGO_ENABLED=0 GOOS=$goos GOARCH=$goarch \
     go build -trimpath -buildvcs=false -ldflags="$link_flags -X main.version=$version -s -w -buildid=" \
     -o "$work/$name/passage-cli$exe" ./cmd/passage-cli
+  if [[ $goos == windows ]]; then
+    # The icon (resource ID 1, which the window uses), version info and a
+    # manifest for per-monitor DPI.
+    (cd cmd/passage && go run github.com/tc-hib/go-winres@v0.3.3 simply --arch "$goarch" --no-suffix \
+      --out rsrc_windows.syso --icon icons/passage.ico --manifest gui \
+      --product-name Passage --file-description Passage --original-filename passage.exe \
+      --product-version "$file_version" --file-version "$file_version")
+    CGO_ENABLED=0 GOOS=$goos GOARCH=$goarch \
+      go build -trimpath -buildvcs=false -ldflags="$link_flags -X main.version=$version -s -w -buildid= -H windowsgui" \
+      -o "$work/$name/passage.exe" ./cmd/passage
+    rm -f "$syso"
+  fi
   if [[ -n "${PASSAGE_IROH_DIR:-}" ]]; then
     install -m 755 "$PASSAGE_IROH_DIR/$goos-$goarch/passage-iroh$exe" "$work/$name/passage-iroh$exe"
   else
@@ -56,4 +75,4 @@ for target in "${targets[@]}"; do
     tar -C "$work" -czf "$out/$name.tar.gz" "$name"
   fi
 done
-ls -l "$out"/passage-cli-*
+ls -l "$out"/passage-*

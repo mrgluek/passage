@@ -4,8 +4,9 @@
 
 A local SOCKS5 proxy for Android. Messaging apps on the phone that support a
 SOCKS5 proxy connect to it on `127.0.0.1`, and Passage picks the best
-available connection for them automatically. The same proxy runs on Linux,
-macOS and Windows as `passage-cli` ([On a computer](#on-a-computer)).
+available connection for them automatically. The same proxy runs on Windows
+as an app in the notification area, and on Linux, macOS and Windows as
+`passage-cli` ([On a computer](#on-a-computer)).
 
 Website: <https://passage.gluek.info>
 
@@ -82,6 +83,15 @@ send one, or make a new port and password.
 
 ## On a computer
 
+On Windows, unpack `passage-<version>-windows-amd64.zip` and run
+`passage.exe`. It shows a window like the phone app's and keeps running in
+the notification area when the window is closed. Everything stays in the
+unpacked folder: settings in `passage.ini`, the link in `link.txt` (one
+link per line) and the app history in `passage.log`. Put a new `link.txt` there to update the link; Passage reads
+it again within a few seconds. The window needs the Microsoft Edge WebView2
+Runtime, which Windows 10 and 11 usually have. SmartScreen may warn about an
+unsigned program first.
+
 Releases also have `passage-cli` for Linux and macOS (`amd64`, `arm64`) and
 Windows (`amd64`): the same proxy without the app. Unpack the archive for
 your system and run
@@ -94,9 +104,9 @@ with a link saved in `link.txt` (or no flags to run without one), then set
 the SOCKS5 proxy `127.0.0.1:18000` in the other app. `passage-cli -h` lists
 the options. Keep `passage-iroh` next to `passage-cli`: some links need it.
 On macOS, allow the unsigned binaries once with
-`xattr -dr com.apple.quarantine <unpacked folder>`. On Windows, run
-`passage-cli.exe` from a terminal in the unpacked folder; SmartScreen may
-warn about an unsigned program first.
+`xattr -dr com.apple.quarantine <unpacked folder>`. On Windows,
+`passage-cli.exe` is in the same archive as `passage.exe`; run it from a
+terminal in the unpacked folder.
 
 ## Build
 
