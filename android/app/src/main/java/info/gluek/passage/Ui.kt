@@ -16,6 +16,7 @@ import android.text.TextUtils
 import android.view.Gravity
 import android.view.View
 import android.widget.ImageButton
+import android.widget.PopupMenu
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
@@ -72,6 +73,7 @@ object Ui {
     /** A route type for people: wss -> WSS. */
     fun routeLabel(c: Context, kind: String): String = when (kind) {
         "my" -> c.getString(R.string.route_my)
+        "http" -> "HTTP"
         "wss" -> "WSS"
         "iroh" -> "Iroh"
         "soar" -> "Soar"
@@ -84,8 +86,8 @@ object Ui {
         if (strokeWidth > 0) setStroke(strokeWidth, stroke)
     }
 
-    /** One row of equal segments with [selected] highlighted; [choose] gets the tapped index. */
-    fun segments(c: Context, labels: List<String>, selected: Int, choose: (Int) -> Unit): LinearLayout {
+    /** Route buttons; [stretch] fills the remaining width when supplied. */
+    fun segments(c: Context, labels: List<String>, selected: Int, stretch: Int = -1, choose: (Int) -> Unit): LinearLayout {
         val accent = accent(c)
         val radius = dp(c, 18).toFloat()
         return LinearLayout(c).apply {
@@ -99,6 +101,9 @@ object Ui {
                     gravity = Gravity.CENTER
                     textSize = 14f
                     maxLines = 1
+                    ellipsize = TextUtils.TruncateAt.END
+                    minHeight = dp(c, 48)
+                    minWidth = dp(c, 48)
                     setPadding(dp(c, 4), dp(c, 8), dp(c, 4), dp(c, 8))
                     if (i == selected) {
                         setTextColor(Color.WHITE)
@@ -106,35 +111,64 @@ object Ui {
                         background = rounded(radius, accent)
                     } else {
                         setTextColor(accent)
-                        setOnClickListener { choose(i) }
                     }
+                    setOnClickListener { choose(i) }
                     isSelected = i == selected
                     contentDescription = label
-                }, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+                }, if (stretch < 0 || i == stretch)
+                    LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+                else LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT))
             }
         }
     }
 
-    /**
-     * The route choice: Auto, each route type in the link, Direct. A change
-     * is saved and, while the proxy runs, applied through [run].
-     */
+    /** Auto, optional My, installed routes, Direct. */
     fun routeSelector(c: Context, settings: Settings, run: (Runnable) -> Unit, changed: () -> Unit): View {
-        val choices = listOf("auto" to c.getString(R.string.mode_auto)) +
-            settings.routeKinds.map { it to routeLabel(c, it) } +
-            ("off" to c.getString(R.string.mode_off))
-        val selected = choices.indexOfFirst { it.first == settings.mode }.coerceAtLeast(0)
-        return segments(c, choices.map { it.second }, selected) { i ->
-            val mode = choices[i].first
-            settings.mode = mode
+        val routes = settings.installedRoutes
+        val mode = settings.mode
+        val fixed = routes.firstOrNull { it.mode == mode }
+        val choices = mutableListOf("auto" to c.getString(R.string.mode_auto))
+        if (settings.myRoute.isNotEmpty()) choices += "my" to c.getString(R.string.route_my)
+        val menuIndex = if (routes.isEmpty()) -1 else choices.size
+        if (routes.isNotEmpty()) choices += "routes" to (fixed?.id ?: c.getString(R.string.route_menu))
+        choices += "off" to c.getString(R.string.mode_off)
+        val selected = if (fixed != null) menuIndex else choices.indexOfFirst { it.first == mode }.coerceAtLeast(0)
+        fun choose(value: String) {
+            settings.mode = value
             if (PassageService.active) run(Runnable {
                 try {
-                    Native.setMode(mode.toByteArray(Charsets.UTF_8))
+                    Native.setMode(value.toByteArray(Charsets.UTF_8))
                 } catch (_: Throwable) {
                 }
             })
             changed()
         }
+        lateinit var bar: LinearLayout
+        bar = segments(c, choices.map { it.second }, selected, menuIndex) { i ->
+            if (i == menuIndex) {
+                PopupMenu(c, bar.getChildAt(i)).apply {
+                    routes.forEachIndexed { index, route ->
+                        val label = if (route.id == route.type) "${route.priority} ${route.id}"
+                            else "${route.priority} ${route.id} (${route.type})"
+                        menu.add(0, index, index, label).apply {
+                            isCheckable = true
+                            isChecked = route.mode == mode
+                        }
+                    }
+                    menu.setGroupCheckable(0, true, true)
+                    setOnMenuItemClickListener { item -> choose(routes[item.itemId].mode); true }
+                    show()
+                }
+            } else choose(choices[i].first)
+        }
+        if (menuIndex >= 0) (bar.getChildAt(menuIndex) as TextView).apply {
+            setCompoundDrawablesRelativeWithIntrinsicBounds(0, 0, R.drawable.ic_dropdown, 0)
+            compoundDrawablePadding = dp(c, 2)
+            compoundDrawableTintList = ColorStateList.valueOf(if (fixed == null) accent(c) else Color.WHITE)
+            contentDescription = if (fixed == null) c.getString(R.string.route_menu)
+                else "${fixed.priority} ${fixed.id} (${fixed.type})"
+        }
+        return bar
     }
 
     /**

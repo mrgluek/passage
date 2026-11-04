@@ -35,7 +35,7 @@ func main() {
 	linkFile := flag.String("link-file", "", "read the Passage link from this file")
 	systemDNS := flag.Bool("system-dns", true, "add this machine's DNS servers (resolv.conf) as first resolver paths")
 	operator := flag.String("operator", "", "SIM operator MCC+MNC (e.g. 25001) to add its known resolvers")
-	mode := flag.String("mode", tunnel.ModeAuto, "auto, always, off, or a route type (my, wss, iroh, soar)")
+	mode := flag.String("mode", tunnel.ModeAuto, "auto, always, off, route:<id>, or a route type (my, http, wss, iroh, soar)")
 	my := flag.String("my", "", "your own SOCKS5 proxy as a route: [user:pass@]host:port, a socks5:// URL or a t.me/socks link")
 	listen := flag.String("listen", "127.0.0.1:18000", "SOCKS5 listen address")
 	user := flag.String("user", "", "SOCKS5 username (empty = no auth)")

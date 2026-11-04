@@ -121,8 +121,13 @@ imports require the unverified-author confirmation.
 
 V2 links add routes or replace the saved set after confirmation. Connections
 try routes in priority order. Importing while running restarts the proxy.
+The route menu shows each route's priority, ID and type. Selecting one uses
+only that route; `passage-cli` accepts `-mode route:<id>` too.
 The shared link codec is copied from `passage-link` with
 `scripts/sync-link-codec.sh`; builds do not need that checkout.
+
+Experimental HTTP routes use streaming HTTPS GET requests and can be selected
+with `-mode http`. They require a matching `passage-http-exit` origin and a v2 link.
 
 ## License
 

@@ -88,6 +88,12 @@ type WSSParams struct {
 	Key      []byte `json:"key"`
 }
 
+type HTTPParams struct {
+	Endpoint string `json:"endpoint"`
+	Key      []byte `json:"key"`
+	DialIP   string `json:"dial_ip,omitempty"`
+}
+
 type IrohParams struct {
 	Ticket string    `json:"ticket"`
 	Relay  string    `json:"relay"`
@@ -265,6 +271,21 @@ func ValidateRoute(r Route) (bool, error) {
 				return true, err
 			}
 		}
+	case "http/http-v1":
+		p, err := Params[HTTPParams](r)
+		if err != nil {
+			return true, err
+		}
+		if p.DialIP != "" && net.ParseIP(p.DialIP) == nil {
+			return true, errors.New("invalid HTTP dial IP")
+		}
+		if len(p.Endpoint) > 1024 || !strings.HasPrefix(p.Endpoint, "https://") {
+			return true, errors.New("invalid HTTP endpoint")
+		}
+		copy := r
+		copy.Type, copy.Wire = "wss", "wss-v1"
+		copy.Params = map[string]any{"endpoint": "wss://" + strings.TrimPrefix(p.Endpoint, "https://"), "key": p.Key}
+		return ValidateRoute(copy)
 	case "wss/wss-v1":
 		p, err := Params[WSSParams](r)
 		if err != nil {

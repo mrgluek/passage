@@ -141,6 +141,8 @@ func routeLabel(t tr, kind string) string {
 	switch kind {
 	case "my":
 		return t.f("route_my")
+	case "http":
+		return "HTTP"
 	case "wss":
 		return "WSS"
 	case "iroh":

@@ -191,13 +191,12 @@ class MainActivity : Activity() {
     }
 
     /** The route choice, rebuilt when the link or the choice changes. */
-    private fun showRoutes(hasLink: Boolean) {
-        val key = "$hasLink ${settings.routeKinds} ${settings.mode}"
+    private fun showRoutes() {
+        val key = "${settings.installedRoutes} ${settings.myRoute.isNotEmpty()} ${settings.mode}"
         if (key == shownRoutes) return
         shownRoutes = key
         routeBox.removeAllViews()
-        routeBox.visibility = if (hasLink) View.VISIBLE else View.GONE
-        if (hasLink) routeBox.addView(Ui.routeSelector(this, settings, worker::execute) { refresh() })
+        routeBox.addView(Ui.routeSelector(this, settings, worker::execute) { refresh() })
     }
 
     /** Host, port and credentials, each copied on tap. */
@@ -279,7 +278,7 @@ class MainActivity : Activity() {
         }
         val hasLink = settings.link.isNotEmpty()
         noLinkBox.visibility = if (hasLink) View.GONE else View.VISIBLE
-        showRoutes(hasLink)
+        showRoutes()
         showDetails()
         batteryButton.visibility = if (Ui.batteryExempt(this)) View.GONE else View.VISIBLE
         worker.execute {

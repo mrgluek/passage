@@ -17,6 +17,7 @@
 
     <string name="save">Save</string>
 
+    <string name="route_menu">Routes</string>
     <string name="route_label">Route</string>
     <string name="mode_auto">Auto</string>
     <string name="mode_off">Direct</string>

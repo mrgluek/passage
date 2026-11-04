@@ -167,7 +167,7 @@ type Tunnel struct {
 
 	mu          sync.Mutex
 	mode        string
-	only        string            // route type the tunnel is limited to, with mode always
+	only        string            // route type or ID the tunnel is limited to, with mode always
 	relays      map[string]*group // by host name
 	telegram    *group
 	other       *group
@@ -233,7 +233,7 @@ func Start(cfg Config) (*Tunnel, error) {
 		return nil, err
 	}
 	mode := cfg.Mode
-	if slices.Contains(RouteKinds, mode) {
+	if routeMode(mode) {
 		mode = ModeAlways
 	}
 	t := &Tunnel{
@@ -287,7 +287,7 @@ func Start(cfg Config) (*Tunnel, error) {
 		}
 	}
 	if mode != cfg.Mode && !t.restrict(cfg.Mode) {
-		// The chosen route type is not in the link (any more): back to auto.
+		// The chosen route is no longer installed: back to auto.
 		t.mode = ModeAuto
 		t.telegram = newGroup("telegram", kindTelegram, RouteDirect)
 		t.other = newGroup("other", kindOther, RouteDirect)
@@ -520,8 +520,7 @@ func (t *Tunnel) Close() {
 	t.wg.Wait()
 }
 
-// restrict limits the tunnel to routes of one type ("" = all). It reports
-// false when no configured route has that type.
+// restrict limits the tunnel to a type or route ID ("" = all).
 func (t *Tunnel) restrict(kind string) bool {
 	ok := false
 	switch c := t.client.(type) {
@@ -530,7 +529,7 @@ func (t *Tunnel) restrict(kind string) bool {
 	case *routePool:
 		ok = c.restrict(kind)
 	default: // a link without a route list: one soar route
-		ok = kind == "" || kind == "soar"
+		ok = kind == "" || kind == "soar" || kind == "route:legacy-dns"
 	}
 	if ok {
 		t.mu.Lock()
@@ -541,13 +540,16 @@ func (t *Tunnel) restrict(kind string) bool {
 }
 
 // SetMode switches between auto, always and off, or forces the tunnel
-// through one route type.
+// through one route type or installed route ID.
 func (t *Tunnel) SetMode(mode string) error {
+	t.mu.Lock()
+	previous := t.only
+	t.mu.Unlock()
 	kind := ""
 	switch mode {
 	case ModeAuto, ModeAlways, ModeOff:
 	default:
-		if !slices.Contains(RouteKinds, mode) {
+		if !routeMode(mode) {
 			return errors.New("unknown mode " + mode)
 		}
 		kind, mode = mode, ModeAlways
@@ -557,6 +559,15 @@ func (t *Tunnel) SetMode(mode string) error {
 	}
 	t.mu.Lock()
 	t.mode = mode
+	if previous != kind {
+		t.routeGen.Add(1)
+		for c := range t.conns {
+			if c.route == RouteTunnel {
+				c.local.Close()
+				c.remote.Close()
+			}
+		}
+	}
 	if mode == ModeAlways && t.ways[RouteTunnel].dial == nil {
 		mode = ModeAuto
 		t.mode = mode

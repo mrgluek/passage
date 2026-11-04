@@ -11,6 +11,7 @@ import (
 	"os"
 	"slices"
 	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -47,7 +48,7 @@ type routePool struct {
 	mu          sync.Mutex
 	failedUntil map[int]time.Time
 	refused     map[string]time.Time // "route index|address" -> until
-	only        string               // when set, only routes of this type are tried
+	only        string               // a route type or route:<id>; empty tries all
 	now         func() time.Time     // for tests; nil = time.Now
 }
 
@@ -89,6 +90,17 @@ func newRoutePool(cfg Config) (soarClient, error) {
 				resolvers, _ = withoutIPv6(resolvers)
 			}
 			client = newLazySoar(soar.Config{Zone: params.Zone, ServerKey: ed25519.PublicKey(params.Key), Resolvers: resolvers, TCP: "auto", SafeQName: cmp.Or(cfg.SafeQName, soarSafeQName), MaxPathWindow: soarPathWindow, DialTCP: dialResolver, StreamOnly: isDoT, Logger: slog.New(slog.NewTextHandler(io.Discard, nil))})
+		case "http":
+			params, err := links.Params[links.HTTPParams](r)
+			if err != nil {
+				p.Close()
+				return nil, err
+			}
+			client, err = NewHTTPClient(params)
+			if err != nil {
+				p.Close()
+				return nil, err
+			}
 		case "wss":
 			params, err := links.Params[links.WSSParams](r)
 			if err != nil {
@@ -167,6 +179,13 @@ func (p *routePool) DialContext(ctx context.Context, network, address string) (n
 		case r := <-results:
 			pending--
 			if r.err == nil {
+				p.mu.Lock()
+				allowed := p.matches(r.i, p.only)
+				p.mu.Unlock()
+				if !allowed {
+					r.conn.Close()
+					continue
+				}
 				stop()
 				drain()
 				p.mark(r.i, false)
@@ -254,7 +273,7 @@ func (p *routePool) order(ip net.IP) []int {
 	now := p.clock()
 	var ready, cooling []int
 	for i := range p.clients {
-		if ip != nil && ip.To4() == nil && !p.ipv6[i] || p.only != "" && p.kinds[i] != p.only {
+		if ip != nil && ip.To4() == nil && !p.ipv6[i] || !p.matches(i, p.only) {
 			continue
 		}
 		if now.Before(p.failedUntil[i]) {
@@ -266,15 +285,29 @@ func (p *routePool) order(ip net.IP) []int {
 	return append(ready, cooling...)
 }
 
-// restrict limits new connections to routes of one type; "" allows all.
-// It reports false, changing nothing, when no route has that type.
-func (p *routePool) restrict(kind string) bool {
+// matches is called with p.mu held.
+func (p *routePool) matches(i int, selection string) bool {
+	if selection == "" {
+		return true
+	}
+	if id, ok := strings.CutPrefix(selection, "route:"); ok {
+		return i < len(p.ids) && p.ids[i] == id && p.kinds[i] != "my"
+	}
+	return p.kinds[i] == selection
+}
+
+// restrict limits new connections to a type or route ID ("" = all).
+func (p *routePool) restrict(selection string) bool {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	if kind != "" && !slices.Contains(p.kinds, kind) {
+	found := selection == ""
+	for i := range p.clients {
+		found = found || p.matches(i, selection)
+	}
+	if !found {
 		return false
 	}
-	p.only = kind
+	p.only = selection
 	return true
 }
 
