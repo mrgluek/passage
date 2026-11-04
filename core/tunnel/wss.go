@@ -65,15 +65,16 @@ var (
 
 // WSSClient opens TCP streams through a WebSocket exit, several per session.
 type WSSClient struct {
-	httpMode   bool
-	params     links.WSSParams
-	httpClient *http.Client
-	mu         sync.Mutex
-	closed     bool
-	sessions   []*wssSession
-	dialing    chan struct{} // closed when the pending session dial ends
-	life       context.Context
-	cancel     context.CancelFunc
+	httpMode    bool
+	httpSilence time.Duration
+	params      links.WSSParams
+	httpClient  *http.Client
+	mu          sync.Mutex
+	closed      bool
+	sessions    []*wssSession
+	dialing     chan struct{} // closed when the pending session dial ends
+	life        context.Context
+	cancel      context.CancelFunc
 }
 
 func NewWSSClient(params links.WSSParams) (*WSSClient, error) {

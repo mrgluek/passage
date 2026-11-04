@@ -22,6 +22,13 @@ import (
 const httpChunk = 3072
 const httpSessionHeader = "X-Passage-Session"
 
+// The exit sends an empty chunk every httpKeepAlive. A session that hears
+// nothing for httpSilence is dead: the connection can stall without closing.
+const (
+	httpKeepAlive = 20 * time.Second
+	httpSilence   = 50 * time.Second
+)
+
 // NewHTTPClient carries encrypted streams through bodyless HTTPS GET requests.
 func NewHTTPClient(params links.HTTPParams) (*WSSClient, error) {
 	r := links.Route{ID: "http", Type: "http", Wire: "http-v1", Params: map[string]any{"endpoint": params.Endpoint, "key": params.Key, "dial_ip": params.DialIP}}
@@ -36,6 +43,7 @@ func NewHTTPClient(params links.HTTPParams) (*WSSClient, error) {
 	// Separate authentication and record keys from wss-v1.
 	c.params.Key = wssKey(params.Key, nil, "http-v1")
 	c.httpMode = true
+	c.httpSilence = httpSilence
 	tr := c.httpClient.Transport.(*http.Transport)
 	tr.DisableCompression = true
 	tr.ResponseHeaderTimeout = 10 * time.Second
@@ -87,7 +95,9 @@ func (c *WSSClient) dialHTTPSession(ctx context.Context) (*wssSession, error) {
 		defer cancel()
 		defer resp.Body.Close()
 		defer bridge.Close()
-		s.fail(httpDownload(resp.Body, bridge))
+		silent := time.AfterFunc(c.httpSilence, cancel)
+		defer silent.Stop()
+		s.fail(httpDownload(resp.Body, bridge, func() { silent.Reset(c.httpSilence) }))
 	}()
 	go func() {
 		defer cancel()
@@ -135,12 +145,13 @@ func (c *WSSClient) dialHTTPSession(ctx context.Context) (*wssSession, error) {
 		return nil, ctx.Err()
 	}
 }
-func httpDownload(src io.Reader, dst io.Writer) error {
+func httpDownload(src io.Reader, dst io.Writer, alive func()) error {
 	var head [2]byte
 	for {
 		if _, err := io.ReadFull(src, head[:]); err != nil {
 			return err
 		}
+		alive()
 		n := int(binary.BigEndian.Uint16(head[:]))
 		if n > httpChunk {
 			return errors.New("invalid HTTP chunk")
@@ -280,7 +291,7 @@ func (e *HTTPExit) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}()
-	ticker := time.NewTicker(20 * time.Second)
+	ticker := time.NewTicker(httpKeepAlive)
 	defer ticker.Stop()
 	rc := http.NewResponseController(w)
 	for {
