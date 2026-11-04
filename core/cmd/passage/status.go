@@ -80,6 +80,13 @@ func onlyType(s tunnel.Status) string {
 	if slices.Contains(tunnel.RouteKinds, s.Mode) {
 		return s.Mode
 	}
+	if id, ok := strings.CutPrefix(s.Mode, "route:"); ok {
+		for _, r := range s.Tunnels {
+			if r.ID == id {
+				return r.Type
+			}
+		}
+	}
 	var types []string
 	for _, r := range s.Tunnels {
 		if !slices.Contains(types, r.Type) {
