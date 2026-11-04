@@ -6,6 +6,7 @@
   Settings → Updates. The download continues where it stopped.
 - Passage for macOS: a development build of the menu bar app, which you build
   from source.
+- Fixes a crash on older Android versions when a link route starts its helper.
 
 ## 0.6.0
 
