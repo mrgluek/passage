@@ -24,18 +24,28 @@ import "C"
 
 import (
 	"context"
+	"crypto/ed25519"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"sync"
+	"sync/atomic"
 	"time"
 	"unsafe"
 
 	"github.com/mrgluek/passage/core/tunnel"
+	"github.com/mrgluek/passage/core/update"
 )
 
 var (
 	mu  sync.Mutex
 	cur *tunnel.Tunnel
+
+	updateMu     sync.Mutex
+	offer        *update.Offer
+	stopDownload context.CancelFunc
+	updateDone   atomic.Int64
+	updateTotal  atomic.Int64
 )
 
 // cgo maps JNI object types to uintptr, so a null array is 0.
@@ -188,11 +198,116 @@ func Java_info_gluek_passage_Native_diagnose(env *C.JNIEnv, cls C.jclass) C.jbyt
 	return result(env, t.Diagnose(ctx))
 }
 
-// versions returns {"soar": "<module version>"} for the About screen.
+// versions returns {"soar": "<module version>", "updates": "<key>"} for the
+// About screen; a build without the update key has none.
 //
 //export Java_info_gluek_passage_Native_versions
 func Java_info_gluek_passage_Native_versions(env *C.JNIEnv, cls C.jclass) C.jbyteArray {
-	return result(env, map[string]string{"soar": tunnel.SoarVersion()})
+	return result(env, map[string]string{"soar": tunnel.SoarVersion(), "updates": update.PublicKey})
+}
+
+func updateClient(sources []string) (*update.Client, error) {
+	key, err := base64.RawURLEncoding.DecodeString(update.PublicKey)
+	if err != nil || len(key) != ed25519.PublicKeySize {
+		return nil, errors.New("this build has no update key")
+	}
+	return &update.Client{
+		Key:     ed25519.PublicKey(key),
+		Sources: update.Sources(sources),
+		Dials: func() []update.Dial {
+			mu.Lock()
+			t := cur
+			mu.Unlock()
+			if t == nil {
+				return nil
+			}
+			return t.Dials()
+		},
+	}, nil
+}
+
+// updateCheck takes {"version", "target", "sources"} and returns the newer
+// release as {"version", "file"}, or {} when there is none. It blocks for up
+// to about 45 seconds; the app calls it off the UI thread.
+//
+//export Java_info_gluek_passage_Native_updateCheck
+func Java_info_gluek_passage_Native_updateCheck(env *C.JNIEnv, cls C.jclass, request C.jbyteArray) C.jbyteArray {
+	var in struct {
+		Version string   `json:"version"`
+		Target  string   `json:"target"`
+		Sources []string `json:"sources"`
+	}
+	if err := json.Unmarshal([]byte(goString(env, request)), &in); err != nil {
+		return fail(env, errors.New("invalid update request"))
+	}
+	client, err := updateClient(in.Sources)
+	if err != nil {
+		return fail(env, err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
+	defer cancel()
+	found, err := client.Check(ctx, in.Version, in.Target)
+	if err != nil {
+		return fail(env, err)
+	}
+	updateMu.Lock()
+	defer updateMu.Unlock()
+	if stopDownload == nil {
+		offer = found
+	}
+	if found == nil {
+		return result(env, map[string]string{})
+	}
+	return result(env, found)
+}
+
+// updateDownload saves the last offer at the path in dest. It blocks until
+// the file is complete, or updateCancel stops it.
+//
+//export Java_info_gluek_passage_Native_updateDownload
+func Java_info_gluek_passage_Native_updateDownload(env *C.JNIEnv, cls C.jclass, dest C.jbyteArray) C.jbyteArray {
+	client, err := updateClient(nil)
+	if err != nil {
+		return fail(env, err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	updateMu.Lock()
+	if offer == nil || stopDownload != nil {
+		updateMu.Unlock()
+		return fail(env, errors.New("nothing to download"))
+	}
+	current := offer
+	stopDownload = cancel
+	updateMu.Unlock()
+	defer func() {
+		updateMu.Lock()
+		stopDownload = nil
+		updateMu.Unlock()
+	}()
+	updateDone.Store(0)
+	updateTotal.Store(current.File.Size)
+	path := goString(env, dest)
+	if err := client.Download(ctx, current, path, func(done, _ int64) { updateDone.Store(done) }); err != nil {
+		return fail(env, err)
+	}
+	return result(env, map[string]string{"path": path})
+}
+
+// updateProgress returns {"done", "total"} in bytes.
+//
+//export Java_info_gluek_passage_Native_updateProgress
+func Java_info_gluek_passage_Native_updateProgress(env *C.JNIEnv, cls C.jclass) C.jbyteArray {
+	return result(env, map[string]int64{"done": updateDone.Load(), "total": updateTotal.Load()})
+}
+
+//export Java_info_gluek_passage_Native_updateCancel
+func Java_info_gluek_passage_Native_updateCancel(env *C.JNIEnv, cls C.jclass) {
+	updateMu.Lock()
+	defer updateMu.Unlock()
+	if stopDownload != nil {
+		stopDownload()
+	}
 }
 
 func main() {}

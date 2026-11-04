@@ -40,7 +40,7 @@ other apps on the phone. It has two parts:
 Go router (from `core/`; `cmd/libpassage` builds for Android only):
 
 ```bash
-go vet ./tunnel ./internal/... ./cmd/passage-cli ./cmd/passage ./cmd/passage-http-exit
+go vet ./tunnel ./update ./internal/... ./cmd/passage-cli ./cmd/passage ./cmd/passage-http-exit ./cmd/passage-update-manifest
 go test -race ./...
 ```
 
@@ -91,6 +91,13 @@ those that only touch the website, store listing or docs.
 3. Tag `v<version>` on `main` and push the tag; `release.yml` builds, signs
    and publishes the APKs and `passage-cli` archives with `SHA256SUMS`, then
    deploys the website.
+
+The release also signs `update.json`, the manifest the app's update check
+reads, with the `PASSAGE_UPDATE_KEY` secret of the `release` environment.
+`passage-update-manifest keygen` makes the key. Its public half is the
+`PASSAGE_UPDATE_PUBLIC_KEY` variable, built into the app; without it the app
+shows no updates. The `PASSAGE_UPDATE_SOURCES` variable adds comma-separated
+sources: directories with `update.json` and the APKs, like `fdroid/repo`.
 
 ## Website and F-Droid repository
 

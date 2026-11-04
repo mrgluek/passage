@@ -44,6 +44,7 @@ class SettingsActivity : Activity() {
     private lateinit var backgroundState: TextView
     private lateinit var routeBox: LinearLayout
     private lateinit var aboutView: TextView
+    private lateinit var updatesButton: Button
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -198,6 +199,12 @@ class SettingsActivity : Activity() {
         col.addView(Ui.heading(this, getString(R.string.about_label)))
         aboutView = Ui.hint(this, "")
         col.addView(aboutView)
+        updatesButton = Button(this).apply {
+            text = getString(R.string.updates_label)
+            visibility = View.GONE
+            setOnClickListener { startActivity(Intent(this@SettingsActivity, UpdateActivity::class.java)) }
+        }
+        col.addView(updatesButton)
         col.addView(Ui.hint(this, getString(R.string.about_cert)).apply {
             setPadding(0, Ui.dp(this@SettingsActivity, 12), 0, 0)
         })
@@ -226,7 +233,11 @@ class SettingsActivity : Activity() {
         })
         worker.execute {
             val text = about()
-            runOnUiThread { aboutView.text = text }
+            val updates = Updater.enabled()
+            runOnUiThread {
+                aboutView.text = text
+                if (updates) updatesButton.visibility = View.VISIBLE
+            }
         }
 
         return Ui.scroll(this, col)

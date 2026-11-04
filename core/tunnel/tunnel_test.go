@@ -1044,3 +1044,18 @@ func TestStrategySurvivesARestart(t *testing.T) {
 		t.Fatalf("a forgotten strategy came back: %q", got)
 	}
 }
+
+func TestDialsFollowMode(t *testing.T) {
+	dial := func(context.Context, string, string) (net.Conn, error) { return nil, errors.New("unused") }
+	for _, c := range []struct {
+		mode string
+		want int
+	}{{ModeAuto, 2}, {ModeAlways, 1}, {ModeOff, 1}} {
+		tu := &Tunnel{mode: c.mode}
+		tu.ways[RouteDirect] = way{dial: dial}
+		tu.ways[RouteTunnel] = way{dial: dial}
+		if got := len(tu.Dials()); got != c.want {
+			t.Errorf("mode %s: %d routes", c.mode, got)
+		}
+	}
+}

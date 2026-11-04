@@ -53,8 +53,8 @@ jobs:
       - name: Go vet and test
         working-directory: ./core
         run: |
-          go vet ./tunnel ./internal/... ./cmd/passage-cli ./cmd/passage ./cmd/passage-http-exit
-          GOOS=windows go vet ./tunnel ./internal/... ./cmd/passage-cli ./cmd/passage ./cmd/passage-http-exit
+          go vet ./tunnel ./update ./internal/... ./cmd/passage-cli ./cmd/passage ./cmd/passage-http-exit ./cmd/passage-update-manifest
+          GOOS=windows go vet ./tunnel ./update ./internal/... ./cmd/passage-cli ./cmd/passage ./cmd/passage-http-exit ./cmd/passage-update-manifest
           go test -race ./...
 
 

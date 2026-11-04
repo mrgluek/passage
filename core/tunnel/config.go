@@ -64,14 +64,16 @@ const maxResolvers = 64
 
 // Config combines server settings from the link with local app state.
 type Config struct {
-	Routes     []links.Route `json:"routes,omitempty"`
-	IrohBinary string        `json:"iroh_binary,omitempty"`
-	PrivateDir string        `json:"private_dir,omitempty"`
-	Zone       string        `json:"zone"`
-	Key        string        `json:"key"` // server Ed25519 public key, standard base64
-	Resolvers  []string      `json:"resolvers"`
-	Canaries   []string      `json:"canaries,omitempty"`
-	TunnelIPv6 bool          `json:"tunnel_ipv6,omitempty"` // IPv6 destinations allowed by the server
+	Routes []links.Route `json:"routes,omitempty"`
+	// UpdateSources comes from a link signed by the trusted author.
+	UpdateSources []string `json:"update_sources,omitempty"`
+	IrohBinary    string   `json:"iroh_binary,omitempty"`
+	PrivateDir    string   `json:"private_dir,omitempty"`
+	Zone          string   `json:"zone"`
+	Key           string   `json:"key"` // server Ed25519 public key, standard base64
+	Resolvers     []string `json:"resolvers"`
+	Canaries      []string `json:"canaries,omitempty"`
+	TunnelIPv6    bool     `json:"tunnel_ipv6,omitempty"` // IPv6 destinations allowed by the server
 	// ProbeTargets fixes the hosts the monitor TLS-probes to decide the route
 	// (host:port, bare host = :443). Empty = learn them from the hostnames
 	// that pass through the proxy.

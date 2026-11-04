@@ -77,6 +77,20 @@ class Settings(context: Context) {
         set(v) = prefs.edit().putBoolean("running", v).apply()
 
 
+    /** Check for a new version once a day while the proxy runs. */
+    var updateChecks: Boolean
+        get() = prefs.getBoolean("update_checks", true)
+        set(v) = prefs.edit().putBoolean("update_checks", v).apply()
+
+    var nextUpdateCheck: Long
+        get() = prefs.getLong("next_update_check", 0)
+        set(v) = prefs.edit().putLong("next_update_check", v).apply()
+
+    /** The newest version the user was told about, to tell them once. */
+    var notifiedVersion: String
+        get() = prefs.getString("notified_version", "") ?: ""
+        set(v) = prefs.edit().putString("notified_version", v).apply()
+
     /** The notification explainer was shown (Android 13+ asks at most twice). */
     var askedNotifications: Boolean
         get() = prefs.getBoolean("asked_notifications", false)

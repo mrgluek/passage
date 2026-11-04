@@ -25,6 +25,7 @@ import (
 
 const MaxBytes = 65536
 const MaxRoutes = 6
+const MaxUpdates = 4
 const CompactBytes = 1024
 
 var idPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]{0,47}$`)
@@ -66,6 +67,8 @@ type Bundle struct {
 	Signer      []byte   `json:"signer,omitempty" cbor:"signer,omitempty"`
 	Routes      []Route  `json:"routes" cbor:"routes"`
 	Required    []string `json:"required,omitempty" cbor:"required,omitempty"`
+	// Updates lists more addresses where app releases are published.
+	Updates []string `json:"updates,omitempty" cbor:"updates,omitempty"`
 }
 type Decoded struct {
 	Bundle      Bundle   `json:"bundle"`
@@ -355,6 +358,14 @@ func (b Bundle) Validate() ([]string, error) {
 	}
 	if b.ReviewAfter != 0 && b.ReviewAfter < b.IssuedAt {
 		return nil, errors.New("invalid review date")
+	}
+	if len(b.Updates) > MaxUpdates {
+		return nil, errors.New("too many update addresses")
+	}
+	for _, s := range b.Updates {
+		if u, err := url.Parse(s); err != nil || len(s) > 256 || u.Scheme != "https" || u.Host == "" {
+			return nil, errors.New("invalid update address")
+		}
 	}
 	ids := map[string]bool{}
 	unsupported := []string{}

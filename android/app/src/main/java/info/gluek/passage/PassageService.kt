@@ -38,6 +38,7 @@ class PassageService : Service() {
         private const val RETRY_MS = 15_000L
         private const val NET_SETTLE_MS = 2_000L
         private const val BATTERY_SAMPLE_MS = 10 * 60_000L
+        private const val UPDATE_SETTLE_MS = 5 * 60_000L
 
         /** The service is up (the proxy may still be starting or retrying). */
         @Volatile
@@ -74,6 +75,7 @@ class PassageService : Service() {
     private var lastNet: Pair<List<String>, String>? = null
     private var lastNotification: Pair<String, String>? = null
     private var lastBatterySample = 0L
+    private val startedAt = System.currentTimeMillis()
 
     private val tick = object : Runnable {
         override fun run() {
@@ -84,6 +86,7 @@ class PassageService : Service() {
                     updateWakeLock(status)
                     updateNotification(status)
                     sampleBattery()
+                    checkForUpdate()
                 } finally {
                     // With a Soar route, check often: its polling needs the
                     // wake lock soon after it starts carrying connections.
@@ -220,6 +223,13 @@ class PassageService : Service() {
         } catch (e: Throwable) {
             Diagnostics.error("battery sample failed", e)
         }
+    }
+
+    /** On its own thread: a check can take most of a minute. */
+    private fun checkForUpdate() {
+        if (System.currentTimeMillis() - startedAt < UPDATE_SETTLE_MS || !Updater.due(this)) return
+        val app = applicationContext
+        Thread({ Updater.checkNow(app) }, "passage-update-check").start()
     }
 
     /** Network events come in bursts (Wi-Fi off = lost + available + link changes). */

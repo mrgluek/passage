@@ -145,4 +145,17 @@
     <string name="my_route_invalid">Укажите host:port, например 127.0.0.1:9050</string>
     <string name="my_route_saved">Мой маршрут сохранён</string>
     <string name="my_route_removed">Мой маршрут удалён</string>
+    <string name="updates_label">Обновления</string>
+    <string name="update_check">Проверить обновления</string>
+    <string name="update_checking">Проверяем обновления…</string>
+    <string name="update_latest">Версия %1$s последняя.</string>
+    <string name="update_available">Доступна версия %1$s</string>
+    <string name="update_tap">Нажмите, чтобы скачать.</string>
+    <string name="update_download">Скачать</string>
+    <string name="update_downloading">Скачиваем версию %1$s…</string>
+    <string name="update_ready">Версия %1$s готова к установке.</string>
+    <string name="update_install">Установить</string>
+    <string name="update_failed">Не удалось: %1$s</string>
+    <string name="update_auto">Проверять раз в день, пока прокси включён</string>
+    <string name="update_auto_help">Passage сам только проверяет и сообщает, а скачивание и установку запускаете вы. Android попросит подтвердить установку и примет только версию с той же подписью.</string>
 </resources>

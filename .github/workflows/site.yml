@@ -42,7 +42,7 @@ jobs:
           TAG: ${{ inputs.tag }}
         run: |
           tag=${TAG:-$(gh release view --json tagName -q .tagName)}
-          gh release download "$tag" --pattern 'passage-*.apk' --dir dist
+          gh release download "$tag" --pattern 'passage-*.apk' --pattern update.json --dir dist
           echo "TAG=$tag" >> "$GITHUB_ENV"
 
       - name: Install fdroidserver

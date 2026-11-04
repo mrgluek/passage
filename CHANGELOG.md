@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.6.1
+
+- Passage can check for a new version and install it from inside the app, in
+  Settings → Updates. The download continues where it stopped.
+
 ## 0.6.0
 
 - Adds a new connection type for links (HTTP).

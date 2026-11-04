@@ -9,6 +9,7 @@ class UpdateReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
         if (intent.action != Intent.ACTION_MY_PACKAGE_REPLACED) return
         Diagnostics.event("app updated")
+        Updater.clear(context)
         if (Settings(context).running) PassageService.start(context, "app updated")
     }
 }

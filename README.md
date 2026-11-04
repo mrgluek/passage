@@ -45,6 +45,12 @@ C3:C9:73:50:37:FF:A5:00:6D:D9:88:AB:29:D6:11:D6:A4:41:31:E5:3F:D8:1D:FA:CF:06:49
 
 Passage shows the same fingerprint in Settings → About.
 
+### Updates in the app
+
+Settings → **Updates** checks for a new version, downloads it and asks Android
+to install it. With the proxy on, the app also checks once a day and shows a
+notification; this can be turned off on the same screen.
+
 ### Updates with F-Droid
 
 Passage has its own F-Droid repository. Open
