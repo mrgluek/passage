@@ -140,10 +140,10 @@ func TestHTTPIdleChunksAndTruncation(t *testing.T) {
 	packet = binary.BigEndian.AppendUint16(packet, 3)
 	packet = append(packet, "abc"...)
 	var out bytes.Buffer
-	if err := httpDownload(bytes.NewReader(packet), &out); err != io.EOF || out.String() != "abc" {
+	if err := httpDownload(bytes.NewReader(packet), &out, func() {}); err != io.EOF || out.String() != "abc" {
 		t.Fatalf("%q %v", out.String(), err)
 	}
-	if err := httpDownload(bytes.NewReader([]byte{0, 3, 1}), io.Discard); err == nil {
+	if err := httpDownload(bytes.NewReader([]byte{0, 3, 1}), io.Discard, func() {}); err == nil {
 		t.Fatal("truncated download accepted")
 	}
 }
@@ -246,5 +246,49 @@ func TestHTTPBrokenDownloadTruncatesStreams(t *testing.T) {
 	conn.SetReadDeadline(time.Now().Add(time.Second))
 	if _, err := conn.Read(make([]byte, 1)); err == nil || err == io.EOF {
 		t.Fatalf("truncated stream returned %v", err)
+	}
+}
+
+// frozenBody stops delivering after limit bytes without ending, as a
+// stalled connection does.
+type frozenBody struct {
+	io.ReadCloser
+	ctx   context.Context
+	limit int
+}
+
+func (b *frozenBody) Read(p []byte) (int, error) {
+	if b.limit <= 0 {
+		<-b.ctx.Done()
+		return 0, b.ctx.Err()
+	}
+	n, err := b.ReadCloser.Read(p[:min(len(p), b.limit)])
+	b.limit -= n
+	return n, err
+}
+
+func TestHTTPSilentDownloadEndsSession(t *testing.T) {
+	client, _, _ := httpFixture(t)
+	base := client.httpClient.Transport
+	client.httpClient.Transport = roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		resp, err := base.RoundTrip(r)
+		if err == nil && r.URL.RawQuery == "" {
+			// Past the salt and HELLO.
+			resp.Body = &frozenBody{ReadCloser: resp.Body, ctx: r.Context(), limit: 64}
+		}
+		return resp, err
+	})
+	client.httpSilence = 100 * time.Millisecond
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	s, st, err := client.reserve(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	select {
+	case <-s.done:
+	case <-ctx.Done():
+		t.Fatal("silent session stayed up")
 	}
 }
