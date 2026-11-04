@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Builds an ad hoc signed Passage.app for local development on macOS.
+# Builds an ad hoc signed Passage.app archive on macOS.
 # Usage: build-mac.sh <version> <out-dir> [arm64|amd64]
 # PASSAGE_IROH_DIR optionally supplies <dir>/darwin-<arch>/passage-iroh.
 set -euo pipefail
@@ -11,8 +11,8 @@ mkdir -p "${2:?output directory required}"
 out="$(cd "$2" && pwd)"
 arch=${3:-$(go env GOARCH)}
 case $arch in
-  arm64) rust=aarch64-apple-darwin ;;
-  amd64) rust=x86_64-apple-darwin ;;
+  arm64) rust=aarch64-apple-darwin; mach_arch=arm64 ;;
+  amd64) rust=x86_64-apple-darwin; mach_arch=x86_64 ;;
   *) echo "unsupported architecture: $arch" >&2; exit 1 ;;
 esac
 [[ $version =~ ^[A-Za-z0-9][A-Za-z0-9.+-]*$ ]] || { echo "invalid version" >&2; exit 1; }
@@ -38,6 +38,8 @@ if [[ -n "${PASSAGE_IROH_DIR:-}" ]]; then
 else
   "${PYTHON:-python3}" "$root/scripts/prepare-iroh.py" desktop "$rust" "$app/Contents/MacOS/passage-iroh"
 fi
+lipo "$app/Contents/MacOS/passage" -verify_arch "$mach_arch"
+lipo "$app/Contents/MacOS/passage-iroh" -verify_arch "$mach_arch"
 cat > "$app/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -46,6 +48,11 @@ cat > "$app/Contents/Info.plist" <<PLIST
   <key>CFBundleName</key><string>Passage</string>
   <key>CFBundleExecutable</key><string>passage</string>
   <key>CFBundlePackageType</key><string>APPL</string>
+  <key>CFBundleURLTypes</key><array><dict>
+    <key>CFBundleURLName</key><string>info.gluek.passage.link</string>
+    <key>CFBundleTypeRole</key><string>Editor</string>
+    <key>CFBundleURLSchemes</key><array><string>passage</string></array>
+  </dict></array>
   <key>CFBundleShortVersionString</key><string>$bundle_version</string>
   <key>CFBundleVersion</key><string>$bundle_version</string>
   <key>CFBundleIconFile</key><string>Passage</string>
@@ -54,6 +61,7 @@ cat > "$app/Contents/Info.plist" <<PLIST
   <key>NSHighResolutionCapable</key><true/>
 </dict></plist>
 PLIST
+plutil -lint "$app/Contents/Info.plist"
 icons="$work/Passage.iconset"
 mkdir "$icons"
 for size in 16 32 128 256 512; do
@@ -68,6 +76,7 @@ cp "$root/LICENSE" "$app/Contents/Resources/"
 cp "$root/core/cmd/passage/macos/README.txt" "$package/README.txt"
 codesign --force --sign - "$app/Contents/MacOS/passage-iroh"
 codesign --force --sign - "$app"
+codesign --verify --deep --strict "$app"
 archive="$out/passage-$version-darwin-$arch.zip"
 ditto -c -k "$package" "$archive"
 echo "$archive"

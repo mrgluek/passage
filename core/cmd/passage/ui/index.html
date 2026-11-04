@@ -341,6 +341,9 @@ function showSettings() {
   }, fail);
   showLink(false);
 }
+function refreshAutostart() {
+  return call("settings").then(s => { $("autostart").checked = s.autostart; }, fail);
+}
 function page(name) {
   $("home").classList.toggle("hidden", name !== "home");
   $("settings").classList.toggle("hidden", name !== "settings");
@@ -373,8 +376,7 @@ $("report").onclick = () => {
 };
 
 $("changeLink").onclick = () => showLink(true).then(() => $("linkText").focus());
-$("saveLink").onclick = async () => {
-  const text = $("linkText").value;
+async function importLink(text) {
   try {
     const preview = await call("importPreview", text);
     if (!await modal(t("import_title"), preview, t("save"), t("cancel"))) return;
@@ -384,7 +386,8 @@ $("saveLink").onclick = async () => {
     showLink(false);
     refresh();
   } catch (e) { toast(t("link_error", e.message)); }
-};
+}
+$("saveLink").onclick = () => importLink($("linkText").value);
 $("my").oninput = () => $("myClear").classList.toggle("hidden", !$("my").value);
 $("myClear").onclick = () => { $("my").value = ""; $("my").oninput(); $("my").focus(); };
 $("saveMy").onclick = () => call("saveMy", $("my").value).then(v => {
@@ -395,12 +398,12 @@ $("saveMy").onclick = () => call("saveMy", $("my").value).then(v => {
 }, fail);
 $("auth").onchange = () => call("setAuth", $("auth").checked).then(refresh, fail);
 $("newAccess").onclick = () => call("newAccess").then(() => { toast(t("new_access_done")); refresh(); }, fail);
-$("autostart").onchange = () => call("setAutostart", $("autostart").checked).then(showSettings, e => {
-  showSettings();
+$("autostart").onchange = () => call("setAutostart", $("autostart").checked).then(refreshAutostart, e => {
+  refreshAutostart();
   fail(e);
 });
 window.addEventListener("focus", () => {
-  if (!$("settings").classList.contains("hidden")) showSettings();
+  if (!$("settings").classList.contains("hidden")) refreshAutostart();
 });
 $("openFolder").onclick = () => call("openFolder").catch(fail);
 $("site").onclick = () => call("open", info.site).catch(fail);
@@ -411,7 +414,7 @@ document.addEventListener("keydown", e => {
   ($("modalCancel").classList.contains("hidden") ? $("modalOk") : $("modalCancel")).click();
 });
 
-call("init").then(i => {
+const initialized = call("init").then(i => {
   info = i;
   S = i.strings;
   document.documentElement.lang = i.lang;
@@ -431,7 +434,19 @@ call("init").then(i => {
   refresh();
   // Only while the window is visible, as the app polls only on screen.
   setInterval(() => { if (!document.hidden) refresh(); }, 2000);
-}, fail);
+});
+initialized.catch(fail);
+
+let incomingImports = Promise.resolve();
+window.passageImport = text => {
+  incomingImports = incomingImports.then(async () => {
+    await initialized;
+    while (!$("modal").classList.contains("hidden")) {
+      await new Promise(resolve => setTimeout(resolve, 100));
+    }
+    await importLink(text);
+  }).catch(fail);
+};
 </script>
 </body>
 </html>

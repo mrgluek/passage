@@ -36,6 +36,7 @@ const exeSuffix = ""
 var (
 	macApp  *App
 	macQuit func()
+	macStop func()
 )
 
 func runDesktop(dir string, autostart bool) {
@@ -57,6 +58,10 @@ func runDesktop(dir string, autostart bool) {
 		<-done
 	}
 	defer stop()
+	macStop = func() {
+		stop()
+		instance.close()
+	}
 	macQuit = func() {
 		stop()
 		systray.Quit()
@@ -157,6 +162,14 @@ func showMacWindow() {
 
 //export passageQuit
 func passageQuit() { go macQuit() }
+
+//export passageTerminate
+func passageTerminate() {
+	go func() {
+		macStop()
+		C.passageTerminationReady()
+	}()
+}
 
 //export passageOpen
 func passageOpen() { showMacWindow() }

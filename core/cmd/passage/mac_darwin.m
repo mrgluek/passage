@@ -6,19 +6,59 @@
 #include "mac_darwin.h"
 
 static BOOL loginLaunch;
+static BOOL documentReady;
+static NSMutableArray<NSString *> *pendingURLs;
+static void passageDeliverURLs(void);
 
-@interface PassageLifecycle : NSObject
+@interface PassageLifecycle : NSObject <NSApplicationDelegate>
+@property(strong) id<NSApplicationDelegate> trayDelegate;
 @end
 
 @implementation PassageLifecycle
+- (BOOL)respondsToSelector:(SEL)selector {
+    return [super respondsToSelector:selector] || [self.trayDelegate respondsToSelector:selector];
+}
+
+- (id)forwardingTargetForSelector:(SEL)selector {
+    if ([self.trayDelegate respondsToSelector:selector]) return self.trayDelegate;
+    return [super forwardingTargetForSelector:selector];
+}
+
+- (NSApplicationTerminateReply)applicationShouldTerminate:(NSApplication *)sender {
+    passageTerminate();
+    return NSTerminateLater;
+}
+
 - (void)reopen:(NSAppleEventDescriptor *)event withReplyEvent:(NSAppleEventDescriptor *)reply {
     passageOpen();
+}
+
+- (void)openURL:(NSAppleEventDescriptor *)event withReplyEvent:(NSAppleEventDescriptor *)reply {
+    NSString *text = [event paramDescriptorForKeyword:keyDirectObject].stringValue;
+    NSURL *url = [NSURL URLWithString:text ?: @""];
+    if (![url.scheme.lowercaseString isEqualToString:@"passage"]) return;
+    if (text.length > 16384) {
+        passageError("This Passage link is too long.");
+        return;
+    }
+    [pendingURLs addObject:text];
+    passageOpen();
+    passageDeliverURLs();
 }
 @end
 
 void passagePrepare(void) {
     static PassageLifecycle *lifecycle;
     lifecycle = [PassageLifecycle new];
+    pendingURLs = [NSMutableArray new];
+    [[NSNotificationCenter defaultCenter] addObserverForName:NSApplicationWillFinishLaunchingNotification
+        object:nil queue:nil usingBlock:^(NSNotification *notification) {
+            lifecycle.trayDelegate = NSApp.delegate;
+            NSApp.delegate = lifecycle;
+            [NSAppleEventManager.sharedAppleEventManager setEventHandler:lifecycle
+                andSelector:@selector(openURL:withReplyEvent:)
+                forEventClass:kInternetEventClass andEventID:kAEGetURL];
+        }];
     [[NSNotificationCenter defaultCenter] addObserverForName:NSApplicationDidFinishLaunchingNotification
         object:nil queue:nil usingBlock:^(NSNotification *notification) {
             NSAppleEventDescriptor *event = NSAppleEventManager.sharedAppleEventManager.currentAppleEvent;
@@ -33,6 +73,10 @@ void passagePrepare(void) {
 static void passageOnMain(dispatch_block_t block) {
     if (NSThread.isMainThread) block();
     else dispatch_sync(dispatch_get_main_queue(), block);
+}
+
+void passageTerminationReady(void) {
+    dispatch_async(dispatch_get_main_queue(), ^{ [NSApp replyToApplicationShouldTerminate:YES]; });
 }
 
 int passageWasLoginLaunch(void) {
@@ -83,6 +127,11 @@ char *passageSetAutostart(int enabled) {
 @end
 
 @implementation PassageWindow
+- (void)webView:(WKWebView *)webView didFinishNavigation:(WKNavigation *)navigation {
+    documentReady = YES;
+    passageDeliverURLs();
+}
+
 - (void)quit:(id)sender {
     passageQuit();
 }
@@ -112,6 +161,17 @@ char *passageSetAutostart(int enabled) {
 @end
 
 static PassageWindow *passage;
+
+static void passageDeliverURLs(void) {
+    if (!documentReady) return;
+    for (NSString *text in pendingURLs) {
+        NSData *data = [NSJSONSerialization dataWithJSONObject:@[text] options:0 error:nil];
+        NSString *json = [[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding];
+        NSString *script = [NSString stringWithFormat:@"window.passageImport((%@)[0]); void 0;", json];
+        [passage.webview evaluateJavaScript:script completionHandler:nil];
+    }
+    [pendingURLs removeAllObjects];
+}
 
 void passageShowWindow(const char *html) {
     NSString *document = [NSString stringWithUTF8String:html];

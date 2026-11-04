@@ -1,6 +1,18 @@
 // Appended to the native bridge by scripts/test-mac.sh.
+#include <unistd.h>
 static int smokeAttempts;
 static NSTask *smokeSecond;
+
+static void smokeSendURL(void) {
+    NSAppleEventDescriptor *target = [NSAppleEventDescriptor descriptorWithProcessIdentifier:NSProcessInfo.processInfo.processIdentifier];
+    NSAppleEventDescriptor *event = [NSAppleEventDescriptor appleEventWithEventClass:kInternetEventClass
+        eventID:kAEGetURL targetDescriptor:target returnID:kAutoGenerateReturnID transactionID:kAnyTransactionID];
+    [event setParamDescriptor:[NSAppleEventDescriptor descriptorWithString:NSProcessInfo.processInfo.environment[@"PASSAGE_SMOKE_LINK"]]
+        forKeyword:keyDirectObject];
+    NSError *error = nil;
+    [event sendEventWithOptions:NSAppleEventSendNoReply timeout:1 error:&error];
+    if (error) { fprintf(stderr, "SMOKE FAILED: URL event\n"); exit(2); }
+}
 
 static void smokeReopened(NSWindow *original, WKWebView *view, BOOL secondProcess) {
     if (++smokeAttempts > 100) {
@@ -41,8 +53,15 @@ static void smokeReopened(NSWindow *original, WKWebView *view, BOOL secondProces
             [[bitmap representationUsingType:NSBitmapImageFileTypePNG properties:@{}]
                 writeToFile:path atomically:YES];
         }
-        fprintf(stderr, "SMOKE PASSED: bridge, Finder reopen, second process, window reuse, render\n");
-        passageQuit();
+        fprintf(stderr, "SMOKE PASSED: bridge, URL import/cancel, Finder reopen, second process, window reuse, render\n");
+        if ([NSProcessInfo.processInfo.environment[@"PASSAGE_SMOKE_TERMINATE"] isEqualToString:@"system"]) {
+            // Queue a settings call that needs the main thread while quitting.
+            passageCall("{\"id\":999999,\"method\":\"settings\",\"arg\":null}");
+            usleep(20000);
+            [NSApp terminate:nil];
+        } else {
+            passageQuit();
+        }
     }];
 }
 
@@ -53,6 +72,12 @@ static void smokePoll(void) {
     }
     if (passage.webview) {
         [passage.webview evaluateJavaScript:@"window.passageSmokeResult || ''" completionHandler:^(id value, NSError *error) {
+            if ([value isEqual:@"send-url"]) {
+                [passage.webview evaluateJavaScript:@"window.passageSmokeResult = ''" completionHandler:nil];
+                smokeSendURL();
+                dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 100 * NSEC_PER_MSEC), dispatch_get_main_queue(), ^{ smokePoll(); });
+                return;
+            }
             if ([value isKindOfClass:NSString.class] && [value length] > 0) {
                 if (![value isEqualToString:@"ok"]) {
                     fprintf(stderr, "SMOKE FAILED: %s\n", [value UTF8String]);
@@ -79,5 +104,7 @@ static void smokePoll(void) {
     }
 }
 __attribute__((constructor)) static void smokeStart(void) {
+    [[NSNotificationCenter defaultCenter] addObserverForName:NSApplicationDidFinishLaunchingNotification
+        object:nil queue:nil usingBlock:^(NSNotification *notification) { smokeSendURL(); }];
     dispatch_async(dispatch_get_main_queue(), ^{ smokePoll(); });
 }
