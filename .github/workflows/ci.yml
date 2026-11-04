@@ -20,6 +20,46 @@ permissions:
   contents: read
 
 jobs:
+  macos:
+    strategy:
+      matrix:
+        include:
+          - runner: macos-15
+            arch: arm64
+          - runner: macos-15-intel
+            arch: amd64
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: core/go.mod
+          cache-dependency-path: core/go.sum
+
+      - name: Go vet and test
+        working-directory: ./core
+        run: |
+          go vet ./tunnel ./internal/... ./cmd/passage-cli ./cmd/passage ./cmd/passage-http-exit
+          go test -race ./...
+
+      - name: Set up Rust
+        run: |
+          rustup toolchain install 1.99.1 --profile minimal
+          rustup default 1.99.1
+
+      - name: Build macOS app
+        run: scripts/build-mac.sh ci "$RUNNER_TEMP/mac" "${{ matrix.arch }}"
+
+      - name: Upload macOS app
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: macos-${{ matrix.arch }}
+          path: ${{ runner.temp }}/mac/*.zip
+          if-no-files-found: error
+
   build:
     runs-on: ubuntu-latest
     steps:

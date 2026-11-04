@@ -1,4 +1,5 @@
 // Appended to the native bridge by scripts/test-mac.sh.
+#include <unistd.h>
 static int smokeAttempts;
 static NSTask *smokeSecond;
 
@@ -53,7 +54,14 @@ static void smokeReopened(NSWindow *original, WKWebView *view, BOOL secondProces
                 writeToFile:path atomically:YES];
         }
         fprintf(stderr, "SMOKE PASSED: bridge, URL import/cancel, Finder reopen, second process, window reuse, render\n");
-        passageQuit();
+        if ([NSProcessInfo.processInfo.environment[@"PASSAGE_SMOKE_TERMINATE"] isEqualToString:@"system"]) {
+            // Queue a settings call that needs the main thread while quitting.
+            passageCall("{\"id\":999999,\"method\":\"settings\",\"arg\":null}");
+            usleep(20000);
+            [NSApp terminate:nil];
+        } else {
+            passageQuit();
+        }
     }];
 }
 

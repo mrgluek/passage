@@ -10,10 +10,25 @@ static BOOL documentReady;
 static NSMutableArray<NSString *> *pendingURLs;
 static void passageDeliverURLs(void);
 
-@interface PassageLifecycle : NSObject
+@interface PassageLifecycle : NSObject <NSApplicationDelegate>
+@property(strong) id<NSApplicationDelegate> trayDelegate;
 @end
 
 @implementation PassageLifecycle
+- (BOOL)respondsToSelector:(SEL)selector {
+    return [super respondsToSelector:selector] || [self.trayDelegate respondsToSelector:selector];
+}
+
+- (id)forwardingTargetForSelector:(SEL)selector {
+    if ([self.trayDelegate respondsToSelector:selector]) return self.trayDelegate;
+    return [super forwardingTargetForSelector:selector];
+}
+
+- (NSApplicationTerminateReply)applicationShouldTerminate:(NSApplication *)sender {
+    passageTerminate();
+    return NSTerminateLater;
+}
+
 - (void)reopen:(NSAppleEventDescriptor *)event withReplyEvent:(NSAppleEventDescriptor *)reply {
     passageOpen();
 }
@@ -38,6 +53,8 @@ void passagePrepare(void) {
     pendingURLs = [NSMutableArray new];
     [[NSNotificationCenter defaultCenter] addObserverForName:NSApplicationWillFinishLaunchingNotification
         object:nil queue:nil usingBlock:^(NSNotification *notification) {
+            lifecycle.trayDelegate = NSApp.delegate;
+            NSApp.delegate = lifecycle;
             [NSAppleEventManager.sharedAppleEventManager setEventHandler:lifecycle
                 andSelector:@selector(openURL:withReplyEvent:)
                 forEventClass:kInternetEventClass andEventID:kAEGetURL];
@@ -56,6 +73,10 @@ void passagePrepare(void) {
 static void passageOnMain(dispatch_block_t block) {
     if (NSThread.isMainThread) block();
     else dispatch_sync(dispatch_get_main_queue(), block);
+}
+
+void passageTerminationReady(void) {
+    dispatch_async(dispatch_get_main_queue(), ^{ [NSApp replyToApplicationShouldTerminate:YES]; });
 }
 
 int passageWasLoginLaunch(void) {

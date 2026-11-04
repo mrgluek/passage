@@ -6,6 +6,8 @@ void passageError(const char *message);
 const char *passageLanguage(void);
 void passageCall(char *message);
 void passageQuit(void);
+void passageTerminate(void);
+void passageTerminationReady(void);
 void passageOpen(void);
 void passagePrepare(void);
 int passageWasLoginLaunch(void);

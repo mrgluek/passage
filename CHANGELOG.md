@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+- Passage for macOS: a menu bar app for Apple silicon and Intel, with launch
+  at login and connection-link imports.
+- macOS builds have no Apple Developer ID signature or notarization.
+  First-launch instructions are included in the ZIP.
+
 ## 0.6.0
 
 - Adds a new connection type for links (HTTP).

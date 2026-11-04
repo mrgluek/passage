@@ -13,6 +13,13 @@
     let rejected = false;
     try { await call("smoke-unknown"); } catch (e) { rejected = e.message.includes("unknown call"); }
     if (!rejected) throw Error("error response");
+    page("settings");
+    await new Promise(resolve => setTimeout(resolve, 100));
+    $("my").value = "unsaved route";
+    window.dispatchEvent(new Event("focus"));
+    await new Promise(resolve => setTimeout(resolve, 100));
+    if ($("my").value !== "unsaved route") throw Error("focus discarded a draft");
+    page("home");
     const waitFor = async test => {
       for (let n = 0; n < 100; n++) {
         if (test()) return;

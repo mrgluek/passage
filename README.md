@@ -4,8 +4,8 @@
 
 A local SOCKS5 proxy for messaging apps on Android, Windows, Linux and macOS.
 Apps that support a SOCKS5 proxy connect to it on `127.0.0.1`, and Passage
-picks the best available connection for them automatically. Android and
-Windows (10 or later, nothing else to install) have an app; Linux, macOS and
+picks the best available connection for them automatically. Android,
+Windows 10+ and macOS 13+ have an app; Linux, macOS and
 Windows can run it as `passage-cli` ([On a computer](#on-a-computer)).
 
 Website: <https://passage.gluek.info>
@@ -94,7 +94,8 @@ Runtime that comes with Windows; on a system without it, Passage offers the
 download and the proxy keeps working. SmartScreen may warn about an unsigned
 program first.
 
-The macOS menu bar app currently has a development build (macOS 13 or later).
+On macOS 13 or later, unpack `passage-<version>-darwin-arm64.zip` for Apple
+silicon or `passage-<version>-darwin-amd64.zip` for Intel Macs.
 Move `Passage.app` to Applications before enabling **Start Passage when I
 sign in** in its settings. It starts in the menu bar at login and restores
 the saved proxy state. Opening Passage again shows its existing window.
@@ -137,8 +138,7 @@ terminal in the unpacked folder.
 
 See [AGENTS.md](AGENTS.md).
 
-The macOS menu bar app is available as a development build (macOS 13 or
-later, Go, Rust and Xcode command line tools):
+Build the macOS menu bar app with Go, Rust and Xcode command line tools:
 
 ```bash
 scripts/build-mac.sh dev build/mac

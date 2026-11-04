@@ -62,7 +62,7 @@ gets its icon and manifest from `go-winres`, run by the script:
 scripts/build-cli.sh <version> <out-dir> [os/arch ...]
 ```
 
-macOS development app bundle (macOS 13+, Xcode command line tools and Rust):
+macOS app bundle (macOS 13+, Xcode command line tools and Rust):
 
 ```bash
 scripts/build-mac.sh <version> <out-dir> [arm64|amd64]
@@ -98,6 +98,9 @@ releases.
 
 CI (`ci.yml`) runs the same steps on every push and pull request, except
 those that only touch the website, store listing or docs.
+It also tests and builds the macOS app on Apple silicon and Intel runners.
+The release workflow publishes both app ZIPs alongside the macOS CLI
+archives, with checksums and first-launch instructions.
 
 ## Release
 

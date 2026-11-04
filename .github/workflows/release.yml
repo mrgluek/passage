@@ -21,9 +21,14 @@ jobs:
           - name: linux-arm64
             runner: ubuntu-24.04-arm
             targets: linux/arm64
-          - name: darwin
-            runner: macos-latest
-            targets: darwin/arm64 darwin/amd64
+          - name: darwin-arm64
+            runner: macos-15
+            targets: darwin/arm64
+            arch: arm64
+          - name: darwin-amd64
+            runner: macos-15-intel
+            targets: darwin/amd64
+            arch: amd64
           - name: windows-amd64
             runner: windows-latest
             targets: windows/amd64
@@ -53,6 +58,18 @@ jobs:
           PYTHON: ${{ runner.os == 'Windows' && 'python' || 'python3' }}
           TAG: ${{ github.ref_name }}
         run: scripts/build-cli.sh "${TAG#v}" dist ${{ matrix.targets }}
+
+      - name: Build macOS app
+        if: runner.os == 'macOS'
+        env:
+          PASSAGE_LINK_AUTHOR_KEY: ${{ vars.PASSAGE_LINK_AUTHOR_KEY }}
+          TAG: ${{ github.ref_name }}
+          ARCH: ${{ matrix.arch }}
+        run: |
+          helpers="$RUNNER_TEMP/helpers"
+          mkdir -p "$helpers/darwin-$ARCH"
+          tar -xzf "dist/passage-cli-${TAG#v}-darwin-$ARCH.tar.gz" --strip-components=1 -C "$helpers/darwin-$ARCH"
+          PASSAGE_IROH_DIR="$helpers" scripts/build-mac.sh "${TAG#v}" dist "$ARCH"
 
       - name: Upload
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
