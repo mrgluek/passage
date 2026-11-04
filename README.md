@@ -110,6 +110,10 @@ in the app. Passage asks for confirmation before importing them.
 After replacing a build, quit the old copy and open the installed app once
 to register its link handler.
 
+The macOS app checks for updates once a day while the proxy runs. Turn this
+off in Settings → Updates, or check from the main window. Downloads start
+only when you choose Download; Install and restart keeps your settings.
+
 **The macOS app is not signed with an Apple Developer ID and is not
 notarized.** macOS may block it on first launch. After trying to open it,
 use **System Settings → Privacy & Security → Open Anyway**

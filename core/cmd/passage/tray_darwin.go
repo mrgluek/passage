@@ -53,9 +53,12 @@ func runDesktop(dir string, autostart bool) {
 	macApp = a
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
+	var stopOnce sync.Once
 	stop := func() {
-		cancel()
-		<-done
+		stopOnce.Do(func() {
+			cancel()
+			<-done
+		})
 	}
 	defer stop()
 	macStop = func() {
@@ -102,7 +105,7 @@ func (d *macDesktop) update() {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	systray.SetTooltip(st.Tooltip)
-	if d.shown == nil || d.shown.My != st.My || !slices.Equal(d.shown.Routes, st.Routes) {
+	if d.shown == nil || d.shown.My != st.My || d.shown.Update != st.Update || !slices.Equal(d.shown.Routes, st.Routes) {
 		d.buildMenu(st)
 	}
 	key := "action_start"
@@ -124,6 +127,9 @@ func (d *macDesktop) buildMenu(st trayState) {
 	t := d.app.t
 	systray.ResetMenu()
 	macOnClick(systray.AddMenuItem(t.f("tray_open"), ""), showMacWindow)
+	if st.Update != "" {
+		macOnClick(systray.AddMenuItem(t.f("update_available", st.Update), ""), showMacWindow)
+	}
 	systray.AddSeparator()
 	d.toggle = systray.AddMenuItem(t.f("action_start"), "")
 	macOnClick(d.toggle, func() { d.app.setRunning(!d.app.trayState().Running) })

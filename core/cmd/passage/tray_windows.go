@@ -89,7 +89,7 @@ func (d *desktop) update() {
 		systray.SetIcon(iconOff)
 	}
 	systray.SetTooltip(st.Tooltip)
-	if d.shown == nil || d.shown.My != st.My || !slices.Equal(d.shown.Routes, st.Routes) {
+	if d.shown == nil || d.shown.My != st.My || d.shown.Update != st.Update || !slices.Equal(d.shown.Routes, st.Routes) {
 		d.buildMenu(st)
 	}
 	t := d.app.t
@@ -112,6 +112,9 @@ func (d *desktop) buildMenu(st trayState) {
 	t := d.app.t
 	systray.ResetMenu()
 	onClick(systray.AddMenuItem(t.f("tray_open"), ""), d.openWindow)
+	if st.Update != "" {
+		onClick(systray.AddMenuItem(t.f("update_available", st.Update), ""), d.openWindow)
+	}
 	systray.AddSeparator()
 	d.toggle = systray.AddMenuItem(t.f("action_start"), "")
 	onClick(d.toggle, func() { d.app.setRunning(!d.app.trayState().Running) })

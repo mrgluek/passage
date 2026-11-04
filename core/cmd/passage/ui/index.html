@@ -78,6 +78,7 @@ a { color: var(--accent); cursor: pointer; text-decoration: underline; }
 </header>
 
 <main id="home">
+  <section id="updates" class="hidden"><h2 data-t="updates"></h2><p id="updateStatus" aria-live="polite"></p><progress id="updateProgress" class="hidden"></progress><div><button id="updateCheck" data-t="update_check"></button><button id="updateDownload" data-t="update_download"></button><button id="updateCancel" data-t="cancel"></button><button id="updateInstall" data-t="update_install"></button></div></section>
   <div class="state" id="head"></div>
   <div id="line"></div>
   <div id="noLink" class="hidden">
@@ -132,6 +133,7 @@ a { color: var(--accent); cursor: pointer; text-decoration: underline; }
   <button id="newAccess" data-t="new_access"></button>
   <p class="hint" data-t="new_access_help"></p>
 
+  <div id="updateSettings" class="hidden"><h2 data-t="updates"></h2><label class="check"><input type="checkbox" id="autoUpdate"><span data-t="update_auto"></span></label><p class="hint" data-t="update_help"></p></div>
   <h2 data-t="startup_label"></h2>
   <label class="check"><input type="checkbox" id="autostart"><span data-t="autostart"></span></label>
   <p class="hint" data-t="autostart_help"></p>
@@ -280,6 +282,17 @@ let last = null, shownRoutes = "", shownValues = "";
 function render(v) {
   v.routes = v.routes || [];
   last = v;
+  const u = v.update;
+  $("updates").classList.toggle("hidden", !u.enabled);
+  $("updateSettings").classList.toggle("hidden", !u.enabled);
+  $("updateStatus").textContent = u.error || t("update_" + u.state, u.version);
+  $("updateProgress").classList.toggle("hidden", u.state !== "downloading");
+  $("updateProgress").max = u.total || 1;
+  $("updateProgress").value = u.done;
+  $("updateCheck").disabled = ["checking", "downloading", "installing"].includes(u.state);
+  $("updateDownload").classList.toggle("hidden", !u.version || ["checking", "downloading", "ready", "installing"].includes(u.state));
+  $("updateInstall").classList.toggle("hidden", !u.ready);
+  $("updateCancel").classList.toggle("hidden", !["checking", "downloading"].includes(u.state));
   $("head").textContent = v.head;
   $("line").textContent = v.line;
   $("startStopPath").setAttribute("d", v.running
@@ -333,6 +346,7 @@ function showLink(open) {
 }
 function showSettings() {
   call("settings").then(s => {
+    $("autoUpdate").checked = s.auto_update;
     $("auth").checked = s.auth;
     $("autostart").checked = s.autostart;
     $("my").value = s.my;
@@ -354,6 +368,11 @@ function page(name) {
   scrollTo(0, 0);
 }
 
+$("autoUpdate").onchange = () => call("setAutoUpdate", $("autoUpdate").checked).catch(fail);
+for (const method of ["updateCheck", "updateDownload", "updateCancel"]) $(method).onclick = () => call(method).then(refresh, fail);
+$("updateInstall").onclick = async () => {
+  if (await modal(t("update_install"), t("update_restart"), t("update_install"), t("cancel"))) call("updateInstall").then(refresh, fail);
+};
 $("startStop").onclick = () => call(last && last.running ? "stop" : "start").then(refresh, fail);
 $("settingsBtn").onclick = $("openSettings").onclick = () => page("settings");
 $("backBtn").onclick = () => page("home");

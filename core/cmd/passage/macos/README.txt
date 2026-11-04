@@ -9,6 +9,10 @@ Passage asks for confirmation before importing them.
 After replacing a build, quit the old copy and open the installed app once
 to register its link handler.
 
+Passage checks for updates daily while the proxy runs; turn this off in
+Settings > Updates. Choose Download, then Install and restart to update.
+Your settings and link stay in Application Support.
+
 This build has an ad hoc signature. It is not signed with an Apple
 Developer ID and is not notarized. macOS may block the first launch.
 After trying to open it, go to System Settings > Privacy & Security

@@ -114,8 +114,11 @@ The release also signs `update.json`, the manifest the app's update check
 reads, with the `PASSAGE_UPDATE_KEY` secret of the `release` environment.
 `passage-update-manifest keygen` makes the key. Its public half is the
 `PASSAGE_UPDATE_PUBLIC_KEY` variable, built into the app; without it the app
-shows no updates. The `PASSAGE_UPDATE_SOURCES` variable adds comma-separated
-sources: directories with `update.json` and the APKs, like `fdroid/repo`.
+shows no updates. Desktop builds use the same variables. The
+`PASSAGE_UPDATE_SOURCES` variable adds comma-separated sources: directories
+with `update.json`, the APKs and desktop app ZIPs, like `fdroid/repo`.
+Run `python3 scripts/test-mac-update.py` in a macOS desktop session to check
+an app update and restart with isolated settings and temporary keys.
 
 ## Website and F-Droid repository
 

@@ -287,3 +287,6 @@ func TestInsideArchive(t *testing.T) {
 		}
 	}
 }
+
+func (*fakePlatform) updateTarget() string             { return "" }
+func (*fakePlatform) applyUpdate(string, string) error { return nil }

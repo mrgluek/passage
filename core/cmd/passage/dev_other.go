@@ -89,3 +89,6 @@ func (devPlatform) device() map[string]any {
 
 func (devPlatform) autostart() bool         { return false }
 func (devPlatform) setAutostart(bool) error { return errors.New("start at sign-in is Windows only") }
+
+func (devPlatform) updateTarget() string             { return "" }
+func (devPlatform) applyUpdate(string, string) error { return nil }

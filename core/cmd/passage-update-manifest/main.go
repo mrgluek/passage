@@ -51,8 +51,12 @@ func sign(version, dir string) error {
 		return errors.New("PASSAGE_UPDATE_KEY is missing or invalid")
 	}
 	m := update.Manifest{Version: version, Files: map[string]update.File{}}
-	for _, target := range []string{"arm64", "armv7"} {
-		file, err := describe(dir, fmt.Sprintf("passage-%s-%s.apk", version, target))
+	for _, target := range []string{"arm64", "armv7", "windows-amd64", "darwin-arm64", "darwin-amd64"} {
+		ext := "zip"
+		if target == "arm64" || target == "armv7" {
+			ext = "apk"
+		}
+		file, err := describe(dir, fmt.Sprintf("passage-%s-%s.%s", version, target, ext))
 		if err != nil {
 			return err
 		}
