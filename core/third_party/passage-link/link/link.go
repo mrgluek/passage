@@ -363,7 +363,7 @@ func (b Bundle) Validate() ([]string, error) {
 		return nil, errors.New("too many update addresses")
 	}
 	for _, s := range b.Updates {
-		if u, err := url.Parse(s); err != nil || len(s) > 256 || u.Scheme != "https" || u.Host == "" {
+		if u, err := url.Parse(s); err != nil || len(s) > 256 || u.Scheme != "https" || u.Host == "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" {
 			return nil, errors.New("invalid update address")
 		}
 	}
