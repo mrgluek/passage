@@ -31,8 +31,8 @@
 <main class="wrap">
   <section class="hero">
     <h1><span class="en">You shall pass.</span><span class="ru">Ты пройдёшь.</span></h1>
-    <p class="en">A local SOCKS5 proxy for messaging apps on Android. Apps on the phone connect to it on <code>127.0.0.1</code>, and Passage picks the best available connection for them automatically. The same proxy runs on Windows as an app, and on Linux, macOS and Windows as <code>passage-cli</code>.</p>
-    <p class="ru">Локальный SOCKS5-прокси для мессенджеров на Android. Приложения на телефоне подключаются к нему на <code>127.0.0.1</code>, а Passage сам выбирает для них лучшее доступное соединение. Тот же прокси работает на Windows как приложение, а на Linux, macOS и Windows как <code>passage-cli</code>.</p>
+    <p class="en">A local SOCKS5 proxy for messaging apps on Android, Windows, Linux and macOS. Apps connect to it on <code>127.0.0.1</code>, and Passage picks the best available connection for them automatically. Android and Windows (10 or later, nothing else to install) have an app; Linux, macOS and Windows can run it as <code>passage-cli</code>.</p>
+    <p class="ru">Локальный SOCKS5-прокси для мессенджеров на Android, Windows, Linux и macOS. Приложения подключаются к нему на <code>127.0.0.1</code>, а Passage сам выбирает для них лучшее доступное соединение. Для Android и Windows (10 и новее, ничего доустанавливать не нужно) есть приложение; на Linux, macOS и Windows можно запустить <code>passage-cli</code>.</p>
   </section>
 
   <section id="connect" hidden>
@@ -74,8 +74,8 @@
       <a class="button" href="{{RELEASE}}/passage-cli-{{VERSION}}-linux-amd64.tar.gz">Linux <small>x64</small></a>
       <a class="button" href="{{RELEASE}}/passage-cli-{{VERSION}}-linux-arm64.tar.gz">Linux <small>arm64</small></a>
     </div>
-    <p class="en">Windows: unpack the archive and run <code>passage.exe</code>. It stays in the notification area when its window is closed. Settings (<code>passage.ini</code>) and the link (<code>link.txt</code>) are kept in the same folder; put a new <code>link.txt</code> there to update the link.</p>
-    <p class="ru">Windows: распакуйте архив и запустите <code>passage.exe</code>. Когда окно закрыто, он остаётся в области уведомлений. Настройки (<code>passage.ini</code>) и ссылка (<code>link.txt</code>) хранятся в той же папке; чтобы обновить ссылку, положите туда новый <code>link.txt</code>.</p>
+    <p class="en">Windows 10 or later: unpack the archive and run <code>passage.exe</code>, nothing else to install. It stays in the notification area when its window is closed. Settings (<code>passage.ini</code>) and the link (<code>link.txt</code>) are kept in the same folder; put a new <code>link.txt</code> there to update the link.</p>
+    <p class="ru">Windows 10 и новее: распакуйте архив и запустите <code>passage.exe</code>, ничего доустанавливать не нужно. Когда окно закрыто, он остаётся в области уведомлений. Настройки (<code>passage.ini</code>) и ссылка (<code>link.txt</code>) хранятся в той же папке; чтобы обновить ссылку, положите туда новый <code>link.txt</code>.</p>
     <p class="en">Linux, macOS, or Windows without the window: unpack the archive, save your link to <code>link.txt</code> next to it and run <code>passage-cli -link-file link.txt</code> in a terminal, then set the SOCKS5 proxy <code>127.0.0.1:18000</code> in the app. Keep <code>passage-iroh</code> in the same folder.</p>
     <p class="ru">Linux, macOS или Windows без окна: распакуйте архив, сохраните ссылку в <code>link.txt</code> рядом и запустите в терминале <code>passage-cli -link-file link.txt</code>, затем укажите в приложении SOCKS5-прокси <code>127.0.0.1:18000</code>. <code>passage-iroh</code> держите в той же папке.</p>
   </section>
