@@ -170,14 +170,14 @@ func TestUpdateFlowAndFailures(t *testing.T) {
 	if err := a.checkUpdate(); err != nil {
 		t.Fatal(err)
 	}
-	if v := waitUpdate(t, a, "error"); v.Error != "check failed" {
+	if v := waitUpdate(t, a, "error"); v.Error != a.t.f("update_check_failed") {
 		t.Fatal(v)
 	}
 	a.updateTransport = fakeUpdateTransport{failure: errors.New("download failed")}
 	if err := a.downloadUpdate(); err != nil {
 		t.Fatal(err)
 	}
-	if v := waitUpdate(t, a, "error"); v.Error != "download failed" {
+	if v := waitUpdate(t, a, "error"); v.Error != a.t.f("update_download_failed") {
 		t.Fatal(v)
 	}
 	a.updateTransport = fakeUpdateTransport{wait: true}

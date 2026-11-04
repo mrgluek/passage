@@ -123,7 +123,8 @@ func (a *App) beginCheckLocked(now time.Time) {
 		case errors.Is(err, context.Canceled):
 			a.updater.state = "cancelled"
 		case err != nil:
-			a.updater.state, a.updater.err = "error", err.Error()
+			a.event("update check failed: %v", err)
+			a.updater.state, a.updater.err = "error", a.t.f("update_check_failed")
 		default:
 			keep := offer != nil && a.updater.offer != nil && offer.Version == a.updater.offer.Version && offer.File == a.updater.offer.File
 			a.updater.offer = offer
@@ -181,7 +182,8 @@ func (a *App) downloadUpdate() error {
 		case errors.Is(err, context.Canceled):
 			a.updater.state = "cancelled"
 		case err != nil:
-			a.updater.state, a.updater.err = "error", err.Error()
+			a.event("update download failed: %v", err)
+			a.updater.state, a.updater.err = "error", a.t.f("update_download_failed")
 		default:
 			a.updater.state, a.updater.archive = "ready", dest
 		}

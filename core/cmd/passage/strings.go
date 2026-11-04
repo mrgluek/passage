@@ -30,6 +30,8 @@ var texts = map[string]map[string]string{
 		"update_installing":              "Installing and restarting…",
 		"update_cancelled":               "Update cancelled. You can try again.",
 		"update_error":                   "Could not update Passage. Try again.",
+		"update_check_failed":            "Could not check for updates. Try again later.",
+		"update_download_failed":         "Could not download the update. Try again.",
 		"update_restart":                 "Passage will close and restart. Your settings will be kept.",
 
 		"app_name":               "Passage",
@@ -189,6 +191,8 @@ var texts = map[string]map[string]string{
 		"update_installing":              "Установка и перезапуск…",
 		"update_cancelled":               "Обновление отменено. Можно повторить.",
 		"update_error":                   "Не удалось обновить Passage. Попробуйте ещё раз.",
+		"update_check_failed":            "Не удалось проверить обновления. Попробуйте позже.",
+		"update_download_failed":         "Не удалось скачать обновление. Попробуйте ещё раз.",
 		"update_restart":                 "Passage закроется и запустится снова. Настройки сохранятся.",
 
 		"link_label":             "Ссылка",
