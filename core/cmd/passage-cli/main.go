@@ -9,9 +9,11 @@
 // first among the tunnel's resolver paths; -system-dns=false turns that off.
 // iroh routes run the passage-iroh helper from next to this binary, or -iroh.
 // -my adds your own SOCKS5 proxy as the "my" route, tried before the link's.
+// -test runs the network test once, prints it as JSON and exits.
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -43,6 +45,7 @@ func main() {
 	every := flag.Duration("status", time.Minute, "print a status line this often (0 = never)")
 	paths := flag.Bool("paths", false, "also print one line per resolver path with each status")
 	iroh := flag.String("iroh", "", "iroh helper binary (default: passage-iroh next to passage-cli)")
+	test := flag.Bool("test", false, "run the network test once, print it as JSON and exit")
 	flag.Parse()
 
 	if *linkFile != "" {
@@ -96,6 +99,20 @@ func main() {
 	}
 	fmt.Fprintf(os.Stderr, "Passage %s: SOCKS5 on %s, mode %s, %d resolvers (%d system, %d from the link)\n",
 		version, t.Addr(), cfg.Mode, len(cfg.Effective()), len(cfg.SystemResolvers), len(cfg.Resolvers))
+
+	if *test {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		out := json.NewEncoder(os.Stdout)
+		out.SetIndent("", "  ")
+		err := out.Encode(t.Diagnose(ctx))
+		t.Close()
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "passage-cli:", err)
+			os.Exit(1)
+		}
+		return
+	}
 
 	sig := make(chan os.Signal, 1)
 	signal.Notify(sig, os.Interrupt, syscall.SIGTERM)

@@ -157,7 +157,26 @@ object StatusText {
         for (row in rows) {
             sb.append(row.mapIndexed { col, cell -> cell.padEnd(widths[col]) }.joinToString("  ").trimEnd()).append('\n')
         }
+        routeChecks(d)?.let { sb.append('\n').append(it) }
         return sb.toString()
+    }
+
+    /** Each route's stages (tunnel.RouteCheck), one line per route. */
+    private fun routeChecks(d: JSONObject): String? {
+        val list = d.optJSONArray("checks") ?: return null
+        return (0 until list.length()).joinToString("") { i ->
+            val r = list.getJSONObject(i)
+            val stages = r.optJSONArray("stages") ?: JSONArray()
+            val cells = (0 until stages.length()).map { j ->
+                val s = stages.getJSONObject(j)
+                val result = if (s.optBoolean("ok")) "ok ${s.optLong("ms")}ms" else s.optString("error", "fail")
+                val bytes = s.optLong("bytes").takeIf { it > 0 }?.let { " ${it}B" } ?: ""
+                val target = s.optString("target").takeIf { it.isNotEmpty() }?.let { " ($it)" } ?: ""
+                val received = s.optLong("received").takeIf { it > 0 }?.let { " [session ${it}B]" } ?: ""
+                "${s.optString("stage")} $result$bytes$target$received"
+            }
+            "${r.optString("route")}: ${cells.joinToString(", ")}\n"
+        }
     }
 
     /** Each tunnel route's state ("iroh: up, soar: idle"), or "tunnel: no link". */

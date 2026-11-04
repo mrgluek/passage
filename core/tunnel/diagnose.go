@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -12,10 +13,11 @@ import (
 
 // Diagnosis is one network test: every target checked on every way.
 type Diagnosis struct {
-	Time   time.Time `json:"time"`
-	Ways   []string  `json:"ways"` // column names: direct, each strategy, each tunnel route
-	Rows   []DiagRow `json:"rows"`
-	Routes []string  `json:"routes"` // set-up routes
+	Time   time.Time    `json:"time"`
+	Ways   []string     `json:"ways"` // column names: direct, each strategy, each tunnel route
+	Rows   []DiagRow    `json:"rows"`
+	Routes []string     `json:"routes"` // set-up routes
+	Checks []RouteCheck `json:"checks,omitempty"`
 }
 
 // DiagRow is one target's results, in the order of Diagnosis.Ways.
@@ -65,7 +67,7 @@ func (t *Tunnel) Diagnose(ctx context.Context) Diagnosis {
 	if p, ok := t.client.(*routePool); ok {
 		tunnels = p.ways()
 	} else if dial := t.ways[RouteTunnel].dial; dial != nil {
-		tunnels = []tunnelWay{{"soar", dial, t.cfg.TunnelIPv6}}
+		tunnels = []tunnelWay{{name: "soar", dial: dial, ipv6: t.cfg.TunnelIPv6}}
 	}
 	direct, directMT := t.probeTLS, t.probeMT
 	via := t.smartProbe
@@ -130,9 +132,42 @@ func (t *Tunnel) Diagnose(ctx context.Context) Diagnosis {
 			}
 		}
 	}
+	data := dataTargets(d.Rows)
+	for _, w := range tunnels {
+		if w.server.addr == "" {
+			continue
+		}
+		i := len(d.Checks)
+		d.Checks = append(d.Checks, RouteCheck{})
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			cctx, cancel := context.WithTimeout(ctx, 15*time.Second)
+			defer cancel()
+			d.Checks[i] = checkRoute(cctx, w.name, w.server, w.dial, data)
+		}()
+	}
 	wg.Wait()
 	t.log.add("network test: %d targets, %d ways", len(d.Rows), len(d.Ways))
 	return d
+}
+
+// dataTargets lists where the data stage can fetch from, those on port 443
+// first, then Telegram.
+func dataTargets(rows []DiagRow) []dataTarget {
+	var page, other, telegram []dataTarget
+	for _, r := range rows {
+		_, port, _ := net.SplitHostPort(r.Target)
+		switch {
+		case r.Kind == "telegram":
+			telegram = append(telegram, dataTarget{r.Target, true})
+		case port == "443":
+			page = append(page, dataTarget{r.Target, false})
+		default:
+			other = append(other, dataTarget{r.Target, false})
+		}
+	}
+	return slices.Concat(page, other, telegram)
 }
 
 // shortError keeps the part of an error a person can act on.
@@ -140,9 +175,9 @@ func shortError(err error) string {
 	switch {
 	case errors.Is(err, context.DeadlineExceeded):
 		return "timeout"
-	case strings.Contains(err.Error(), "connection refused"):
+	case strings.Contains(err.Error(), "connection refused"), strings.Contains(err.Error(), "actively refused"):
 		return "refused"
-	case strings.Contains(err.Error(), "connection reset"):
+	case strings.Contains(err.Error(), "connection reset"), strings.Contains(err.Error(), "forcibly closed"):
 		return "reset"
 	case strings.Contains(err.Error(), "i/o timeout"):
 		return "timeout"
