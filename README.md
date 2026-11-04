@@ -120,6 +120,26 @@ terminal in the unpacked folder.
 
 See [AGENTS.md](AGENTS.md).
 
+The macOS menu bar app is available as a development build (macOS 13 or
+later, Go, Rust and Xcode command line tools):
+
+```bash
+scripts/build-mac.sh dev build/mac
+ditto -x -k build/mac/passage-dev-darwin-arm64.zip build/mac
+open build/mac/Passage.app
+```
+
+Use `amd64` as the script's third argument on Intel Macs and in the archive
+name. The bundle includes the iroh helper and uses the same window as the
+Windows app. Closing the window keeps Passage running in the menu bar;
+choose Open Passage to show it again, or Quit to stop it. Settings and
+`link.txt` live in `~/Library/Application Support/Passage`. The executable
+also accepts `-dir <folder>` for a separate test configuration.
+
+Development builds use an ad hoc signature. Launch at login, handling a
+second launch, and Developer ID signing and notarization are not yet
+implemented.
+
 The native build also needs Python 3.12+ and Rust 1.99.1 with rustup.
 It builds the pinned iroh helper for both Android ABIs from source.
 Set `PASSAGE_LINK_AUTHOR_KEY` to the author’s raw Ed25519 public key

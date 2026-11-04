@@ -10,8 +10,10 @@ other apps on the phone. It has two parts:
   (`passage.exe`): a tray icon (`fyne.io/systray`) and a WebView2 window
   (`jchv/go-webview2`) showing `ui/index.html`, with settings in
   `passage.ini` and the link in `link.txt` next to the program. Its strings
-  are in `strings.go` (English and Russian). Elsewhere it serves the same
-  window on loopback for development (`go run ./cmd/passage -dir <folder>`).
+  are in `strings.go` (English and Russian). On macOS with cgo enabled it
+  runs a menu bar app with a WKWebView window; settings live in
+  `~/Library/Application Support/Passage`. Other platforms, and macOS
+  without cgo, serve the same window on loopback for development.
 - `android/`: the Kotlin app (`info.gluek.passage`), a foreground service
   around that library, a home screen (state, proxy link, status) with
   start/stop, report and settings in the title bar, and a settings screen.
@@ -59,6 +61,17 @@ gets its icon and manifest from `go-winres`, run by the script:
 ```bash
 scripts/build-cli.sh <version> <out-dir> [os/arch ...]
 ```
+
+macOS development app bundle (macOS 13+, Xcode command line tools and Rust):
+
+```bash
+scripts/build-mac.sh <version> <out-dir> [arm64|amd64]
+```
+
+This produces an ad hoc signed `.app` in a ZIP archive. It is not yet
+Developer ID signed or notarized. Launch at login is not yet supported.
+Run `scripts/test-mac.sh` in a macOS desktop session to check the native
+window, HTML bridge and shutdown with a separate test configuration.
 
 The helper needs Rust for each target: macOS targets build on macOS, Linux
 ones (static musl) on Linux of the same architecture with `musl-tools`,

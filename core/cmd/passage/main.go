@@ -1,12 +1,13 @@
-// Command passage is Passage for Windows: the proxy in the notification
-// area, with a window like the Android app's. It is portable: the settings
-// (passage.ini) and the link (link.txt, one link per line) live next to the
-// program, and a new link.txt is picked up while it runs.
+// Command passage runs Passage in the Windows notification area or macOS
+// menu bar, with a window like the Android app's. On Windows, settings and
+// link.txt (one link per line) live next to the program. On macOS they live
+// in Application Support. Changes to link.txt are picked up while it runs.
 //
 //	passage.exe              # the window opens
 //	passage.exe -autostart   # started at sign-in: tray only
 //
-// Elsewhere it serves the same window on loopback, for development.
+// Other platforms, and macOS without cgo, serve the same window on
+// loopback for development.
 package main
 
 import (
@@ -24,7 +25,7 @@ var version = "dev"
 var indexHTML string
 
 func main() {
-	dir := flag.String("dir", "", "settings folder (default: next to the program)")
+	dir := flag.String("dir", "", "settings folder (default: Application Support on macOS, next to the program elsewhere)")
 	autostart := flag.Bool("autostart", false, "started at sign-in: no window")
 	flag.Parse()
 	d, err := portableDir(*dir)

@@ -4,6 +4,8 @@
 
 - Passage can check for a new version and install it from inside the app, in
   Settings → Updates. The download continues where it stopped.
+- Passage for macOS: a development build of the menu bar app, which you build
+  from source.
 
 ## 0.6.0
 

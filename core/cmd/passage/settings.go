@@ -8,6 +8,7 @@ import (
 	"math/big"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 
@@ -158,8 +159,8 @@ func writeFile(path string, data []byte) error {
 	return os.Rename(tmp, path)
 }
 
-// portableDir is where the settings live: next to the program, or in the
-// user's config directory when that folder is read-only.
+// portableDir uses Application Support on macOS. Elsewhere it prefers
+// the program's folder, falling back to the user's config directory.
 func portableDir(override string) (string, error) {
 	if override != "" {
 		dir, err := filepath.Abs(override)
@@ -172,7 +173,7 @@ func portableDir(override string) (string, error) {
 	if err == nil {
 		exe, err = filepath.EvalSymlinks(exe)
 	}
-	if err == nil {
+	if err == nil && runtime.GOOS != "darwin" {
 		dir := filepath.Dir(exe)
 		if writable(dir) {
 			return dir, nil
