@@ -4,7 +4,7 @@ package main
 
 /*
 #cgo CFLAGS: -x objective-c -fobjc-arc
-#cgo LDFLAGS: -framework Cocoa -framework WebKit
+#cgo LDFLAGS: -framework Cocoa -framework WebKit -framework ServiceManagement
 #include "mac_darwin.h"
 */
 import "C"
@@ -39,6 +39,15 @@ var (
 )
 
 func runDesktop(dir string, autostart bool) {
+	instance, err := claimMacInstance(dir)
+	if err != nil {
+		fatal(err)
+	}
+	if instance == nil {
+		return
+	}
+	defer instance.close()
+	C.passagePrepare()
 	a := newApp(dir, version, irohHelper(), language(C.GoString(C.passageLanguage())), macPlatform{})
 	macApp = a
 	ctx, cancel := context.WithCancel(context.Background())
@@ -59,7 +68,17 @@ func runDesktop(dir string, autostart bool) {
 		systray.SetTemplateIcon(icon, icon)
 		d.update()
 		go func() { a.run(ctx); close(done) }()
-		if !autostart {
+		go func() {
+			for {
+				select {
+				case <-instance.open:
+					showMacWindow()
+				case <-ctx.Done():
+					return
+				}
+			}
+		}()
+		if !autostart && C.passageWasLoginLaunch() == 0 {
 			showMacWindow()
 		}
 	}, stop)
@@ -139,6 +158,9 @@ func showMacWindow() {
 //export passageQuit
 func passageQuit() { go macQuit() }
 
+//export passageOpen
+func passageOpen() { showMacWindow() }
+
 //export passageCall
 func passageCall(message *C.char) {
 	var in struct {
@@ -187,9 +209,17 @@ func (macPlatform) device() map[string]any {
 	return map[string]any{"os": "darwin", "arch": runtime.GOARCH, "go": runtime.Version()}
 }
 
-func (macPlatform) autostart() bool { return false }
-func (macPlatform) setAutostart(bool) error {
-	return errors.New("start at sign-in is not available in this build")
+func (macPlatform) autostart() bool { return C.passageAutostart() != 0 }
+func (macPlatform) setAutostart(on bool) error {
+	var enabled C.int
+	if on {
+		enabled = 1
+	}
+	if message := C.passageSetAutostart(enabled); message != nil {
+		defer C.free(unsafe.Pointer(message))
+		return errors.New(C.GoString(message))
+	}
+	return nil
 }
 
 // macTrayIcon draws the Passage arch as a Retina template image.

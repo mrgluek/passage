@@ -94,6 +94,25 @@ Runtime that comes with Windows; on a system without it, Passage offers the
 download and the proxy keeps working. SmartScreen may warn about an unsigned
 program first.
 
+The macOS menu bar app currently has a development build (macOS 13 or later).
+Move `Passage.app` to Applications before enabling **Start Passage when I
+sign in** in its settings. It starts in the menu bar at login and restores
+the saved proxy state. Opening Passage again shows its existing window.
+
+**The macOS app is not signed with an Apple Developer ID and is not
+notarized.** macOS may block it on first launch. After trying to open it,
+use **System Settings → Privacy & Security → Open Anyway**
+([Apple's instructions](https://support.apple.com/en-gb/102445)). Alternatively,
+remove quarantine from this app in Terminal, then open it:
+
+```bash
+xattr -dr com.apple.quarantine /Applications/Passage.app
+open /Applications/Passage.app
+```
+
+Adjust the path if you installed it elsewhere. This removes the downloaded
+app's quarantine flag; it does not disable Gatekeeper for other apps.
+
 Releases also have `passage-cli` for Linux and macOS (`amd64`, `arm64`) and
 Windows (`amd64`): the same proxy without the app. Unpack the archive for
 your system and run
@@ -130,9 +149,8 @@ choose Open Passage to show it again, or Quit to stop it. Settings and
 `link.txt` live in `~/Library/Application Support/Passage`. The executable
 also accepts `-dir <folder>` for a separate test configuration.
 
-Development builds use an ad hoc signature. Launch at login, handling a
-second launch, and Developer ID signing and notarization are not yet
-implemented.
+Builds use an ad hoc signature, without an Apple Developer ID or notarization.
+See the first-launch instructions under [On a computer](#on-a-computer).
 
 The native build also needs Python 3.12+ and Rust 1.99.1 with rustup.
 It builds the pinned iroh helper for both Android ABIs from source.

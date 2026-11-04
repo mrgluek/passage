@@ -395,9 +395,12 @@ $("saveMy").onclick = () => call("saveMy", $("my").value).then(v => {
 }, fail);
 $("auth").onchange = () => call("setAuth", $("auth").checked).then(refresh, fail);
 $("newAccess").onclick = () => call("newAccess").then(() => { toast(t("new_access_done")); refresh(); }, fail);
-$("autostart").onchange = () => call("setAutostart", $("autostart").checked).catch(e => {
-  $("autostart").checked = !$("autostart").checked;
+$("autostart").onchange = () => call("setAutostart", $("autostart").checked).then(showSettings, e => {
+  showSettings();
   fail(e);
+});
+window.addEventListener("focus", () => {
+  if (!$("settings").classList.contains("hidden")) showSettings();
 });
 $("openFolder").onclick = () => call("openFolder").catch(fail);
 $("site").onclick = () => call("open", info.site).catch(fail);
