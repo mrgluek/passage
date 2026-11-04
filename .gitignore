@@ -17,3 +17,6 @@ local.properties
 .DS_Store
 
 android/app/src/main/nativeLibs/.iroh-build
+
+# Made by scripts/build-cli.sh for passage.exe
+core/cmd/passage/*.syso

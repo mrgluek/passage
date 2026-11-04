@@ -1,0 +1,591 @@
+package main
+
+import (
+	"context"
+	_ "embed"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"os"
+	"path/filepath"
+	"runtime"
+	"slices"
+	"strings"
+	"sync"
+	"time"
+
+	"github.com/mrgluek/passage/core/internal/sysdns"
+	"github.com/mrgluek/passage/core/tunnel"
+)
+
+//go:embed licenses.txt
+var licenses string
+
+const (
+	siteURL   = "https://passage.gluek.info"
+	sourceURL = "https://github.com/mrgluek/passage"
+	tickEvery = 5 * time.Second
+)
+
+// platform is what the app needs from the desktop it runs on.
+type platform interface {
+	copyText(text string) error
+	open(target string) error // a URL or a folder
+	autostart() bool
+	setAutostart(on bool) error
+	device() map[string]any // for the report
+}
+
+// App runs the proxy from passage.ini and link.txt in dir, and
+// answers the window's calls.
+type App struct {
+	dir     string
+	version string
+	iroh    string
+	t       tr
+	lang    string
+	os      platform
+	changed func() // the tray redraws
+
+	mu        sync.Mutex
+	settings  Settings
+	tun       *tunnel.Tunnel
+	lastErr   string
+	linkStamp fileStamp
+	linkCfg   tunnel.Config
+	linkErr   string
+	results   []tunnel.ImportResult
+	netKey    string
+	checking  time.Time
+	log       *appLog
+}
+
+func newApp(dir, version, iroh, lang string, os platform) *App {
+	a := &App{dir: dir, version: version, iroh: iroh, lang: lang, t: table(lang), os: os, changed: func() {}}
+	a.log = openLog(a.path(logName), version)
+	a.event("app start")
+	s, existed, err := loadSettings(a.path(iniName))
+	a.settings = s
+	if err != nil {
+		a.event("settings: %v", err)
+	}
+	if !existed {
+		a.saveSettings()
+	}
+	a.loadLink()
+	return a
+}
+
+func (a *App) path(name string) string { return filepath.Join(a.dir, name) }
+
+// event adds a line to passage.log, shown under the router's events.
+func (a *App) event(format string, args ...any) { a.log.add(format, args...) }
+
+func (a *App) saveSettings() {
+	if err := a.settings.save(a.path(iniName)); err != nil {
+		a.event("settings not saved: %v", err)
+	}
+}
+
+// loadLink reads link.txt; a bad line leaves the proxy without
+// a tunnel until the file is fixed.
+func (a *App) loadLink() {
+	path := linkFile(a.dir)
+	a.linkStamp = stampOf(path)
+	a.linkCfg, a.results, a.linkErr = tunnel.Config{}, nil, ""
+	b, err := os.ReadFile(path)
+	if os.IsNotExist(err) {
+		return
+	}
+	if err == nil {
+		a.linkCfg, a.results, err = importLinks(string(b))
+	}
+	if err != nil {
+		a.linkErr = err.Error()
+		a.event("link file: %v", err)
+	}
+}
+
+func (a *App) hasLink() bool {
+	return len(a.linkCfg.Routes) > 0 || a.linkCfg.Zone != ""
+}
+
+// kinds is the route types that can be chosen.
+func (a *App) kinds() []string { return linkKinds(a.linkCfg, a.settings.My) }
+
+// mode is the saved choice, Auto when the route type is gone.
+func (a *App) mode() string {
+	m := a.settings.Mode
+	if m == tunnel.ModeAuto || m == tunnel.ModeOff || slices.Contains(a.kinds(), m) {
+		return m
+	}
+	if m == tunnel.ModeAlways && len(a.kinds()) > 0 {
+		return a.kinds()[0]
+	}
+	return tunnel.ModeAuto
+}
+
+// startLocked (re)starts the router with the current network's resolvers.
+func (a *App) startLocked(why string) {
+	if a.tun != nil {
+		a.tun.Close()
+		a.tun = nil
+	}
+	cfg := a.linkCfg
+	s := a.settings
+	cfg.Listen = s.listen()
+	if s.Auth {
+		cfg.User, cfg.Pass = s.User, s.Pass
+	}
+	cfg.Mode = a.mode()
+	cfg.My = s.My
+	dns := sysdns.Resolvers()
+	cfg.SystemResolvers = dns
+	cfg.IrohBinary = a.iroh
+	data := a.path(dataName)
+	cfg.PrivateDir = filepath.Join(data, "iroh")
+	cfg.StateFile = filepath.Join(data, "router-state.json")
+	os.MkdirAll(data, 0700)
+	a.netKey = strings.Join(dns, ",")
+	a.event("router start: %s mode=%s", why, cfg.Mode)
+	cfg, err := cfg.Normalize()
+	if err == nil {
+		a.tun, err = tunnel.Start(cfg)
+	}
+	if err != nil {
+		a.lastErr = fmt.Sprintf("%s failed: %v", why, err)
+		a.event("%s", a.lastErr)
+		return
+	}
+	a.lastErr = ""
+}
+
+// tick restarts a dead router, follows network and link file changes.
+func (a *App) tick() {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	reload := stampOf(linkFile(a.dir)) != a.linkStamp
+	if reload {
+		a.loadLink()
+		a.event("link file changed")
+	}
+	if !a.settings.Running {
+		return
+	}
+	switch {
+	case a.tun == nil:
+		a.startLocked("retry")
+	case reload:
+		a.startLocked("restart on link change")
+	case strings.Join(sysdns.Resolvers(), ",") != a.netKey:
+		a.startLocked("restart on network change")
+	default:
+		return
+	}
+	go a.changed()
+}
+
+func (a *App) run(ctx context.Context) {
+	a.mu.Lock()
+	if a.settings.Running {
+		a.startLocked("app start")
+	}
+	a.mu.Unlock()
+	a.changed()
+	tk := time.NewTicker(tickEvery)
+	defer tk.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			a.event("app quit")
+			a.mu.Lock()
+			if a.tun != nil {
+				a.tun.Close()
+				a.tun = nil
+			}
+			a.mu.Unlock()
+			return
+		case <-tk.C:
+			a.tick()
+		}
+	}
+}
+
+func (a *App) setRunning(on bool) {
+	a.mu.Lock()
+	a.settings.Running = on
+	a.saveSettings()
+	if on {
+		a.startLocked("user start")
+	} else {
+		a.event("user stop")
+		if a.tun != nil {
+			a.tun.Close()
+			a.tun = nil
+		}
+		a.lastErr = ""
+	}
+	a.mu.Unlock()
+	a.changed()
+}
+
+func (a *App) restartIfRunningLocked(why string) {
+	if a.settings.Running {
+		a.startLocked(why)
+	}
+}
+
+func (a *App) setMode(mode string) error {
+	a.mu.Lock()
+	defer a.changedAfter()
+	defer a.mu.Unlock()
+	if mode != tunnel.ModeAuto && mode != tunnel.ModeOff && !slices.Contains(a.kinds(), mode) {
+		return fmt.Errorf("unknown route %q", mode)
+	}
+	a.settings.Mode = mode
+	a.saveSettings()
+	if a.tun != nil {
+		return a.tun.SetMode(mode)
+	}
+	return nil
+}
+
+func (a *App) changedAfter() { go a.changed() }
+
+// trayState is what the tray shows.
+type trayState struct {
+	Running bool
+	Tooltip string
+	Mode    string
+	Kinds   []string
+}
+
+func (a *App) trayState() trayState {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	st := trayState{Running: a.settings.Running, Mode: a.mode(), Kinds: a.kinds()}
+	switch {
+	case !st.Running:
+		st.Tooltip = "Passage: " + a.t.f("proxy_stopped")
+	case a.lastErr != "":
+		st.Tooltip = "Passage: " + a.lastErr
+	case a.tun != nil:
+		st.Tooltip = "Passage: " + routesLine(a.t, a.tun.Status(0))
+	default:
+		st.Tooltip = "Passage: " + a.t.f("starting")
+	}
+	// The notification area cuts tooltips at 127 characters.
+	if r := []rune(st.Tooltip); len(r) > 120 {
+		st.Tooltip = string(r[:119]) + "…"
+	}
+	return st
+}
+
+// view is the home screen's state.
+type view struct {
+	Running   bool              `json:"running"`
+	Head      string            `json:"head"`
+	Line      string            `json:"line"`
+	Full      string            `json:"full"`
+	HasLink   bool              `json:"has_link"`
+	Mode      string            `json:"mode"`
+	Kinds     []string          `json:"kinds"`
+	Labels    map[string]string `json:"labels"`
+	Auth      bool              `json:"auth"`
+	Host      string            `json:"host"`
+	Port      int               `json:"port"`
+	User      string            `json:"user"`
+	Pass      string            `json:"pass"`
+	ProxyLink string            `json:"proxy_link"` // socks5://
+	TgLink    string            `json:"tg_link"`    // tg://socks
+}
+
+func (a *App) view() view {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	s := a.settings
+	v := view{Running: s.Running, HasLink: a.hasLink(), Mode: a.mode(), Kinds: a.kinds(),
+		Labels: map[string]string{}, Auth: s.Auth, Host: host, Port: s.Port, ProxyLink: s.socksURL(), TgLink: s.proxyLink("tg://socks")}
+	if s.Auth {
+		v.User, v.Pass = s.User, s.Pass
+	}
+	for _, k := range v.Kinds {
+		v.Labels[k] = routeLabel(a.t, k)
+	}
+	switch {
+	case s.Running && time.Now().Before(a.checking):
+		v.Head = a.t.f("checking")
+	case s.Running:
+		v.Head = a.t.f("proxy_running")
+	default:
+		v.Head = a.t.f("proxy_stopped")
+	}
+	var full string
+	if a.tun != nil {
+		st := a.tun.Status(30)
+		v.Line = oneLine(a.t, st)
+		full = fullStatus(a.t, st)
+	} else {
+		full = a.t.f("proxy_not_running") + "\n"
+	}
+	if a.lastErr != "" {
+		full = "⚠ " + a.lastErr + "\n\n" + full
+	}
+	if a.linkErr != "" {
+		full = "⚠ " + a.t.f("link_error", a.linkErr) + "\n\n" + full
+	}
+	if events := a.log.text(32); events != "" {
+		full += "\n" + a.t.f("app_events") + "\n" + events
+	}
+	v.Full = full
+	return v
+}
+
+// linkView is the settings screen's link part. The text is sent only when
+// asked, so the key isn't on screen by default.
+type linkView struct {
+	Has   bool   `json:"has"`
+	Info  string `json:"info"`
+	Error string `json:"error"`
+	Text  string `json:"text,omitempty"`
+}
+
+func (a *App) linkView(withText bool) linkView {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	v := linkView{Has: a.hasLink()}
+	switch {
+	case a.linkErr != "":
+		v.Error = a.t.f("link_invalid", a.linkErr)
+	case v.Has:
+		v.Info = describeLink(a.t, a.linkCfg)
+	default:
+		v.Info = a.t.f("link_empty")
+	}
+	if withText || a.linkErr != "" {
+		b, _ := os.ReadFile(linkFile(a.dir))
+		v.Text = string(b)
+	}
+	return v
+}
+
+// importPreview says what saving text as the link would do, for the
+// confirmation.
+func (a *App) importPreview(text string) (string, error) {
+	_, results, err := importLinks(text)
+	if err != nil {
+		return "", err
+	}
+	if len(results) == 0 {
+		return a.t.f("import_clear"), nil
+	}
+	trusted := true
+	var ids []string
+	collision := false
+	for _, r := range results {
+		trusted = trusted && r.Signature == "trusted_author"
+		ids = append(ids, r.IDs...)
+		collision = collision || r.Collision
+	}
+	parts := []string{a.t.f("import_untrusted"), a.t.f("import_replace")}
+	if trusted {
+		parts[0] = a.t.f("import_trusted")
+	}
+	if collision {
+		parts[1] += "\n" + a.t.f("import_collision")
+	}
+	parts[1] += "\n" + strings.Join(ids, ", ")
+	parts = append(parts, a.t.f("import_personal"))
+	return strings.Join(parts, "\n\n"), nil
+}
+
+func (a *App) saveLink(text string) error {
+	if _, _, err := importLinks(text); err != nil {
+		return err
+	}
+	text = strings.TrimSpace(text)
+	a.mu.Lock()
+	defer a.changedAfter()
+	defer a.mu.Unlock()
+	path := a.path(linkName)
+	// Saved here, it replaces a link.txt.txt for good.
+	if err := os.Remove(path + ".txt"); err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	var err error
+	if text == "" {
+		err = os.Remove(path)
+		if os.IsNotExist(err) {
+			err = nil
+		}
+	} else {
+		err = writeFile(path, []byte(text+"\n"))
+	}
+	if err != nil {
+		return err
+	}
+	a.loadLink()
+	a.event("link saved")
+	a.restartIfRunningLocked("settings changed")
+	return nil
+}
+
+// saveMy stores My route in its short form; empty removes it.
+func (a *App) saveMy(text string) (string, error) {
+	value := ""
+	if text = strings.TrimSpace(text); text != "" {
+		cfg, err := tunnel.Config{My: text}.Normalize()
+		if err != nil {
+			return "", errors.New(a.t.f("my_route_invalid"))
+		}
+		value = cfg.My
+	}
+	a.mu.Lock()
+	defer a.changedAfter()
+	defer a.mu.Unlock()
+	if value == a.settings.My {
+		return value, nil
+	}
+	a.settings.My = value
+	a.saveSettings()
+	a.restartIfRunningLocked("settings changed")
+	return value, nil
+}
+
+func (a *App) setAuth(on bool) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.settings.Auth = on
+	a.saveSettings()
+	a.restartIfRunningLocked("settings changed")
+}
+
+func (a *App) newAccess() {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.settings.newAccess()
+	a.saveSettings()
+	a.restartIfRunningLocked("settings changed")
+}
+
+func (a *App) recheck() {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.tun != nil {
+		a.tun.Recheck()
+		a.checking = time.Now().Add(3 * time.Second)
+	}
+}
+
+// report is the status for a bug report, with a network test when the
+// proxy runs. It leaves out the tunnel zone, like everything the link carries.
+func (a *App) report() string {
+	a.mu.Lock()
+	t := a.tun
+	a.mu.Unlock()
+	var test []string
+	if t != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+		d := t.Diagnose(ctx)
+		cancel()
+		a.mu.Lock()
+		a.event("network test: %s", diagnosisSummary(d))
+		a.mu.Unlock()
+		test = strings.Split(strings.TrimRight(diagnosis(a.t, d), "\n"), "\n")
+	}
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	r := map[string]any{"running": a.tun != nil}
+	if a.tun != nil {
+		var st map[string]any
+		b, _ := json.Marshal(a.tun.Status(100))
+		json.Unmarshal(b, &st)
+		delete(st, "zone")
+		for k, v := range st {
+			r[k] = v
+		}
+	}
+	r["app"] = map[string]any{
+		"version":      a.version,
+		"platform":     runtime.GOOS + "/" + runtime.GOARCH,
+		"listen":       a.settings.listen(),
+		"auth":         a.settings.Auth,
+		"mode_setting": a.settings.Mode,
+		"last_error":   redact(a.lastErr),
+		"link_error":   redact(a.linkErr),
+	}
+	r["device"] = a.os.device()
+	r["diagnostics"] = map[string]any{"events": a.log.last(logKeep)}
+	r["device_network"] = map[string]any{"dns": sysdns.Resolvers()}
+	if test != nil {
+		r["network_test"] = test
+	}
+	b, _ := json.MarshalIndent(r, "", "  ")
+	return string(b)
+}
+
+// call is the window's API: one method name and its JSON argument.
+func (a *App) call(method string, arg json.RawMessage) (any, error) {
+	str := func() string {
+		var s string
+		json.Unmarshal(arg, &s)
+		return s
+	}
+	flag := func() bool {
+		var b bool
+		json.Unmarshal(arg, &b)
+		return b
+	}
+	switch method {
+	case "init":
+		return map[string]any{"lang": a.lang, "strings": a.t, "version": a.version, "dir": a.dir,
+			"site": siteURL, "source": sourceURL}, nil
+	case "view":
+		return a.view(), nil
+	case "start":
+		a.setRunning(true)
+	case "stop":
+		a.setRunning(false)
+	case "setMode":
+		return nil, a.setMode(str())
+	case "recheck":
+		a.recheck()
+	case "link":
+		return a.linkView(flag()), nil
+	case "importPreview":
+		return a.importPreview(str())
+	case "saveLink":
+		return nil, a.saveLink(str())
+	case "settings":
+		a.mu.Lock()
+		defer a.mu.Unlock()
+		return map[string]any{"auth": a.settings.Auth, "my": a.settings.My, "autostart": a.os.autostart(),
+			"soar": tunnel.SoarVersion()}, nil
+	case "saveMy":
+		return a.saveMy(str())
+	case "setAuth":
+		a.setAuth(flag())
+	case "newAccess":
+		a.newAccess()
+	case "setAutostart":
+		return nil, a.os.setAutostart(flag())
+	case "copy":
+		return nil, a.os.copyText(str())
+	case "open":
+		target := str()
+		if target != siteURL && target != sourceURL {
+			return nil, errors.New("not an allowed link")
+		}
+		return nil, a.os.open(target)
+	case "openFolder":
+		return nil, a.os.open(a.dir)
+	case "report":
+		text := a.report()
+		return nil, a.os.copyText(text)
+	case "licenses":
+		return licenses, nil
+	default:
+		return nil, fmt.Errorf("unknown call %q", method)
+	}
+	return nil, nil
+}

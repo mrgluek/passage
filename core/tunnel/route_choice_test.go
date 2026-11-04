@@ -3,8 +3,10 @@ package tunnel
 import (
 	"context"
 	"errors"
+	"io"
 	"net"
 	"testing"
+	"time"
 
 	links "github.com/mrgluek/passage-link/link"
 )
@@ -79,5 +81,82 @@ func TestMissingRouteTypeFallsBackToAuto(t *testing.T) {
 	}
 	if _, err := (Config{Mode: "carrier-pigeon"}).Normalize(); err == nil {
 		t.Fatal("unknown mode accepted")
+	}
+}
+
+func TestRouteTypeSwitchClosesOldConnections(t *testing.T) {
+	hold := func(context.Context, string, string) (net.Conn, error) {
+		a, b := net.Pipe()
+		go func() { io.Copy(io.Discard, b) }() // never answers: a long-lived connection
+		return a, nil
+	}
+	pool := &routePool{clients: []soarClient{&poolFixture{dial: hold}, &poolFixture{dial: hold}},
+		ipv6: []bool{false, false}, kinds: []string{"iroh", "wss"}, ids: []string{"a", "b"}}
+	tt := newTestTunnel(t, ModeAlways, hold, pool.DialContext)
+	tt.client = pool
+	if err := tt.SetMode("iroh"); err != nil {
+		t.Fatal(err)
+	}
+	c, code := socksConnect(t, tt.Addr(), "u", "p", "relay.example.org:993")
+	if code != repSucceeded {
+		t.Fatalf("connect failed: %d", code)
+	}
+	defer c.Close()
+	c.SetDeadline(time.Now().Add(5 * time.Second))
+	if via := tt.Status(0).Groups["relay.example.org"].Via; via != "iroh" {
+		t.Fatalf("via %q, want iroh", via)
+	}
+	// The same type again keeps the connection.
+	if err := tt.SetMode("iroh"); err != nil {
+		t.Fatal(err)
+	}
+	c.SetReadDeadline(time.Now().Add(100 * time.Millisecond))
+	if _, err := c.Read(make([]byte, 1)); !isTimeout(err) {
+		t.Fatalf("connection closed on the same route type: %v", err)
+	}
+	c.SetReadDeadline(time.Now().Add(5 * time.Second))
+	if err := tt.SetMode("wss"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c.Read(make([]byte, 1)); err == nil || isTimeout(err) {
+		t.Fatalf("iroh connection must close when wss is chosen: %v", err)
+	}
+	if via := tt.Status(0).Groups["relay.example.org"].Via; via == "iroh" {
+		t.Fatal("status still shows iroh")
+	}
+	c2, code := socksConnect(t, tt.Addr(), "u", "p", "relay.example.org:993")
+	if code != repSucceeded {
+		t.Fatalf("reconnect failed: %d", code)
+	}
+	defer c2.Close()
+	if via := tt.Status(0).Groups["relay.example.org"].Via; via != "wss" {
+		t.Fatalf("via %q, want wss", via)
+	}
+	// Once nothing is open, no route type is shown.
+	c2.Close()
+	for deadline := time.Now().Add(2 * time.Second); tt.Status(0).Groups["relay.example.org"].Via != ""; {
+		if time.Now().After(deadline) {
+			t.Fatal("via kept after the last tunnel connection closed")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+func TestTelegramStartsOnTheTunnelWhereItWasBlocked(t *testing.T) {
+	resetKnownStrategies()
+	defer resetKnownStrategies()
+	cfg, err := Config{Routes: []links.Route{wssRoute()}, Listen: "127.0.0.1:0", SystemResolvers: []string{"192.0.2.53:53"},
+		StateFile: t.TempDir() + "/state.json"}.Normalize()
+	if err != nil {
+		t.Fatal(err)
+	}
+	rememberBlocked(cfg, "telegram", true)
+	tt, err := Start(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tt.Close()
+	if g := tt.Status(0).Groups["telegram"]; g.Route != RouteTunnel.String() || g.State != "blocked" {
+		t.Fatalf("telegram %s/%s, want the tunnel at once", g.Route, g.State)
 	}
 }

@@ -953,8 +953,71 @@ func (t *Tunnel) testGroup(addr string) *group {
 func resetKnownStrategies() {
 	knownStrategies.Lock()
 	knownStrategies.m = map[string]knownStrategy{}
+	knownStrategies.blocked = map[string]map[string]time.Time{}
 	knownStrategies.loaded = map[string]bool{}
 	knownStrategies.Unlock()
+}
+
+// waitKnownBlocked waits for the remembered verdict, which is saved off
+// the router's lock.
+func waitKnownBlocked(t *testing.T, cfg Config, group string, want bool) {
+	t.Helper()
+	for deadline := time.Now().Add(2 * time.Second); knownBlocked(cfg, group) != want; {
+		if time.Now().After(deadline) {
+			t.Fatalf("%s known blocked: want %v", group, want)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+func TestBlockedNetworkStartsOnTheTunnel(t *testing.T) {
+	resetKnownStrategies()
+	defer resetKnownStrategies()
+	file := filepath.Join(t.TempDir(), "state.json")
+	var n atomic.Int32
+	tt := newTestTunnel(t, ModeAuto, echoDialer("D:", &n), echoDialer("T:", &n))
+	tt.cfg.StateFile, tt.cfg.SystemResolvers = file, []string{"192.0.2.53:53"}
+	mail := tt.testGroup("relay.example.org:443")
+	blocked := probeResult{Relays: 1, NetworkOK: true}
+	tt.applyProbe(mail, blocked)
+	tt.applyProbe(mail, blocked)
+	if mail.route != RouteTunnel {
+		t.Fatalf("route %v, want tunnel", mail.route)
+	}
+	waitKnownBlocked(t, tt.cfg, "relay.example.org", true)
+	if b, _ := os.ReadFile(file); strings.Contains(string(b), "relay.example.org") {
+		t.Fatalf("the state file must not name the relay: %s", b)
+	}
+
+	resetKnownStrategies() // the app was stopped
+	again := newTestTunnel(t, ModeAuto, echoDialer("D:", &n), echoDialer("T:", &n))
+	again.cfg = tt.cfg
+	if g := again.testGroup("relay.example.org:443"); g.route != RouteTunnel || g.state != "blocked" {
+		t.Fatalf("on the same network: route %v state %s, want the tunnel at once", g.route, g.state)
+	}
+	if g := again.testGroup("other.example.org:443"); g.route != RouteDirect {
+		t.Fatal("a relay never blocked here must start direct")
+	}
+	again.SetMode(ModeOff)
+	again.SetMode(ModeAuto)
+	if g := again.relays["relay.example.org"]; g.route != RouteTunnel {
+		t.Fatal("choosing auto again must start from the tunnel too")
+	}
+	elsewhere := newTestTunnel(t, ModeAuto, echoDialer("D:", &n), echoDialer("T:", &n))
+	elsewhere.cfg.StateFile, elsewhere.cfg.SystemResolvers = file, []string{"198.51.100.53:53"}
+	if g := elsewhere.testGroup("relay.example.org:443"); g.route != RouteDirect {
+		t.Fatal("another network must start direct")
+	}
+
+	// Open again: back to direct and forgotten.
+	g := again.relays["relay.example.org"]
+	for i := 0; i < recoveredAfter; i++ {
+		again.applyProbe(g, probeResult{Relays: 1, RelayOK: 1, NetworkOK: true})
+	}
+	if g.route != RouteDirect {
+		t.Fatalf("route %v, want direct", g.route)
+	}
+	waitKnownBlocked(t, again.cfg, "relay.example.org", false)
 }
 
 func TestStrategySurvivesARestart(t *testing.T) {

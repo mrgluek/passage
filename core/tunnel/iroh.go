@@ -68,6 +68,7 @@ func startIroh(ctx context.Context, r links.Route, binaryPath string, privateDir
 	cmd.Dir = dir
 	cmd.Stdout = io.Discard
 	cmd.Stderr = io.Discard
+	hideConsole(cmd)
 	if err = cmd.Start(); err != nil {
 		cancel()
 		os.RemoveAll(dir)

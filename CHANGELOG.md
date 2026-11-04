@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased
+
+- Passage for Windows: `passage.exe` shows a window like the phone app's and
+  keeps running in the notification area. It is portable: settings and the
+  link stay next to it, in `passage.ini` and `link.txt`.
+- Auto remembers each network where it needed a server route and starts
+  there at once the next time, instead of checking again first.
+- Choosing another server route type now moves open connections to it at
+  once.
+
 ## 0.5.2
 
 - When a server route cannot reach an address, Passage tries that route
