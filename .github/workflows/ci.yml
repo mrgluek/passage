@@ -60,6 +60,44 @@ jobs:
           path: ${{ runner.temp }}/mac/*.zip
           if-no-files-found: error
 
+  windows:
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: core/go.mod
+          cache-dependency-path: core/go.sum
+
+      - name: Go vet and test
+        working-directory: ./core
+        run: |
+          go vet ./tunnel ./update ./internal/... ./cmd/passage-cli ./cmd/passage ./cmd/passage-http-exit ./cmd/passage-update-manifest
+          go test ./...
+
+      - name: Set up Rust
+        run: |
+          rustup toolchain install 1.99.1 --profile minimal
+          rustup default 1.99.1
+
+      - name: Build Windows app and passage-cli
+        env:
+          PYTHON: python
+        run: scripts/build-cli.sh ci "$RUNNER_TEMP/win" windows/amd64
+
+      - name: Upload Windows app
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: windows-amd64
+          path: ${{ runner.temp }}/win/*.zip
+          if-no-files-found: error
+
   build:
     runs-on: ubuntu-latest
     steps:

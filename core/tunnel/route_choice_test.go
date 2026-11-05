@@ -103,9 +103,19 @@ func TestRouteTypeSwitchClosesOldConnections(t *testing.T) {
 	}
 	defer c.Close()
 	c.SetDeadline(time.Now().Add(5 * time.Second))
-	if via := tt.Status(0).Groups["relay.example.org"].Via; via != "iroh" {
-		t.Fatalf("via %q, want iroh", via)
+	waitForVia := func(want string) {
+		t.Helper()
+		for deadline := time.Now().Add(2 * time.Second); ; {
+			if via := tt.Status(0).Groups["relay.example.org"].Via; via == want {
+				return
+			}
+			if time.Now().After(deadline) {
+				t.Fatalf("via %q, want %s", tt.Status(0).Groups["relay.example.org"].Via, want)
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
 	}
+	waitForVia("iroh")
 	// The same type again keeps the connection.
 	if err := tt.SetMode("iroh"); err != nil {
 		t.Fatal(err)
@@ -129,17 +139,10 @@ func TestRouteTypeSwitchClosesOldConnections(t *testing.T) {
 		t.Fatalf("reconnect failed: %d", code)
 	}
 	defer c2.Close()
-	if via := tt.Status(0).Groups["relay.example.org"].Via; via != "wss" {
-		t.Fatalf("via %q, want wss", via)
-	}
+	waitForVia("wss")
 	// Once nothing is open, no route type is shown.
 	c2.Close()
-	for deadline := time.Now().Add(2 * time.Second); tt.Status(0).Groups["relay.example.org"].Via != ""; {
-		if time.Now().After(deadline) {
-			t.Fatal("via kept after the last tunnel connection closed")
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
+	waitForVia("")
 }
 
 func TestTelegramStartsOnTheTunnelWhereItWasBlocked(t *testing.T) {

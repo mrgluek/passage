@@ -8,6 +8,7 @@ import (
 	"net"
 	"slices"
 	"sync/atomic"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -73,13 +74,20 @@ func TestTunnelOnlyClosesStalledTelegramConnection(t *testing.T) {
 	if _, err := c.Write([]byte("hello")); err != nil {
 		t.Fatal(err)
 	}
+	for deadline := time.Now().Add(2 * time.Second); tt.Status(0).Active["direct"] == 0; {
+		if time.Now().After(deadline) {
+			t.Fatal("connection not tracked")
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	gen := tt.RouteGen()
 	for range blockedAfter {
 		tt.check()
 	}
-	if _, err := c.Read(make([]byte, 1)); !errors.Is(err, io.EOF) {
+	if _, err := c.Read(make([]byte, 1)); err == nil || (!errors.Is(err, io.EOF) && !errors.Is(err, syscall.ECONNRESET)) {
 		t.Fatalf("stalled direct connection must close after switching: %v", err)
 	}
-	if tt.RouteGen() == 0 {
+	if tt.RouteGen() <= gen {
 		t.Fatal("route change must notify the app")
 	}
 }
