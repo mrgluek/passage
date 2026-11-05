@@ -1,9 +1,12 @@
 package link
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestHTTPRouteRoundTripAndValidation(t *testing.T) {
-	r := Route{ID: "cdn", Type: "http", Wire: "http-v1", Params: map[string]any{"endpoint": "https://example.org/passage", "key": make([]byte, 32), "dial_ip": "192.0.2.1"}}
+	r := Route{ID: "cdn", Type: "http", Wire: "http-v1", Params: map[string]any{"endpoint": "https://example.org/passage", "key": make([]byte, 32), "dial_ip": "192.0.2.1", "sni": "example.com"}}
 	raw, err := Encode(bundle(r), nil)
 	if err != nil {
 		t.Fatal(err)
@@ -13,7 +16,7 @@ func TestHTTPRouteRoundTripAndValidation(t *testing.T) {
 		t.Fatalf("HTTP not supported: %v", err)
 	}
 	params, err := Params[HTTPParams](decoded.Bundle.Routes[0])
-	if err != nil || params.DialIP != "192.0.2.1" {
+	if err != nil || params.DialIP != "192.0.2.1" || params.SNI != "example.com" {
 		t.Fatal("parameters lost", err)
 	}
 	for _, endpoint := range []string{"http://example.org/", "https://user:pass@example.org/", "https://example.org/?x=y", "https://example.org/?", "https://example.org/#", "https://example.org:0/", "https://example.org:/", "https://bad_host/", "https://example.org/ x"} {
@@ -30,6 +33,19 @@ func TestHTTPRouteRoundTripAndValidation(t *testing.T) {
 		}
 	}
 	delete(r.Params, "dial_ip")
+	for _, sni := range []string{"", "example.org", "edge.example.com", strings.Repeat("a", 63) + "." + strings.Repeat("b", 63) + "." + strings.Repeat("c", 63) + "." + strings.Repeat("d", 61)} {
+		r.Params["sni"] = sni
+		if _, err := ValidateRoute(r); err != nil {
+			t.Errorf("rejected sni %q: %v", sni, err)
+		}
+	}
+	for _, sni := range []string{"192.0.2.1", "Example.org", "example.org:443", "example.org ", "bad_host.example.org", "example.org.", "-edge.example.org", "example..org", strings.Repeat("a", 64) + ".example.org", strings.Repeat("a.", 127) + "org"} {
+		r.Params["sni"] = sni
+		if _, err := ValidateRoute(r); err == nil {
+			t.Errorf("accepted sni %q", sni)
+		}
+	}
+	delete(r.Params, "sni")
 	r.Params["key"] = make([]byte, 16)
 	if _, err := ValidateRoute(r); err == nil {
 		t.Fatal("short key accepted")

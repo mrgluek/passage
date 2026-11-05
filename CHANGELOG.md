@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.6.3
+
+- Faster uploads over the HTTP connection type, about eight times in our tests.
+- HTTP routes in a link can set the TLS server name.
+
 ## 0.6.2
 
 - Android: a dark theme. Choose System, Light or Dark in Settings; by default

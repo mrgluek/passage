@@ -3,12 +3,17 @@ package tunnel
 import (
 	"bytes"
 	"context"
+	"crypto/x509"
+	"encoding/base64"
 	"encoding/binary"
+	"errors"
 	links "github.com/mrgluek/passage-link/link"
 	"io"
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -236,6 +241,167 @@ func TestHTTPPinnedIPPreservesTLSName(t *testing.T) {
 	defer conn.Close()
 	if err := wssRoundTrip(conn, []byte("verified TLS name")); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestHTTPSNIOverridesEndpointHost(t *testing.T) {
+	server := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.TLS.ServerName != "example.com" || r.Host != r.URL.Query().Get("host") {
+			t.Errorf("SNI %q, Host %q", r.TLS.ServerName, r.Host)
+		}
+		if r.ProtoMajor != 2 {
+			t.Errorf("HTTP version: %s", r.Proto)
+		}
+		w.Write([]byte{1})
+	}))
+	server.EnableHTTP2 = true
+	server.StartTLS()
+	defer server.Close()
+	ip, port, err := net.SplitHostPort(server.Listener.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, sni := range []string{"example.com", "example.net"} {
+		client, err := NewHTTPClient(links.HTTPParams{Endpoint: "https://example.org:" + port + "/passage", Key: wssTestKey, DialIP: ip, SNI: sni})
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer client.Close()
+		transport := client.httpClient.Transport.(*http.Transport)
+		transport.TLSClientConfig.RootCAs = x509.NewCertPool()
+		transport.TLSClientConfig.RootCAs.AddCert(server.Certificate())
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		resp, err := httpRequest(ctx, client.httpClient, client.params.Endpoint, "", url.Values{"host": {"example.org:" + port}})
+		if resp != nil {
+			resp.Body.Close()
+		}
+		cancel()
+		if sni == "example.com" && err != nil || sni == "example.net" && err == nil {
+			t.Fatalf("SNI %q: %v", sni, err)
+		}
+	}
+}
+
+func TestHTTPUploadWindowOrderingAndRetries(t *testing.T) {
+	local, bridge := net.Pipe()
+	defer local.Close()
+	defer bridge.Close()
+	exit, err := NewHTTPExit(wssTestKey, "/passage", func(string, uint16) (net.Conn, byte) { return nil, 1 })
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer exit.Close()
+	entry := &httpExitSession{conn: bridge, cancel: func() {}}
+	exit.sessions["session"] = entry
+	received := make(chan string, 1)
+	go func() {
+		var data bytes.Buffer
+		io.Copy(&data, local)
+		received <- data.String()
+	}()
+	upload := func(seq uint64, data string, status int) {
+		t.Helper()
+		q := url.Values{"n": {strconv.FormatUint(seq, 10)}, "d": {base64.RawURLEncoding.EncodeToString([]byte(data))}}
+		r := httptest.NewRequest(http.MethodGet, "/passage?"+q.Encode(), nil)
+		r.Header.Set(httpSessionHeader, "session")
+		w := httptest.NewRecorder()
+		exit.ServeHTTP(w, r)
+		if w.Code != status || status == http.StatusOK && !bytes.Equal(w.Body.Bytes(), []byte{1}) {
+			t.Fatalf("seq %d: status %d, body %q", seq, w.Code, w.Body.String())
+		}
+	}
+	upload(1, "b", http.StatusOK)
+	upload(1, "b", http.StatusOK)
+	upload(1, "wrong", http.StatusNotFound)
+	upload(httpUploadWindow, "outside", http.StatusNotFound)
+	if entry.next != 0 || len(entry.pending) != 1 {
+		t.Fatalf("next %d, buffered %d", entry.next, len(entry.pending))
+	}
+	upload(0, "a", http.StatusOK)
+	upload(0, "a", http.StatusOK)
+	upload(1, "b", http.StatusOK)
+	upload(0, "wrong", http.StatusNotFound)
+	for seq := uint64(2); seq < 8; seq++ {
+		upload(seq, string(byte('a'+seq)), http.StatusOK)
+	}
+	upload(1, "b", http.StatusNotFound)
+	upload(2, "c", http.StatusOK)
+	upload(8+httpUploadWindow, "outside", http.StatusNotFound)
+	if len(entry.pending) != 0 || len(entry.hashes) != httpUploadWindow {
+		t.Fatalf("buffered %d, hashes %d", len(entry.pending), len(entry.hashes))
+	}
+	bridge.Close()
+	if got := <-received; got != "abcdefgh" {
+		t.Fatalf("received %q", got)
+	}
+}
+
+func TestHTTPConcurrentUploadWindow(t *testing.T) {
+	client, _, _ := httpFixture(t)
+	base := client.httpClient.Transport
+	var active, peak, count atomic.Int32
+	var armed atomic.Bool
+	release := make(chan struct{})
+	client.httpClient.Transport = roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		if r.URL.RawQuery == "" || !armed.Load() {
+			return base.RoundTrip(r)
+		}
+		n := active.Add(1)
+		defer active.Add(-1)
+		for old := peak.Load(); n > old && !peak.CompareAndSwap(old, n); old = peak.Load() {
+		}
+		if count.Add(1) == httpUploadWindow {
+			close(release)
+		}
+		select {
+		case <-release:
+		case <-r.Context().Done():
+			return nil, r.Context().Err()
+		}
+		return base.RoundTrip(r)
+	})
+	conn := dialTest(t, client, "mail.example.org:443")
+	defer conn.Close()
+	conn.SetDeadline(time.Now().Add(10 * time.Second))
+	armed.Store(true)
+	if err := wssRoundTrip(conn, bytes.Repeat([]byte("ordered upload"), 10000)); err != nil {
+		t.Fatal(err)
+	}
+	if got := peak.Load(); got != httpUploadWindow {
+		t.Fatalf("peak concurrent uploads: %d", got)
+	}
+}
+
+func TestHTTPUploadFailureCancelsWindow(t *testing.T) {
+	client, _, _ := httpFixture(t)
+	base := client.httpClient.Transport
+	var armed atomic.Bool
+	var count atomic.Int32
+	finished := make(chan struct{}, httpUploadWindow)
+	client.httpClient.Transport = roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		if r.URL.RawQuery == "" || !armed.Load() {
+			return base.RoundTrip(r)
+		}
+		defer func() { finished <- struct{}{} }()
+		if count.Add(1) == httpUploadWindow {
+			return nil, errors.New("upload failed")
+		}
+		<-r.Context().Done()
+		return nil, r.Context().Err()
+	})
+	conn := dialTest(t, client, "mail.example.org:443")
+	defer conn.Close()
+	conn.SetDeadline(time.Now().Add(5 * time.Second))
+	armed.Store(true)
+	if _, err := conn.Write(bytes.Repeat([]byte("upload"), 10000)); err == nil {
+		t.Fatal("failed upload did not stop the stream")
+	}
+	for i := 0; i < httpUploadWindow; i++ {
+		select {
+		case <-finished:
+		case <-time.After(time.Second):
+			t.Fatal("upload request was not canceled")
+		}
 	}
 }
 func TestHTTPBrokenDownloadTruncatesStreams(t *testing.T) {

@@ -16,8 +16,8 @@ android {
         applicationId = "info.gluek.passage"
         minSdk = 24
         targetSdk = 36
-        versionCode = 15
-        versionName = "0.6.2"
+        versionCode = 16
+        versionName = "0.6.3"
     }
 
     // One APK per ABI plus a universal one.
