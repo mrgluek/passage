@@ -65,6 +65,8 @@ const maxResolvers = 64
 // Config combines server settings from the link with local app state.
 type Config struct {
 	Routes []links.Route `json:"routes,omitempty"`
+	// RouteEdits are local changes to Routes by ID (priority, switched off).
+	RouteEdits map[string]RouteEdit `json:"route_edits,omitempty"`
 	// UpdateSources comes from a link signed by the trusted author.
 	UpdateSources []string `json:"update_sources,omitempty"`
 	IrohBinary    string   `json:"iroh_binary,omitempty"`
@@ -264,7 +266,9 @@ func (c Config) Normalize() (Config, error) {
 }
 
 // HasTunnel reports whether the config carries a tunnel (a link or My).
-func (c Config) HasTunnel() bool { return c.Zone != "" || len(c.Routes) > 0 || c.My != "" }
+func (c Config) HasTunnel() bool {
+	return c.Zone != "" || len(Edited(c.Routes, c.RouteEdits)) > 0 || c.My != ""
+}
 
 // Effective is the resolver list the tunnel uses: the network's resolvers,
 // then the SIM operator's known resolvers, then the link's extra resolvers,

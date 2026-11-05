@@ -1,6 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name" translatable="false">Passage</string>
+    <string name="saved_routes_label">Saved routes</string>
+    <string name="edit_routes">Edit routes</string>
+    <string name="routes_edit_hint">Turn a route off or change its priority. Edits stay on this device.</string>
     <string name="link_label">Link</string>
     <string name="link_hint" translatable="false">https://passage.gluek.info/link#…</string>
     <string name="link_empty">Paste the link you received.</string>

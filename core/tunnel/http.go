@@ -5,6 +5,7 @@ import (
 	"crypto/hmac"
 	"crypto/rand"
 	"crypto/sha256"
+	"crypto/tls"
 	"encoding/base64"
 	"encoding/binary"
 	"errors"
@@ -20,6 +21,7 @@ import (
 )
 
 const httpChunk = 3072
+const httpUploadWindow = 6
 const httpSessionHeader = "X-Passage-Session"
 
 // The exit sends an empty chunk every httpKeepAlive. A session that hears
@@ -31,7 +33,7 @@ const (
 
 // NewHTTPClient carries encrypted streams through bodyless HTTPS GET requests.
 func NewHTTPClient(params links.HTTPParams) (*WSSClient, error) {
-	r := links.Route{ID: "http", Type: "http", Wire: "http-v1", Params: map[string]any{"endpoint": params.Endpoint, "key": params.Key, "dial_ip": params.DialIP}}
+	r := links.Route{ID: "http", Type: "http", Wire: "http-v1", Params: map[string]any{"endpoint": params.Endpoint, "key": params.Key, "dial_ip": params.DialIP, "sni": params.SNI}}
 	if _, err := links.ValidateRoute(r); err != nil {
 		return nil, err
 	}
@@ -47,6 +49,15 @@ func NewHTTPClient(params links.HTTPParams) (*WSSClient, error) {
 	tr := c.httpClient.Transport.(*http.Transport)
 	tr.DisableCompression = true
 	tr.ResponseHeaderTimeout = 10 * time.Second
+	if params.SNI != "" {
+		if tr.TLSClientConfig == nil {
+			tr.TLSClientConfig = &tls.Config{}
+		} else {
+			tr.TLSClientConfig = tr.TLSClientConfig.Clone()
+		}
+		tr.TLSClientConfig.ServerName = params.SNI
+	}
+	tr.ForceAttemptHTTP2 = true
 	if params.DialIP != "" {
 		tr.DialContext = func(ctx context.Context, network, address string) (net.Conn, error) {
 			_, port, err := net.SplitHostPort(address)
@@ -91,6 +102,7 @@ func (c *WSSClient) dialHTTPSession(ctx context.Context) (*wssSession, error) {
 	}
 	local, bridge := net.Pipe()
 	s := newWSSSession(c.life, nil, &wssRecords{conn: local, seal: wssAEAD(wssKey(c.params.Key, nonce, "c2s"))}, 1, nil, c.forget)
+	stopSession := context.AfterFunc(s.life, cancel)
 	go func() {
 		defer cancel()
 		defer resp.Body.Close()
@@ -100,29 +112,53 @@ func (c *WSSClient) dialHTTPSession(ctx context.Context) (*wssSession, error) {
 		s.fail(httpDownload(resp.Body, bridge, func() { silent.Reset(c.httpSilence) }))
 	}()
 	go func() {
-		defer cancel()
-		defer bridge.Close()
+		var uploads sync.WaitGroup
+		defer func() {
+			cancel()
+			stopSession()
+			bridge.Close()
+			uploads.Wait()
+		}()
+		var pending []<-chan struct{}
 		buf := make([]byte, httpChunk)
 		for seq := uint64(0); ; seq++ {
-			n, err := bridge.Read(buf)
-			if err != nil {
-				return
-			}
-			upload, done := context.WithTimeout(life, 10*time.Second)
-			response, err := httpRequest(upload, c.httpClient, c.params.Endpoint, token, url.Values{"n": {strconv.FormatUint(seq, 10)}, "d": {base64.RawURLEncoding.EncodeToString(buf[:n])}})
-			if err == nil {
-				var ack [1]byte
-				_, readErr := io.ReadFull(response.Body, ack[:])
-				response.Body.Close()
-				if readErr != nil || ack[0] != 1 {
-					err = errors.New("HTTP upload not acknowledged")
+			if len(pending) == httpUploadWindow {
+				select {
+				case <-pending[0]:
+					pending = pending[1:]
+				case <-life.Done():
+					s.fail(life.Err())
+					return
 				}
 			}
-			done()
+			n, err := bridge.Read(buf)
 			if err != nil {
 				s.fail(err)
 				return
 			}
+			query := url.Values{"n": {strconv.FormatUint(seq, 10)}, "d": {base64.RawURLEncoding.EncodeToString(buf[:n])}}
+			finished := make(chan struct{})
+			pending = append(pending, finished)
+			uploads.Add(1)
+			go func() {
+				defer uploads.Done()
+				defer close(finished)
+				upload, done := context.WithTimeout(life, 10*time.Second)
+				defer done()
+				response, err := httpRequest(upload, c.httpClient, c.params.Endpoint, token, query)
+				if err == nil {
+					var ack [1]byte
+					_, readErr := io.ReadFull(response.Body, ack[:])
+					response.Body.Close()
+					if readErr != nil || ack[0] != 1 {
+						err = errors.New("HTTP upload not acknowledged")
+					}
+				}
+				if err != nil {
+					s.fail(err)
+					cancel()
+				}
+			}()
 		}
 	}()
 	go s.run(func() error {
@@ -174,11 +210,12 @@ type HTTPExit struct {
 	closed   bool
 }
 type httpExitSession struct {
-	conn     net.Conn
-	mu       sync.Mutex
-	next     uint64
-	previous [32]byte
-	cancel   context.CancelFunc
+	conn    net.Conn
+	mu      sync.Mutex
+	next    uint64
+	pending map[uint64][]byte
+	hashes  map[uint64][32]byte
+	cancel  context.CancelFunc
 }
 
 func NewHTTPExit(key []byte, path string, dial func(string, uint16) (net.Conn, byte)) (*HTTPExit, error) {
@@ -339,23 +376,41 @@ func (e *HTTPExit) upload(w http.ResponseWriter, r *http.Request, token string) 
 	entry.mu.Lock()
 	defer entry.mu.Unlock()
 	sum := sha256.Sum256(data)
-	if seq != entry.next {
-		// Intermediaries may repeat an acknowledged GET.
-		if entry.next > 0 && seq == entry.next-1 && sum == entry.previous {
+	if seq < entry.next && entry.next-seq > httpUploadWindow || seq >= entry.next && seq-entry.next >= httpUploadWindow {
+		http.NotFound(w, r)
+		return
+	}
+	if previous, ok := entry.hashes[seq]; ok {
+		if sum == previous {
 			w.Write([]byte{1})
 			return
 		}
 		http.NotFound(w, r)
 		return
 	}
-	entry.conn.SetWriteDeadline(time.Now().Add(4 * time.Second))
-	if _, err := entry.conn.Write(data); err != nil {
-		entry.cancel()
-		entry.conn.Close()
+	if seq < entry.next {
 		http.NotFound(w, r)
 		return
 	}
-	entry.next++
-	entry.previous = sum
+	if entry.pending == nil {
+		entry.pending = make(map[uint64][]byte)
+		entry.hashes = make(map[uint64][32]byte)
+	}
+	entry.pending[seq] = data
+	entry.hashes[seq] = sum
+	for data, ok := entry.pending[entry.next]; ok; data, ok = entry.pending[entry.next] {
+		entry.conn.SetWriteDeadline(time.Now().Add(4 * time.Second))
+		if _, err := entry.conn.Write(data); err != nil {
+			entry.cancel()
+			entry.conn.Close()
+			http.NotFound(w, r)
+			return
+		}
+		delete(entry.pending, entry.next)
+		entry.next++
+		if entry.next > httpUploadWindow {
+			delete(entry.hashes, entry.next-httpUploadWindow-1)
+		}
+	}
 	w.Write([]byte{1})
 }

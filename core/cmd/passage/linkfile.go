@@ -82,11 +82,11 @@ func insideArchive(dir, temp string) bool {
 // settings screen.
 func describeLink(t tr, cfg tunnel.Config) string {
 	if len(cfg.Routes) > 0 {
-		types := make([]string, len(cfg.Routes))
+		routes := make([]string, len(cfg.Routes))
 		for i, r := range cfg.Routes {
-			types[i] = r.Type
+			routes[i] = fmt.Sprintf("%d %s (%s)", r.Priority, r.ID, r.Type)
 		}
-		return t.f("import_route_count", len(cfg.Routes), strings.Join(types, ", "))
+		return t.f("import_route_count", len(cfg.Routes), strings.Join(routes, ", "))
 	}
 	ipv6 := t.f("server_ipv6_off")
 	if cfg.TunnelIPv6 {
@@ -119,7 +119,7 @@ func installedRoutes(cfg tunnel.Config) []routeChoice {
 	if len(cfg.Routes) == 0 && cfg.Zone != "" {
 		add("legacy-dns", "soar", 100)
 	}
-	for _, r := range cfg.Routes {
+	for _, r := range tunnel.Edited(cfg.Routes, cfg.RouteEdits) {
 		if r.Type != "my" && slices.Contains(tunnel.RouteKinds, r.Type) {
 			add(r.ID, r.Type, int(r.Priority))
 		}
@@ -132,3 +132,27 @@ func installedRoutes(cfg tunnel.Config) []routeChoice {
 
 // myPriority is the Go core's (tunnel/my.go).
 const myPriority = 10
+
+// savedRoutes is every installed route with its local edits, in the order
+// the router tries them; routes that are off go last.
+func savedRoutes(cfg tunnel.Config) []savedRoute {
+	out := []savedRoute{}
+	for _, r := range cfg.Routes {
+		e := cfg.RouteEdits[r.ID]
+		p := int(r.Priority)
+		if e.Priority != nil {
+			p = int(*e.Priority)
+		}
+		out = append(out, savedRoute{ID: r.ID, Type: r.Type, Priority: p, On: !e.Off})
+	}
+	slices.SortStableFunc(out, func(a, b savedRoute) int {
+		if a.On != b.On {
+			if a.On {
+				return -1
+			}
+			return 1
+		}
+		return cmp.Or(cmp.Compare(a.Priority, b.Priority), cmp.Compare(a.ID, b.ID))
+	})
+	return out
+}

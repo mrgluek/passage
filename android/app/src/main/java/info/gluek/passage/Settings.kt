@@ -30,6 +30,14 @@ class Settings(context: Context) {
         val mode: String get() = if (type == "my") "my" else "route:$id"
     }
 
+    data class SavedRoute(
+        val id: String,
+        val type: String,
+        val originalPriority: Int,
+        var priority: Int,
+        var on: Boolean,
+    )
+
     /** Old type selections migrate to the first matching installed route. */
     var mode: String
         get() {
@@ -55,7 +63,7 @@ class Settings(context: Context) {
 
     val routeKinds: List<String> get() = availableRoutes.map { it.type }.distinct()
 
-    /** Only the ID, type and priority are used in the route menu. */
+    /** Only the ID, type and priority are used in the route menu; off routes are omitted. */
     val installedRoutes: List<Route>
         get() {
             val legacy = listOf(Route("legacy-dns", "soar", 100))
@@ -65,14 +73,81 @@ class Settings(context: Context) {
                 val json = JSONObject(config)
                 val routes = json.optJSONArray("routes")
                     ?: return if (json.optString("zone").isNotEmpty()) legacy else emptyList()
+                val edits = json.optJSONObject("route_edits")
                 (0 until routes.length()).map { routes.getJSONObject(it) }
-                    .map { Route(it.getString("id"), it.getString("type"), it.optInt("priority")) }
+                    .filter { r ->
+                        val id = r.getString("id")
+                        val edit = edits?.optJSONObject(id)
+                        !(edit != null && edit.optBoolean("off"))
+                    }
+                    .map { r ->
+                        val id = r.getString("id")
+                        val edit = edits?.optJSONObject(id)
+                        val p = if (edit != null && edit.has("priority")) edit.optInt("priority") else r.optInt("priority")
+                        Route(id, r.getString("type"), p)
+                    }
                     .filter { it.type in ROUTE_KINDS && it.type != "my" }
                     .sortedWith(compareBy({ it.priority }, { it.id }))
             } catch (_: Exception) {
                 emptyList()
             }
         }
+
+    /** Every installed route with its local edits, with off routes last. */
+    val savedRoutes: List<SavedRoute>
+        get() {
+            val config = routesConfig
+            if (config.isEmpty()) return emptyList()
+            return try {
+                val json = JSONObject(config)
+                val routes = json.optJSONArray("routes") ?: return emptyList()
+                val edits = json.optJSONObject("route_edits")
+                (0 until routes.length()).map { routes.getJSONObject(it) }
+                    .map { r ->
+                        val id = r.getString("id")
+                        val type = r.getString("type")
+                        val origPriority = r.optInt("priority")
+                        val edit = edits?.optJSONObject(id)
+                        val p = if (edit != null && edit.has("priority")) edit.optInt("priority") else origPriority
+                        val on = !(edit != null && edit.optBoolean("off"))
+                        SavedRoute(id, type, origPriority, p, on)
+                    }
+                    .sortedWith(compareBy<SavedRoute> { !it.on }.thenBy { it.priority }.thenBy { it.id })
+            } catch (_: Exception) {
+                emptyList()
+            }
+        }
+
+    /** Saves local route edits (priority, on/off) and resets an inactive route choice to Auto. */
+    fun saveRouteEdits(edits: List<SavedRoute>) {
+        val config = routesConfig
+        if (config.isEmpty()) return
+        try {
+            val json = JSONObject(config)
+            val routes = json.optJSONArray("routes") ?: return
+            val linkRoutes = (0 until routes.length()).map { routes.getJSONObject(it) }
+                .associate { it.getString("id") to it.optInt("priority") }
+            val editsObj = JSONObject()
+            for (r in edits) {
+                val origPriority = linkRoutes[r.id] ?: continue
+                val diffPriority = r.priority != origPriority
+                val isOff = !r.on
+                if (!diffPriority && !isOff) continue
+                val edit = JSONObject()
+                if (diffPriority) edit.put("priority", r.priority.coerceIn(0, 65535))
+                if (isOff) edit.put("off", true)
+                editsObj.put(r.id, edit)
+            }
+            if (editsObj.length() > 0) {
+                json.put("route_edits", editsObj)
+            } else {
+                json.remove("route_edits")
+            }
+            routesConfig = json.toString()
+            mode = mode
+        } catch (_: Exception) {
+        }
+    }
 
 
     /** The user wants the proxy on: a system restart of the service resumes it. */

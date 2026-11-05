@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.6.3
+
+- Faster uploads over the HTTP connection type, about eight times in our tests.
+- HTTP routes in a link can set the TLS server name.
+- Edit routes: turn a saved route off or change its priority, on Android,
+  Windows and macOS. Edits stay on the device.
+- Saved routes are listed the same way on every platform, and adding or
+  replacing routes from a link works the same on a computer as on a phone.
+
 ## 0.6.2
 
 - Android: a dark theme. Choose System, Light or Dark in Settings; by default

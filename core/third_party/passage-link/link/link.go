@@ -95,6 +95,7 @@ type HTTPParams struct {
 	Endpoint string `json:"endpoint"`
 	Key      []byte `json:"key"`
 	DialIP   string `json:"dial_ip,omitempty"`
+	SNI      string `json:"sni,omitempty"`
 }
 
 type IrohParams struct {
@@ -281,6 +282,9 @@ func ValidateRoute(r Route) (bool, error) {
 		}
 		if p.DialIP != "" && net.ParseIP(p.DialIP) == nil {
 			return true, errors.New("invalid HTTP dial IP")
+		}
+		if p.SNI != "" && (len(p.SNI) > 253 || net.ParseIP(p.SNI) != nil || !validZone(p.SNI)) {
+			return true, errors.New("invalid HTTP SNI")
 		}
 		if len(p.Endpoint) > 1024 || !strings.HasPrefix(p.Endpoint, "https://") {
 			return true, errors.New("invalid HTTP endpoint")

@@ -1,5 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
+    <string name="saved_routes_label">Сохранённые маршруты</string>
+    <string name="edit_routes">Изменить маршруты</string>
+    <string name="routes_edit_hint">Отключите маршрут или измените приоритет. Правки хранятся только на этом устройстве.</string>
     <string name="link_label">Ссылка</string>
     <string name="link_empty">Вставьте полученную ссылку.</string>
     <string name="link_ok_zone">Ссылка в порядке: зона %1$s</string>

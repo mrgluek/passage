@@ -232,6 +232,7 @@ func Start(cfg Config) (*Tunnel, error) {
 	if err != nil {
 		return nil, err
 	}
+	cfg.Routes = Edited(cfg.Routes, cfg.RouteEdits)
 	mode := cfg.Mode
 	if routeMode(mode) {
 		mode = ModeAlways

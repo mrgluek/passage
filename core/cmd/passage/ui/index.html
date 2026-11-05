@@ -58,6 +58,11 @@ textarea, input[type=text] { width: 100%; font: 13px Consolas, monospace; color:
 textarea { min-height: 72px; resize: vertical; }
 label.check { display: flex; gap: 8px; align-items: center; margin: 6px 0; cursor: pointer; }
 a { color: var(--accent); cursor: pointer; text-decoration: underline; }
+.rrow { display: flex; align-items: center; gap: 8px; padding: 3px 0; }
+.rrow.off .rname { color: var(--muted); }
+.rrow .rname { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rrow button { margin: 0; padding: 1px 10px; }
+.rrow input[type=text] { width: 64px; text-align: center; font: inherit; padding: 2px 4px; }
 .hidden { display: none !important; }
 #toast { position: fixed; left: 50%; bottom: 20px; transform: translateX(-50%); max-width: 90%;
   background: var(--fg); color: var(--bg); padding: 8px 14px; border-radius: 8px; opacity: 0; transition: opacity .2s;
@@ -107,7 +112,13 @@ a { color: var(--accent); cursor: pointer; text-decoration: underline; }
 </main>
 
 <main id="settings" class="hidden">
-  <h2 data-t="link_label" style="margin-top:8px"></h2>
+  <h2 data-t="saved_routes_label" style="margin-top:8px"></h2>
+  <div id="savedRoutes"></div>
+  <button id="editRoutes" class="hidden" data-t="edit_routes"></button>
+  <div id="editBar" class="hidden"><button class="primary" id="saveRoutes" data-t="save"></button> <button id="cancelRoutes" data-t="cancel"></button></div>
+  <p class="hint hidden" id="routesHint" data-t="routes_edit_hint"></p>
+
+  <h2 data-t="link_label"></h2>
   <p class="hint" id="linkInfo"></p>
   <p class="hint warn" id="linkError"></p>
   <button id="changeLink" data-t="change_link"></button>
@@ -339,15 +350,55 @@ function render(v) {
 }
 function refresh() { return call("view").then(render, fail); }
 
+let savedList = [], draft = null, editing = false;
+// routeText is "priority id (type)", as in the route menu.
+const routeText = r => r.priority + " " + r.id + (r.id === r.type ? "" : " (" + r.type + ")");
+function renderRoutes() {
+  const box = $("savedRoutes");
+  const list = editing ? draft : savedList;
+  box.textContent = "";
+  list.forEach((r, i) => {
+    const row = document.createElement("div");
+    row.className = "rrow" + (r.on ? "" : " off");
+    const name = document.createElement("span");
+    name.className = "rname";
+    name.textContent = (r.on ? "[x] " : "[  ] ") + routeText(r);
+    if (!editing) { row.append(name); box.append(row); return; }
+    const on = document.createElement("input");
+    on.type = "checkbox"; on.checked = r.on;
+    on.onchange = () => { r.on = on.checked; renderRoutes(); };
+    name.textContent = r.id + (r.id === r.type ? "" : " (" + r.type + ")");
+    const step = d => () => { r.priority = Math.max(0, Math.min(65535, r.priority + d)); renderRoutes(); };
+    const minus = document.createElement("button"); minus.textContent = "−"; minus.onclick = step(-5);
+    const plus = document.createElement("button"); plus.textContent = "+"; plus.onclick = step(5);
+    const num = document.createElement("input");
+    num.type = "text"; num.value = r.priority; num.inputMode = "numeric";
+    num.onchange = () => { const n = parseInt(num.value, 10); if (n >= 0 && n <= 65535) r.priority = n; renderRoutes(); };
+    row.append(on, name, minus, num, plus);
+    box.append(row);
+  });
+  $("editRoutes").classList.toggle("hidden", editing || !savedList.length);
+  $("editBar").classList.toggle("hidden", !editing);
+  $("routesHint").classList.toggle("hidden", !editing);
+}
+$("editRoutes").onclick = () => { draft = savedList.map(r => ({...r})); editing = true; renderRoutes(); };
+$("cancelRoutes").onclick = () => { editing = false; draft = null; renderRoutes(); };
+$("saveRoutes").onclick = () => call("saveRoutes", draft).then(() => {
+  editing = false; draft = null;
+  toast(t("saved"));
+  showLink(false);
+  refresh();
+}, fail);
 function showLink(open) {
   return call("link", open).then(l => {
-    $("linkInfo").textContent = l.info || "";
+    $("linkInfo").textContent = (l.routes || []).length ? "" : l.info || "";
+    savedList = l.routes || [];
+    if (!editing) renderRoutes();
     $("linkError").textContent = l.error || "";
     // A saved link stays folded so its key is not on screen.
     const unfold = open || !l.has || !!l.error;
     $("linkBox").classList.toggle("hidden", !unfold);
     $("changeLink").classList.toggle("hidden", unfold);
-    if (unfold && l.text !== undefined && document.activeElement !== $("linkText")) $("linkText").value = l.text || "";
   }, fail);
 }
 function showSettings() {
@@ -403,6 +454,7 @@ $("report").onclick = () => {
 
 $("changeLink").onclick = () => showLink(true).then(() => $("linkText").focus());
 async function importLink(text) {
+  if (!text.trim()) return;
   try {
     const preview = await call("importPreview", text);
     if (!await modal(t("import_title"), preview, t("save"), t("cancel"))) return;
