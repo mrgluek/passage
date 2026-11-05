@@ -9,10 +9,12 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
 
+	links "github.com/mrgluek/passage-link/link"
 	"github.com/mrgluek/passage/core/tunnel"
 )
 
@@ -38,6 +40,8 @@ type Settings struct {
 	Running    bool
 	AutoUpdate bool
 	NextUpdate time.Time
+	// Edits are local changes to the link's routes, by route ID.
+	Edits map[string]tunnel.RouteEdit
 }
 
 func defaultSettings() Settings {
@@ -106,6 +110,15 @@ func loadSettings(path string) (Settings, bool, error) {
 			continue
 		}
 		k, v = strings.TrimSpace(k), strings.TrimSpace(v)
+		if id, ok := strings.CutPrefix(k, "route."); ok && links.ValidID(id) {
+			if e, ok := parseRouteEdit(v); ok {
+				if s.Edits == nil {
+					s.Edits = map[string]tunnel.RouteEdit{}
+				}
+				s.Edits[id] = e
+			}
+			continue
+		}
 		switch k {
 		case "port":
 			if n, err := strconv.Atoi(v); err == nil && n > 0 && n < 65536 {
@@ -142,6 +155,45 @@ func loadSettings(path string) (Settings, bool, error) {
 	return s, true, sc.Err()
 }
 
+// parseRouteEdit reads "20", "off" or "20,off".
+func parseRouteEdit(v string) (tunnel.RouteEdit, bool) {
+	var e tunnel.RouteEdit
+	for _, part := range strings.Split(v, ",") {
+		part = strings.TrimSpace(part)
+		if part == "off" {
+			e.Off = true
+		} else if n, err := strconv.ParseUint(part, 10, 16); err == nil {
+			p := uint16(n)
+			e.Priority = &p
+		} else if part != "" {
+			return e, false
+		}
+	}
+	return e, e.Off || e.Priority != nil
+}
+
+// editLines is the route edits as passage.ini lines, in ID order.
+func (s Settings) editLines() string {
+	ids := make([]string, 0, len(s.Edits))
+	for id := range s.Edits {
+		ids = append(ids, id)
+	}
+	slices.Sort(ids)
+	var b strings.Builder
+	for _, id := range ids {
+		e := s.Edits[id]
+		var parts []string
+		if e.Priority != nil {
+			parts = append(parts, strconv.Itoa(int(*e.Priority)))
+		}
+		if e.Off {
+			parts = append(parts, "off")
+		}
+		fmt.Fprintf(&b, "route.%s=%s\n", id, strings.Join(parts, ","))
+	}
+	return b.String()
+}
+
 func (s Settings) save(path string) error {
 	text := fmt.Sprintf(`; Passage settings. Passage rewrites this file when you change them in its window.
 [proxy]
@@ -155,6 +207,7 @@ running=%t
 auto_update=%t
 next_update=%s
 `, s.Port, s.User, s.Pass, s.Auth, s.Mode, s.My, s.Running, s.AutoUpdate, s.NextUpdate.Format(time.RFC3339))
+	text += s.editLines()
 	return writeFile(path, []byte(text))
 }
 

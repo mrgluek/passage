@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
@@ -29,11 +30,13 @@ func TestSettingsRoundTrip(t *testing.T) {
 		t.Fatalf("defaults: %+v", s)
 	}
 	s.Mode, s.My, s.Auth, s.Running = "wss", "user:p%40ss@127.0.0.1:9050", false, false
+	p20 := uint16(20)
+	s.Edits = map[string]tunnel.RouteEdit{"cf": {Priority: &p20, Off: true}, "br": {Off: true}}
 	if err := s.save(path); err != nil {
 		t.Fatal(err)
 	}
 	got, existed, err := loadSettings(path)
-	if err != nil || !existed || got != s {
+	if err != nil || !existed || !reflect.DeepEqual(got, s) {
 		t.Fatalf("got %+v, want %+v (err %v)", got, s, err)
 	}
 }
@@ -310,5 +313,55 @@ func TestOpenTgOnlyWithAHandler(t *testing.T) {
 	p.can = true
 	if opened, err := a.call("openTg", nil); err != nil || opened != true || !strings.HasPrefix(p.opened, "tg://socks?server=") {
 		t.Fatal(opened, err, p.opened)
+	}
+}
+
+func v2Link(t *testing.T, mode, id string, priority uint16) string {
+	t.Helper()
+	pub, _, _ := ed25519.GenerateKey(nil)
+	r := links.Route{ID: id, Type: "wss", Wire: "wss-v1", Priority: priority, Params: map[string]any{
+		"endpoint": "wss://example.org/passage", "key": base64.StdEncoding.EncodeToString(pub)}}
+	raw, err := links.Encode(links.Bundle{V: 2, Kind: "routes", Mode: mode, Routes: []links.Route{r}}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	uri, err := links.URI(raw, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	return uri
+}
+
+func TestSaveRouteEdits(t *testing.T) {
+	dir := t.TempDir()
+	a := newApp(dir, "test", "", "en", nil)
+	for _, l := range []string{v2Link(t, "merge", "aa", 20), v2Link(t, "merge", "bb", 30)} {
+		if err := a.saveLink(l); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := a.saveRouteEdits([]savedRoute{{ID: "aa", Priority: 40, On: false}, {ID: "bb", Priority: 30, On: true}}); err != nil {
+		t.Fatal(err)
+	}
+	got := savedRoutes(a.linkCfg)
+	if len(got) != 2 || got[0].ID != "bb" || got[1].ID != "aa" || got[1].On || got[1].Priority != 40 {
+		t.Fatalf("saved %+v", got)
+	}
+	if r := a.routes(); len(r) != 1 || r[0].ID != "bb" {
+		t.Fatalf("routes %+v", r)
+	}
+	if len(a.settings.Edits) != 1 {
+		t.Fatalf("unchanged route kept as an edit: %+v", a.settings.Edits)
+	}
+	// The edit survives a restart; a replace link clears it.
+	b := newApp(dir, "test", "", "en", nil)
+	if got := savedRoutes(b.linkCfg); got[1].On || got[1].Priority != 40 {
+		t.Fatalf("not kept: %+v", got)
+	}
+	if err := b.saveLink(v2Link(t, "replace", "aa", 20)); err != nil {
+		t.Fatal(err)
+	}
+	if got := savedRoutes(b.linkCfg); len(got) != 1 || !got[0].On || got[0].Priority != 20 || len(b.settings.Edits) != 0 {
+		t.Fatalf("replace kept edits: %+v %+v", got, b.settings.Edits)
 	}
 }

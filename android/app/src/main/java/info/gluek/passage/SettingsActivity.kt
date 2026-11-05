@@ -10,6 +10,7 @@ import android.os.Build
 import android.os.Bundle
 import android.text.Editable
 import android.text.InputType
+import android.text.TextUtils
 import android.text.TextWatcher
 import android.text.util.Linkify
 import android.view.Gravity
@@ -35,13 +36,29 @@ class SettingsActivity : ThemedActivity() {
     private val worker = Executors.newSingleThreadExecutor()
     private lateinit var settings: Settings
 
+    private lateinit var linkHeading: TextView
     private lateinit var linkInfo: TextView
     private lateinit var changeButton: Button
     private lateinit var linkBox: LinearLayout
     private lateinit var linkEdit: EditText
     private lateinit var myEdit: EditText
 
-    private data class Draft(val link: String, val myRoute: String)
+    private lateinit var savedRoutesSection: LinearLayout
+    private lateinit var savedRoutesHeading: TextView
+    private lateinit var savedRoutesList: LinearLayout
+    private lateinit var editRoutesButton: Button
+    private lateinit var editRoutesBar: LinearLayout
+    private lateinit var routesEditHint: TextView
+
+    private var editingRoutes = false
+    private var routeDraft: MutableList<Settings.SavedRoute>? = null
+
+    private data class Draft(
+        val link: String,
+        val myRoute: String,
+        val routeDraft: List<Settings.SavedRoute>? = null,
+        val editingRoutes: Boolean = false,
+    )
     private lateinit var batteryButton: Button
     private lateinit var backgroundState: TextView
     private lateinit var routeBox: LinearLayout
@@ -57,9 +74,15 @@ class SettingsActivity : ThemedActivity() {
         val draft = lastNonConfigurationInstance as? Draft
         linkEdit.setText(draft?.link ?: settings.link)
         myEdit.setText(draft?.myRoute ?: settings.myRoute)
+        editingRoutes = draft?.editingRoutes ?: savedInstanceState?.getBoolean("editing_routes") ?: false
+        routeDraft = draft?.routeDraft?.map { it.copy() }?.toMutableList()
+        if (editingRoutes && routeDraft == null) {
+            routeDraft = settings.savedRoutes.map { it.copy() }.toMutableList()
+        }
         // Folded at once when a link is saved, so the key never flashes on
         // screen while describeLink checks it (a bad link unfolds).
         setLinkOpen(savedInstanceState?.getBoolean("link_open") ?: settings.link.isEmpty())
+        renderSavedRoutes()
         showRoutes()
         describeLink()
         takeLink(intent)
@@ -68,10 +91,11 @@ class SettingsActivity : ThemedActivity() {
     // Keep unsaved fields in memory instead of the system instance-state bundle.
     @Suppress("OVERRIDE_DEPRECATION")
     override fun onRetainNonConfigurationInstance(): Any =
-        Draft(linkEdit.text.toString(), myEdit.text.toString())
+        Draft(linkEdit.text.toString(), myEdit.text.toString(), routeDraft?.map { it.copy() }, editingRoutes)
 
     override fun onSaveInstanceState(outState: Bundle) {
         outState.putBoolean("link_open", linkBox.visibility == View.VISIBLE)
+        outState.putBoolean("editing_routes", editingRoutes)
         super.onSaveInstanceState(outState)
     }
 
@@ -121,7 +145,69 @@ class SettingsActivity : ThemedActivity() {
     private fun buildUi(): View {
         val col = Ui.column(this)
 
-        col.addView(Ui.heading(this, getString(R.string.link_label)).apply { setPadding(0, 0, 0, paddingBottom) })
+        savedRoutesSection = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+        }
+        col.addView(savedRoutesSection)
+
+        savedRoutesHeading = Ui.heading(this, getString(R.string.saved_routes_label)).apply {
+            setPadding(0, 0, 0, paddingBottom)
+        }
+        savedRoutesSection.addView(savedRoutesHeading)
+
+        savedRoutesList = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+        }
+        savedRoutesSection.addView(savedRoutesList)
+
+        editRoutesButton = Button(this).apply {
+            text = getString(R.string.edit_routes)
+            setOnClickListener {
+                routeDraft = settings.savedRoutes.map { it.copy() }.toMutableList()
+                editingRoutes = true
+                renderSavedRoutes()
+            }
+        }
+        savedRoutesSection.addView(editRoutesButton)
+
+        editRoutesBar = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            val saveBtn = Button(this@SettingsActivity).apply {
+                text = getString(R.string.save)
+                setOnClickListener {
+                    val draft = routeDraft
+                    if (draft != null) {
+                        settings.saveRouteEdits(draft)
+                        Toast.makeText(this@SettingsActivity, getString(R.string.saved), Toast.LENGTH_SHORT).show()
+                        restartIfRunning()
+                    }
+                    editingRoutes = false
+                    routeDraft = null
+                    renderSavedRoutes()
+                    showRoutes()
+                    describeLink()
+                }
+            }
+            val cancelBtn = Button(this@SettingsActivity).apply {
+                text = getString(android.R.string.cancel)
+                setOnClickListener {
+                    editingRoutes = false
+                    routeDraft = null
+                    renderSavedRoutes()
+                }
+            }
+            addView(saveBtn, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+            addView(cancelBtn, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+        }
+        savedRoutesSection.addView(editRoutesBar)
+
+        routesEditHint = Ui.hint(this, getString(R.string.routes_edit_hint)).apply {
+            setPadding(0, Ui.dp(this@SettingsActivity, 6), 0, 0)
+        }
+        savedRoutesSection.addView(routesEditHint)
+
+        linkHeading = Ui.heading(this, getString(R.string.link_label))
+        col.addView(linkHeading)
         linkInfo = Ui.hint(this, "")
         col.addView(linkInfo)
         changeButton = Button(this).apply {
@@ -327,6 +413,9 @@ class SettingsActivity : ThemedActivity() {
                                     runOnUiThread {
                                         restartIfRunning()
                                         if (isFinishing || isDestroyed) return@runOnUiThread
+                                        editingRoutes = false
+                                        routeDraft = null
+                                        renderSavedRoutes()
                                         describeLink(); setLinkOpen(false); showRoutes()
                                     }
                                 } catch (e: Throwable) { runOnUiThread { Toast.makeText(this, getString(R.string.link_error_toast, e.message), Toast.LENGTH_LONG).show() } }
@@ -362,7 +451,9 @@ class SettingsActivity : ThemedActivity() {
         val link = settings.link
         if (link.isEmpty()) {
             linkInfo.text = getString(R.string.link_empty)
+            linkInfo.visibility = View.VISIBLE
             setLinkOpen(true)
+            renderSavedRoutes()
             return
         }
         worker.execute {
@@ -375,13 +466,12 @@ class SettingsActivity : ThemedActivity() {
                     ok = true
                     val routes = cfg.optJSONArray("routes")
                     if (routes != null && routes.length() > 0) {
-                        getString(R.string.import_route_count, routes.length(),
-                            (0 until routes.length()).joinToString(", ") { routes.getJSONObject(it).optString("type") })
+                        ""
                     } else {
-                    val n = cfg.optJSONArray("resolvers")?.length() ?: 0
-                    val extra = if (n > 0) resources.getQuantityString(R.plurals.link_extra_resolvers, n, n) else ""
-                    val ipv6 = getString(if (cfg.optBoolean("tunnel_ipv6")) R.string.server_ipv6_on else R.string.server_ipv6_off)
-                    getString(R.string.link_ok_zone, cfg.optString("zone")) + extra + "\n" + ipv6
+                        val n = cfg.optJSONArray("resolvers")?.length() ?: 0
+                        val extra = if (n > 0) resources.getQuantityString(R.plurals.link_extra_resolvers, n, n) else ""
+                        val ipv6 = getString(if (cfg.optBoolean("tunnel_ipv6")) R.string.server_ipv6_on else R.string.server_ipv6_off)
+                        getString(R.string.link_ok_zone, cfg.optString("zone")) + extra + "\n" + ipv6
                     }
                 }
             } catch (e: Throwable) {
@@ -389,7 +479,9 @@ class SettingsActivity : ThemedActivity() {
             }
             runOnUiThread {
                 linkInfo.text = text
+                linkInfo.visibility = if (text.isEmpty()) View.GONE else View.VISIBLE
                 if (!ok) setLinkOpen(true)
+                renderSavedRoutes()
             }
         }
     }
@@ -450,6 +542,140 @@ class SettingsActivity : ThemedActivity() {
     private fun showRoutes() {
         routeBox.removeAllViews()
         routeBox.addView(Ui.routeSelector(this, settings, worker::execute) { showRoutes() })
+    }
+
+    private fun renderSavedRoutes() {
+        val routes = if (editingRoutes) routeDraft ?: emptyList() else settings.savedRoutes
+        if (routes.isEmpty() && !editingRoutes) {
+            savedRoutesSection.visibility = View.GONE
+            linkHeading.setPadding(0, 0, 0, linkHeading.paddingBottom)
+            return
+        }
+        savedRoutesSection.visibility = View.VISIBLE
+        linkHeading.setPadding(0, Ui.dp(this, 20), 0, linkHeading.paddingBottom)
+
+        editRoutesButton.visibility = if (editingRoutes) View.GONE else View.VISIBLE
+        editRoutesBar.visibility = if (editingRoutes) View.VISIBLE else View.GONE
+        routesEditHint.visibility = if (editingRoutes) View.VISIBLE else View.GONE
+
+        savedRoutesList.removeAllViews()
+        for (r in routes) {
+            savedRoutesList.addView(buildRouteRow(r, editingRoutes))
+        }
+    }
+
+    private fun buildRouteRow(r: Settings.SavedRoute, editing: Boolean): View {
+        val row = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(0, Ui.dp(this@SettingsActivity, 2), 0, Ui.dp(this@SettingsActivity, 2))
+            alpha = if (r.on) 1f else 0.5f
+        }
+        if (!editing) {
+            val check = CheckBox(this).apply {
+                isChecked = r.on
+                isClickable = false
+                isFocusable = false
+                text = "${r.priority} ${r.id} (${r.type})"
+                textSize = 14f
+            }
+            row.addView(check)
+            return row
+        }
+
+        val check = CheckBox(this).apply {
+            isChecked = r.on
+            setOnCheckedChangeListener { _, isChecked ->
+                r.on = isChecked
+                row.alpha = if (r.on) 1f else 0.5f
+            }
+        }
+        row.addView(check)
+
+        val label = TextView(this).apply {
+            text = "${r.id} (${r.type})"
+            textSize = 14f
+            maxLines = 1
+            ellipsize = TextUtils.TruncateAt.END
+        }
+        row.addView(label, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+
+        lateinit var numView: TextView
+
+        val minus = Button(this).apply {
+            text = "−"
+            textSize = 16f
+            minWidth = 0
+            minimumWidth = 0
+            minHeight = Ui.dp(this@SettingsActivity, 36)
+            minimumHeight = Ui.dp(this@SettingsActivity, 36)
+            val padH = Ui.dp(this@SettingsActivity, 10)
+            setPadding(padH, 0, padH, 0)
+            setOnClickListener {
+                r.priority = (r.priority - 5).coerceIn(0, 65535)
+                numView.text = r.priority.toString()
+            }
+        }
+        row.addView(minus)
+
+        numView = TextView(this).apply {
+            text = r.priority.toString()
+            textSize = 14f
+            gravity = Gravity.CENTER
+            minWidth = Ui.dp(this@SettingsActivity, 44)
+            val padH = Ui.dp(this@SettingsActivity, 4)
+            setPadding(padH, 0, padH, 0)
+            setOnClickListener {
+                showPriorityDialog(r) {
+                    numView.text = r.priority.toString()
+                }
+            }
+        }
+        row.addView(numView)
+
+        val plus = Button(this).apply {
+            text = "+"
+            textSize = 16f
+            minWidth = 0
+            minimumWidth = 0
+            minHeight = Ui.dp(this@SettingsActivity, 36)
+            minimumHeight = Ui.dp(this@SettingsActivity, 36)
+            val padH = Ui.dp(this@SettingsActivity, 10)
+            setPadding(padH, 0, padH, 0)
+            setOnClickListener {
+                r.priority = (r.priority + 5).coerceIn(0, 65535)
+                numView.text = r.priority.toString()
+            }
+        }
+        row.addView(plus)
+
+        return row
+    }
+
+    private fun showPriorityDialog(r: Settings.SavedRoute, onUpdated: () -> Unit) {
+        val input = EditText(this).apply {
+            inputType = InputType.TYPE_CLASS_NUMBER
+            setText(r.priority.toString())
+            selectAll()
+            gravity = Gravity.CENTER
+        }
+        val pad = Ui.dp(this, 20)
+        val frame = LinearLayout(this).apply {
+            setPadding(pad, pad / 2, pad, 0)
+            addView(input, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT))
+        }
+        AlertDialog.Builder(this)
+            .setTitle("${r.id} (${r.type})")
+            .setView(frame)
+            .setPositiveButton(R.string.save) { _, _ ->
+                val v = input.text.toString().trim().toIntOrNull()
+                if (v != null) {
+                    r.priority = v.coerceIn(0, 65535)
+                    onUpdated()
+                }
+            }
+            .setNegativeButton(android.R.string.cancel, null)
+            .show()
     }
 
     private fun setLinkOpen(open: Boolean) {

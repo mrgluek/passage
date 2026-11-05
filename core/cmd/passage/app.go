@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -106,6 +107,7 @@ func (a *App) loadLink() {
 	if err == nil {
 		a.linkCfg, a.results, err = importLinks(string(b))
 	}
+	a.linkCfg.RouteEdits = tunnel.MinimalEdits(a.linkCfg.Routes, a.settings.Edits)
 	if err != nil {
 		a.linkErr = err.Error()
 		a.event("link file: %v", err)
@@ -389,12 +391,23 @@ type linkView struct {
 	Info  string `json:"info"`
 	Error string `json:"error"`
 	Text  string `json:"text,omitempty"`
+	// Routes are the link's routes with the local edits, for the editor.
+	Routes []savedRoute `json:"routes"`
+}
+
+// savedRoute is one installed route as the editor shows it.
+type savedRoute struct {
+	ID       string `json:"id"`
+	Type     string `json:"type"`
+	Priority int    `json:"priority"`
+	On       bool   `json:"on"`
 }
 
 func (a *App) linkView(withText bool) linkView {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	v := linkView{Has: a.hasLink()}
+	v.Routes = savedRoutes(a.linkCfg)
 	switch {
 	case a.linkErr != "":
 		v.Error = a.t.f("link_invalid", a.linkErr)
@@ -410,16 +423,56 @@ func (a *App) linkView(withText bool) linkView {
 	return v
 }
 
-// importPreview says what saving text as the link would do, for the
+// combineLink is link.txt after adding the pasted links: a link in
+// merge mode is appended, one in replace mode starts the file over. An
+// unreadable file counts as empty, so pasting a link repairs it.
+func (a *App) combineLink(incoming string) (text string, replaced bool, err error) {
+	var lines []string
+	if b, rerr := os.ReadFile(linkFile(a.dir)); rerr == nil {
+		if _, _, perr := importLinks(string(b)); perr == nil {
+			for _, l := range strings.Split(string(b), "\n") {
+				if l = strings.TrimSpace(strings.TrimPrefix(l, "\ufeff")); l != "" {
+					lines = append(lines, l)
+				}
+			}
+		} else {
+			replaced = true
+		}
+	}
+	for _, line := range strings.Split(incoming, "\n") {
+		line = strings.TrimSpace(strings.TrimPrefix(line, "\ufeff"))
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		r, ierr := tunnel.ImportLink(tunnel.Config{}, line, true)
+		if ierr != nil {
+			return "", false, ierr
+		}
+		if r.Mode == "replace" {
+			lines, replaced = nil, true
+		}
+		if !slices.Contains(lines, line) {
+			lines = append(lines, line)
+		}
+	}
+	text = strings.Join(lines, "\n")
+	if _, _, err = importLinks(text); err != nil {
+		return "", false, err
+	}
+	return text, replaced, nil
+}
+
+// importPreview says what adding the pasted links would do, for the
 // confirmation.
 func (a *App) importPreview(text string) (string, error) {
-	_, results, err := importLinks(text)
+	if strings.TrimSpace(text) == "" {
+		return a.t.f("import_clear"), nil
+	}
+	combined, replaced, err := a.combineLink(text)
 	if err != nil {
 		return "", err
 	}
-	if len(results) == 0 {
-		return a.t.f("import_clear"), nil
-	}
+	_, results, _ := importLinks(combined)
 	trusted := true
 	var ids []string
 	collision := false
@@ -428,7 +481,10 @@ func (a *App) importPreview(text string) (string, error) {
 		ids = append(ids, r.IDs...)
 		collision = collision || r.Collision
 	}
-	parts := []string{a.t.f("import_untrusted"), a.t.f("import_replace")}
+	parts := []string{a.t.f("import_untrusted"), a.t.f("import_merge")}
+	if replaced {
+		parts[1] = a.t.f("import_replace")
+	}
 	if trusted {
 		parts[0] = a.t.f("import_trusted")
 	}
@@ -440,9 +496,15 @@ func (a *App) importPreview(text string) (string, error) {
 	return strings.Join(parts, "\n\n"), nil
 }
 
+// saveLink adds the pasted links to link.txt; empty text removes the file.
 func (a *App) saveLink(text string) error {
-	if _, _, err := importLinks(text); err != nil {
-		return err
+	replaced := strings.TrimSpace(text) == ""
+	if !replaced {
+		combined, r, err := a.combineLink(text)
+		if err != nil {
+			return err
+		}
+		text, replaced = combined, r
 	}
 	text = strings.TrimSpace(text)
 	a.mu.Lock()
@@ -465,10 +527,48 @@ func (a *App) saveLink(text string) error {
 	if err != nil {
 		return err
 	}
+	if replaced && a.settings.Edits != nil {
+		a.settings.Edits = nil
+		a.saveSettings()
+	}
 	a.loadLink()
 	a.event("link saved")
 	a.restartIfRunningLocked("settings changed")
 	return nil
+}
+
+// saveRouteEdits stores the editor's routes: only what differs from the
+// link is kept.
+func (a *App) saveRouteEdits(routes []savedRoute) error {
+	a.mu.Lock()
+	defer a.changedAfter()
+	defer a.mu.Unlock()
+	edits := map[string]tunnel.RouteEdit{}
+	for _, r := range routes {
+		if r.Priority < 0 || r.Priority > 65535 {
+			return errors.New("priority must be 0-65535")
+		}
+		p := uint16(r.Priority)
+		edits[r.ID] = tunnel.RouteEdit{Priority: &p, Off: !r.On}
+	}
+	edits = tunnel.MinimalEdits(a.linkCfg.Routes, edits)
+	if maps.EqualFunc(edits, a.linkCfg.RouteEdits, routeEditEqual) {
+		return nil
+	}
+	a.settings.Edits = edits
+	a.saveSettings()
+	a.linkCfg.RouteEdits = edits
+	if a.settings.Mode != tunnel.ModeAuto && !a.available(a.settings.Mode) {
+		a.settings.Mode = tunnel.ModeAuto
+		a.saveSettings()
+	}
+	a.event("routes edited")
+	a.restartIfRunningLocked("settings changed")
+	return nil
+}
+
+func routeEditEqual(a, b tunnel.RouteEdit) bool {
+	return a.Off == b.Off && (a.Priority == nil) == (b.Priority == nil) && (a.Priority == nil || *a.Priority == *b.Priority)
 }
 
 // saveMy stores My route in its short form; empty removes it.
@@ -595,6 +695,12 @@ func (a *App) call(method string, arg json.RawMessage) (any, error) {
 		return a.linkView(flag()), nil
 	case "importPreview":
 		return a.importPreview(str())
+	case "saveRoutes":
+		var routes []savedRoute
+		if err := json.Unmarshal(arg, &routes); err != nil {
+			return nil, err
+		}
+		return nil, a.saveRouteEdits(routes)
 	case "saveLink":
 		return nil, a.saveLink(str())
 	case "updateCheck":
