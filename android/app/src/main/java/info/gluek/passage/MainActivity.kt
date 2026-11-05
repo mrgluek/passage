@@ -1,7 +1,6 @@
 package info.gluek.passage
 
 import android.Manifest
-import android.app.Activity
 import android.app.AlertDialog
 import android.content.ActivityNotFoundException
 import android.content.Intent
@@ -27,7 +26,7 @@ import java.util.concurrent.Executors
  * The home screen: whether the proxy runs, how to point an app at it, and
  * the live status. Start/stop, the report and settings live in the title bar.
  */
-class MainActivity : Activity() {
+class MainActivity : ThemedActivity() {
     private val worker = Executors.newSingleThreadExecutor()
     private val main = Handler(Looper.getMainLooper())
     private lateinit var settings: Settings

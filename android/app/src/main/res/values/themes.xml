@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <style name="Theme.Passage" parent="android:style/Theme.DeviceDefault.Light.DarkActionBar">
+        <item name="android:colorAccent">@color/accent</item>
+        <item name="android:textColorLink">@color/accent</item>
+    </style>
+    <color name="accent">#1565C0</color>
+    <color name="on_accent">#FFFFFF</color>
+    <color name="value_background">#14000000</color>
+</resources>

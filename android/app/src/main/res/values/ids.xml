@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <item name="link_edit" type="id" />
+    <item name="my_route_edit" type="id" />
+    <item name="settings_scroll" type="id" />
+</resources>

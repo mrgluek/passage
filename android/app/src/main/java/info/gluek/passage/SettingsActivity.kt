@@ -1,7 +1,6 @@
 package info.gluek.passage
 
 import android.annotation.SuppressLint
-import android.app.Activity
 import android.app.AlertDialog
 import android.content.Intent
 import android.content.pm.PackageManager
@@ -32,7 +31,7 @@ import java.util.concurrent.Executors
  * routing mode, proxy access and background running. A valid link stays
  * folded so its key is not on screen.
  */
-class SettingsActivity : Activity() {
+class SettingsActivity : ThemedActivity() {
     private val worker = Executors.newSingleThreadExecutor()
     private lateinit var settings: Settings
 
@@ -40,6 +39,9 @@ class SettingsActivity : Activity() {
     private lateinit var changeButton: Button
     private lateinit var linkBox: LinearLayout
     private lateinit var linkEdit: EditText
+    private lateinit var myEdit: EditText
+
+    private data class Draft(val link: String, val myRoute: String)
     private lateinit var batteryButton: Button
     private lateinit var backgroundState: TextView
     private lateinit var routeBox: LinearLayout
@@ -52,13 +54,25 @@ class SettingsActivity : Activity() {
         settings = Settings(this)
         actionBar?.setDisplayHomeAsUpEnabled(true)
         setContentView(buildUi())
-        linkEdit.setText(settings.link)
+        val draft = lastNonConfigurationInstance as? Draft
+        linkEdit.setText(draft?.link ?: settings.link)
+        myEdit.setText(draft?.myRoute ?: settings.myRoute)
         // Folded at once when a link is saved, so the key never flashes on
         // screen while describeLink checks it (a bad link unfolds).
-        setLinkOpen(settings.link.isEmpty())
+        setLinkOpen(savedInstanceState?.getBoolean("link_open") ?: settings.link.isEmpty())
         showRoutes()
         describeLink()
         takeLink(intent)
+    }
+
+    // Keep unsaved fields in memory instead of the system instance-state bundle.
+    @Suppress("OVERRIDE_DEPRECATION")
+    override fun onRetainNonConfigurationInstance(): Any =
+        Draft(linkEdit.text.toString(), myEdit.text.toString())
+
+    override fun onSaveInstanceState(outState: Bundle) {
+        outState.putBoolean("link_open", linkBox.visibility == View.VISIBLE)
+        super.onSaveInstanceState(outState)
     }
 
     override fun onNewIntent(intent: Intent) {
@@ -119,6 +133,8 @@ class SettingsActivity : Activity() {
         linkBox = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         col.addView(linkBox)
         linkEdit = EditText(this).apply {
+            id = R.id.link_edit
+            isSaveEnabled = false
             hint = getString(R.string.link_hint)
             inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_MULTI_LINE or
                 InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS or InputType.TYPE_TEXT_VARIATION_URI
@@ -140,7 +156,9 @@ class SettingsActivity : Activity() {
         })
 
         col.addView(Ui.heading(this, getString(R.string.my_route_label)))
-        val myEdit = EditText(this).apply {
+        myEdit = EditText(this).apply {
+            id = R.id.my_route_edit
+            isSaveEnabled = false
             hint = getString(R.string.my_route_hint)
             setText(settings.myRoute)
             isSingleLine = true
@@ -150,6 +168,7 @@ class SettingsActivity : Activity() {
         val myClear = ImageButton(this).apply {
             setImageResource(android.R.drawable.ic_menu_close_clear_cancel)
             background = null
+            imageTintList = android.content.res.ColorStateList.valueOf(Ui.accent(this@SettingsActivity))
             contentDescription = getString(R.string.clear)
             setOnClickListener { myEdit.text.clear(); myEdit.requestFocus() }
         }
@@ -192,6 +211,17 @@ class SettingsActivity : Activity() {
             }
         })
         col.addView(Ui.hint(this, getString(R.string.new_access_help)))
+
+        col.addView(Ui.heading(this, getString(R.string.theme_label)))
+        col.addView(Ui.segments(this, listOf(
+            getString(R.string.theme_system), getString(R.string.theme_light), getString(R.string.theme_dark),
+        ), Settings.THEMES.indexOf(settings.theme)) { index ->
+            val theme = Settings.THEMES[index]
+            if (settings.theme != theme) {
+                settings.theme = theme
+                recreate()
+            }
+        })
 
         updates = UpdateSection(this)
         updates.view.visibility = View.GONE
@@ -242,6 +272,7 @@ class SettingsActivity : Activity() {
             val text = about()
             val enabled = Updater.enabled()
             runOnUiThread {
+                if (isFinishing || isDestroyed) return@runOnUiThread
                 aboutView.text = text
                 if (enabled) {
                     updates.view.visibility = View.VISIBLE
@@ -251,11 +282,12 @@ class SettingsActivity : Activity() {
             }
         }
 
-        scrollView = Ui.scroll(this, col)
+        scrollView = Ui.scroll(this, col).apply { id = R.id.settings_scroll }
         return scrollView
     }
 
     private fun showUpdates() {
+        if (intent?.action == Updater.ACTION_SHOW) intent.action = null
         scrollView.post { scrollView.smoothScrollTo(0, updates.view.top) }
     }
 
@@ -275,6 +307,7 @@ class SettingsActivity : Activity() {
                 val preview = prepare(false)
                 if (preview.has("error")) throw IllegalArgumentException(preview.optString("error"))
                 runOnUiThread {
+                    if (isFinishing || isDestroyed) return@runOnUiThread
                     val trust = if (preview.optString("signature") == "trusted_author") getString(R.string.import_trusted)
                         else getString(R.string.import_untrusted)
                     val collision = if (preview.optBoolean("collision")) "\n" + getString(R.string.import_collision) else ""
@@ -291,7 +324,11 @@ class SettingsActivity : Activity() {
                                     val result = prepare(true)
                                     if (result.has("error")) throw IllegalArgumentException(result.optString("error"))
                                     settings.saveRoutes(incoming, result.getJSONObject("config").toString())
-                                    runOnUiThread { describeLink(); setLinkOpen(false); showRoutes(); restartIfRunning() }
+                                    runOnUiThread {
+                                        restartIfRunning()
+                                        if (isFinishing || isDestroyed) return@runOnUiThread
+                                        describeLink(); setLinkOpen(false); showRoutes()
+                                    }
                                 } catch (e: Throwable) { runOnUiThread { Toast.makeText(this, getString(R.string.link_error_toast, e.message), Toast.LENGTH_LONG).show() } }
                             }
                         }.show()

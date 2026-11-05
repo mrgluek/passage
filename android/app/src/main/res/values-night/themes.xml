@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <style name="Theme.Passage" parent="android:style/Theme.DeviceDefault">
+        <item name="android:colorAccent">@color/accent</item>
+        <item name="android:textColorLink">@color/accent</item>
+    </style>
+    <color name="accent">#90CAF9</color>
+    <color name="on_accent">#102A43</color>
+    <color name="value_background">#14FFFFFF</color>
+</resources>
