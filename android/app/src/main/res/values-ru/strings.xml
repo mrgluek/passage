@@ -155,7 +155,10 @@
     <string name="update_downloading">Скачиваем версию %1$s…</string>
     <string name="update_ready">Версия %1$s готова к установке.</string>
     <string name="update_install">Установить</string>
-    <string name="update_failed">Не удалось: %1$s</string>
+    <string name="update_version">Версия %1$s.</string>
+    <string name="update_check_failed">Не удалось проверить обновления. Попробуйте позже.</string>
+    <string name="update_download_failed">Не удалось скачать обновление. Попробуйте ещё раз.</string>
+    <string name="update_install_failed">Не удалось установить обновление. Попробуйте ещё раз.</string>
     <string name="update_auto">Проверять раз в день, пока прокси включён</string>
     <string name="update_auto_help">Passage сам только проверяет и сообщает, а скачивание и установку запускаете вы. Android попросит подтвердить установку и примет только версию с той же подписью.</string>
 </resources>

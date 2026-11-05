@@ -44,7 +44,8 @@ class SettingsActivity : Activity() {
     private lateinit var backgroundState: TextView
     private lateinit var routeBox: LinearLayout
     private lateinit var aboutView: TextView
-    private lateinit var updatesButton: Button
+    private lateinit var scrollView: ScrollView
+    private lateinit var updates: UpdateSection
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -62,7 +63,9 @@ class SettingsActivity : Activity() {
 
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
+        setIntent(intent)
         takeLink(intent)
+        if (intent.action == Updater.ACTION_SHOW) showUpdates()
     }
 
     override fun onResume() {
@@ -70,6 +73,12 @@ class SettingsActivity : Activity() {
         val exempt = Ui.batteryExempt(this)
         batteryButton.visibility = if (exempt) View.GONE else View.VISIBLE
         backgroundState.visibility = if (exempt) View.VISIBLE else View.GONE
+        if (updates.view.visibility == View.VISIBLE) updates.resume()
+    }
+
+    override fun onPause() {
+        updates.pause()
+        super.onPause()
     }
 
     override fun onDestroy() {
@@ -184,6 +193,10 @@ class SettingsActivity : Activity() {
         })
         col.addView(Ui.hint(this, getString(R.string.new_access_help)))
 
+        updates = UpdateSection(this)
+        updates.view.visibility = View.GONE
+        col.addView(updates.view)
+
         col.addView(Ui.heading(this, getString(R.string.background_label)))
         col.addView(Ui.hint(this, getString(R.string.background_help)))
         backgroundState = Ui.hint(this, getString(R.string.background_allowed)).apply {
@@ -199,12 +212,6 @@ class SettingsActivity : Activity() {
         col.addView(Ui.heading(this, getString(R.string.about_label)))
         aboutView = Ui.hint(this, "")
         col.addView(aboutView)
-        updatesButton = Button(this).apply {
-            text = getString(R.string.updates_label)
-            visibility = View.GONE
-            setOnClickListener { startActivity(Intent(this@SettingsActivity, UpdateActivity::class.java)) }
-        }
-        col.addView(updatesButton)
         col.addView(Ui.hint(this, getString(R.string.about_cert)).apply {
             setPadding(0, Ui.dp(this@SettingsActivity, 12), 0, 0)
         })
@@ -233,14 +240,23 @@ class SettingsActivity : Activity() {
         })
         worker.execute {
             val text = about()
-            val updates = Updater.enabled()
+            val enabled = Updater.enabled()
             runOnUiThread {
                 aboutView.text = text
-                if (updates) updatesButton.visibility = View.VISIBLE
+                if (enabled) {
+                    updates.view.visibility = View.VISIBLE
+                    updates.resume()
+                    if (intent?.action == Updater.ACTION_SHOW) showUpdates()
+                }
             }
         }
 
-        return Ui.scroll(this, col)
+        scrollView = Ui.scroll(this, col)
+        return scrollView
+    }
+
+    private fun showUpdates() {
+        scrollView.post { scrollView.smoothScrollTo(0, updates.view.top) }
     }
 
     /** Imports the link after confirmation, folds it if valid, and restarts a running proxy. */

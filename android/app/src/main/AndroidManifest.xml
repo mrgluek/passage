@@ -56,10 +56,9 @@
         </activity>
 
         <activity
-            android:name=".UpdateActivity"
+            android:name=".InstallResultActivity"
             android:exported="false"
-            android:launchMode="singleTop"
-            android:parentActivityName=".SettingsActivity" />
+            android:theme="@android:style/Theme.NoDisplay" />
 
         <service
             android:name=".PassageService"

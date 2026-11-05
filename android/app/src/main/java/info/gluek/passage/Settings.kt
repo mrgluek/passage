@@ -86,6 +86,10 @@ class Settings(context: Context) {
         get() = prefs.getLong("next_update_check", 0)
         set(v) = prefs.edit().putLong("next_update_check", v).apply()
 
+    var availableVersion: String
+        get() = prefs.getString("available_version", "") ?: ""
+        set(v) = prefs.edit().putString("available_version", v).apply()
+
     /** The newest version the user was told about, to tell them once. */
     var notifiedVersion: String
         get() = prefs.getString("notified_version", "") ?: ""

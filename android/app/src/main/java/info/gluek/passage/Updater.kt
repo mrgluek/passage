@@ -1,5 +1,6 @@
 package info.gluek.passage
 
+import android.app.ActivityOptions
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
@@ -15,13 +16,38 @@ import java.util.Random
 
 /** Checks for, downloads and installs new versions; the work is in the core. */
 object Updater {
-    const val ACTION_INSTALL_RESULT = "info.gluek.passage.INSTALL_RESULT"
+    /** Opens the settings screen at the Updates part. */
+    const val ACTION_SHOW = "info.gluek.passage.SHOW_UPDATES"
     private const val CHANNEL = "updates"
     private const val NOTIFICATION_ID = 2
     private const val CHECK_INTERVAL_MS = 20 * 3_600_000L
     private const val CHECK_JITTER_MS = 8 * 3_600_000L
 
     data class Offer(val version: String, val name: String, val size: Long)
+
+    // Survives leaving the screen: a download goes on meanwhile.
+    @Volatile var offer: Offer? = null
+    @Volatile var checking = false
+    @Volatile var checked = false
+    @Volatile var downloading = false
+    @Volatile var ready: File? = null
+    @Volatile var error: String? = null
+    @Volatile var detail: String? = null
+
+    fun begin() {
+        error = null
+        detail = null
+    }
+
+    fun fail(message: String, cause: Throwable) {
+        error = message
+        detail = cause.message ?: cause.toString()
+        Diagnostics.event("update failed: $detail")
+    }
+
+    /** The newer version last found, after an app restart too. */
+    fun pending(context: Context): String? =
+        Settings(context).availableVersion.takeIf { it.isNotEmpty() && it != version(context) }
 
     /** This build can update itself: it has the update key. */
     fun enabled(): Boolean = try {
@@ -43,8 +69,12 @@ object Updater {
             .put("sources", linkSources(context))
         val out = Native.json(Native.updateCheck(request.toString().toByteArray(Charsets.UTF_8)))
         out.optString("error").takeIf { it.isNotEmpty() }?.let { throw IllegalStateException(it) }
-        val file = out.optJSONObject("file") ?: return null
-        return Offer(out.getString("version"), file.getString("name"), file.getLong("size"))
+        val file = out.optJSONObject("file")
+        val found = file?.let { Offer(out.getString("version"), it.getString("name"), it.getLong("size")) }
+        if (found != offer) ready = null
+        offer = found
+        Settings(context).availableVersion = found?.version ?: ""
+        return found
     }
 
     private fun linkSources(context: Context): JSONArray {
@@ -75,8 +105,8 @@ object Updater {
     }
 
     /**
-     * Hands the APK to Android, which asks the user. The result comes to the
-     * non-exported UpdateActivity, which is the only one to trust its extras.
+     * Hands the APK to Android, which asks the user. The answer comes to
+     * InstallResultActivity, the only place that trusts its extras.
      */
     fun install(context: Context, apk: File) {
         val installer = context.packageManager.packageInstaller
@@ -90,13 +120,15 @@ object Updater {
                     session.fsync(output)
                 }
             }
-            val result = Intent(context, UpdateActivity::class.java)
-                .setAction(ACTION_INSTALL_RESULT)
-                .addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP)
+            val result = Intent(context, InstallResultActivity::class.java)
             // Mutable: the installer adds the outcome to this intent.
             val flags = PendingIntent.FLAG_UPDATE_CURRENT or
                 if (Build.VERSION.SDK_INT >= 31) PendingIntent.FLAG_MUTABLE else 0
-            session.commit(PendingIntent.getActivity(context, id, result, flags).intentSender)
+            // Android blocks this start otherwise: the system sends the answer.
+            val options = if (Build.VERSION.SDK_INT >= 34) ActivityOptions.makeBasic()
+                .setPendingIntentCreatorBackgroundActivityStartMode(ActivityOptions.MODE_BACKGROUND_ACTIVITY_START_ALLOWED)
+                .toBundle() else null
+            session.commit(PendingIntent.getActivity(context, id, result, flags, options).intentSender)
         }
     }
 
@@ -134,7 +166,7 @@ object Updater {
             Notification.Builder(context)
         }
         val open = PendingIntent.getActivity(
-            context, 2, Intent(context, UpdateActivity::class.java),
+            context, 2, Intent(context, SettingsActivity::class.java).setAction(ACTION_SHOW),
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
         )
         nm.notify(NOTIFICATION_ID, b.setSmallIcon(R.drawable.ic_notification)

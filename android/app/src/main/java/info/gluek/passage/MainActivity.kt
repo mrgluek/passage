@@ -43,6 +43,7 @@ class MainActivity : Activity() {
     private lateinit var batteryButton: Button
     private lateinit var statusView: TextView
     private lateinit var startStopButton: ImageButton
+    private lateinit var updateNotice: Button
     private var shownActive: Boolean? = null
     /** A network test for a bug report; kept across screen rotation. */
     private class NetworkTest {
@@ -126,6 +127,14 @@ class MainActivity : Activity() {
         })
         routeView = TextView(this).apply { textSize = 15f }
         col.addView(routeView)
+
+        updateNotice = Button(this).apply {
+            visibility = View.GONE
+            setOnClickListener {
+                startActivity(Intent(this@MainActivity, SettingsActivity::class.java).setAction(Updater.ACTION_SHOW))
+            }
+        }
+        col.addView(updateNotice)
 
         noLinkBox = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         noLinkBox.addView(Ui.hint(this, getString(R.string.no_link)).apply {
@@ -268,6 +277,9 @@ class MainActivity : Activity() {
     private fun refresh() {
         if (isFinishing || isDestroyed) return
         showNetworkTest()
+        val newer = Updater.pending(this)
+        updateNotice.visibility = if (newer == null) View.GONE else View.VISIBLE
+        if (newer != null) updateNotice.text = getString(R.string.update_available, newer)
         val active = PassageService.active
         if (shownActive != active) {
             shownActive = active
