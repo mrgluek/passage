@@ -22,6 +22,20 @@ func ProbeWSS(ctx context.Context, params links.WSSParams, target, protocol stri
 		return err
 	}
 	defer client.Close()
+	return probeStream(ctx, client, target, protocol)
+}
+
+// ProbeHTTP checks an application exchange through one HTTP route.
+func ProbeHTTP(ctx context.Context, params links.HTTPParams, target, protocol string) error {
+	client, err := NewHTTPClient(params)
+	if err != nil {
+		return err
+	}
+	defer client.Close()
+	return probeStream(ctx, client, target, protocol)
+}
+
+func probeStream(ctx context.Context, client *WSSClient, target, protocol string) error {
 	if protocol == "mtproto" {
 		return probeMTProtoVia(ctx, client.DialContext, target)
 	}
@@ -48,7 +62,7 @@ func ProbeWSS(ctx context.Context, params links.WSSParams, target, protocol stri
 		return secure.HandshakeContext(ctx)
 	}
 	data := make([]byte, 256*1024)
-	if _, err = rand.Read(data); err != nil {
+	if _, err := rand.Read(data); err != nil {
 		return err
 	}
 	sent := make(chan error, 1)
@@ -88,6 +102,20 @@ func ProbeWSSDownload(ctx context.Context, params links.WSSParams, target, path 
 		return 0, err
 	}
 	defer client.Close()
+	return probeStreamDownload(ctx, client, target, path)
+}
+
+// ProbeHTTPDownload fetches an HTTPS path through one HTTP route.
+func ProbeHTTPDownload(ctx context.Context, params links.HTTPParams, target, path string) (int64, error) {
+	client, err := NewHTTPClient(params)
+	if err != nil {
+		return 0, err
+	}
+	defer client.Close()
+	return probeStreamDownload(ctx, client, target, path)
+}
+
+func probeStreamDownload(ctx context.Context, client *WSSClient, target, path string) (int64, error) {
 	host, _, err := net.SplitHostPort(target)
 	if err != nil {
 		return 0, err

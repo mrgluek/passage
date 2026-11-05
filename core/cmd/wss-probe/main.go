@@ -1,4 +1,4 @@
-// Command wss-probe checks one private WSS route without using direct fallback.
+// Command wss-probe checks one private WSS or HTTP route without direct fallback.
 package main
 
 import (
@@ -89,22 +89,14 @@ func run() error {
 	if (o.Protocol == "download") != strings.HasPrefix(o.Path, "/") {
 		return errors.New("download needs a path starting with /, other protocols none")
 	}
-	if supported, err := links.ValidateRoute(r); err != nil || !supported || r.Type != "wss" {
-		return errors.New("invalid WSS route")
+	if supported, err := links.ValidateRoute(r); err != nil || !supported || r.Type != "wss" && r.Type != "http" {
+		return errors.New("invalid WSS or HTTP route")
 	}
-	params, err := links.Params[links.WSSParams](r)
-	if err != nil {
-		return err
-	}
+
 	start := time.Now()
 	ctx, cancel := context.WithTimeout(context.Background(), o.Timeout)
 	defer cancel()
-	var n int64
-	if o.Protocol == "download" {
-		n, err = tunnel.ProbeWSSDownload(ctx, params, o.Target, o.Path)
-	} else {
-		err = tunnel.ProbeWSS(ctx, params, o.Target, o.Protocol)
-	}
+	n, err := probeRoute(ctx, r, o)
 	out := result{At: start.UTC(), Point: o.Point, Network: o.Network, Fingerprint: links.RouteHash(r), Outcome: "passed", Protocol: o.Protocol, Target: o.Target, Milliseconds: time.Since(start).Milliseconds(), Bytes: n}
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "wss-probe: detail:", err)
@@ -121,4 +113,29 @@ func run() error {
 		return errors.New(out.Error)
 	}
 	return nil
+}
+
+func probeRoute(ctx context.Context, r links.Route, o options) (int64, error) {
+	switch r.Type {
+	case "wss":
+		params, err := links.Params[links.WSSParams](r)
+		if err != nil {
+			return 0, err
+		}
+		if o.Protocol == "download" {
+			return tunnel.ProbeWSSDownload(ctx, params, o.Target, o.Path)
+		}
+		return 0, tunnel.ProbeWSS(ctx, params, o.Target, o.Protocol)
+	case "http":
+		params, err := links.Params[links.HTTPParams](r)
+		if err != nil {
+			return 0, err
+		}
+		if o.Protocol == "download" {
+			return tunnel.ProbeHTTPDownload(ctx, params, o.Target, o.Path)
+		}
+		return 0, tunnel.ProbeHTTP(ctx, params, o.Target, o.Protocol)
+	default:
+		return 0, errors.New("unsupported probe route")
+	}
 }
