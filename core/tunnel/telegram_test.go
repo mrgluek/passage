@@ -263,6 +263,8 @@ func TestTelegramRelaysDownThroughTheTunnel(t *testing.T) {
 func TestTelegramTargets(t *testing.T) {
 	var n atomic.Int32
 	tt := newTestTunnel(t, ModeAuto, echoDialer("D:", &n), nil)
+	fixed := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	tt.now = func() time.Time { return fixed }
 	tt.mu.Lock()
 	if got := tt.targetsLocked(tt.telegram); got != nil {
 		t.Errorf("unused group has targets %v", got)
@@ -284,6 +286,26 @@ func TestTelegramTargets(t *testing.T) {
 	}
 	if !slices.Equal(got[len(got)-len(telegramDCs):], telegramDCs) {
 		t.Fatalf("DCs must be probed: %v", got)
+	}
+}
+
+func TestTelegramTargetsFineClock(t *testing.T) {
+	var n atomic.Int32
+	tt := newTestTunnel(t, ModeAuto, echoDialer("D:", &n), nil)
+	base := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	var offset time.Duration
+	tt.now = func() time.Time { return base.Add(offset) }
+	for i := range maxTelegramHosts {
+		offset += time.Second
+		tt.learn(tt.telegram, net.JoinHostPort(net.IPv4(149, 154, 164, byte(i)).String(), "443"))
+	}
+	offset += time.Second
+	tt.learn(tt.telegram, "149.154.164.0:443")
+	tt.mu.Lock()
+	got := tt.targetsLocked(tt.telegram)
+	tt.mu.Unlock()
+	if len(got) == 0 || got[0] != "149.154.164.0:443" {
+		t.Fatalf("newest host by timestamp must come first: got %v", got)
 	}
 }
 

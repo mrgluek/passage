@@ -57,6 +57,11 @@ func (k groupKind) String() string { return kindNames[k] }
 // group is a set of destinations that share one route decision: each mail
 // relay has its own, so one relay being blocked doesn't move another, and
 // Telegram has one.
+type hostSeen struct {
+	at  time.Time
+	seq uint64
+}
+
 type group struct {
 	name        string
 	kind        groupKind
@@ -64,11 +69,12 @@ type group struct {
 	used        time.Time // last CONNECT, for dropping the least recently used relay
 	route       Route
 	routeSince  time.Time
-	via         string               // route type of the newest open tunnel connection: iroh, soar
-	tunnelFails int                  // tunnel dial failures since the route last changed
-	hosts       map[string]time.Time // probe host -> last seen in a CONNECT
-	ports       map[string]string    // probe host -> port to probe
-	seen        bool                 // has carried traffic; only then is it probed
+	via         string              // route type of the newest open tunnel connection: iroh, soar
+	tunnelFails int                 // tunnel dial failures since the route last changed
+	hosts       map[string]hostSeen // probe host -> last seen in a CONNECT
+	ports       map[string]string   // probe host -> port to probe
+	hostSeq     uint64
+	seen        bool // has carried traffic; only then is it probed
 	failStreak  int
 	okStreak    int
 	state       string
@@ -86,7 +92,7 @@ func (g *group) viaLocked() string {
 
 func newGroup(name string, kind groupKind, route Route) *group {
 	return &group{name: name, kind: kind, route: route, routeSince: time.Now(),
-		hosts: map[string]time.Time{}, ports: map[string]string{}, state: "unknown"}
+		hosts: map[string]hostSeen{}, ports: map[string]string{}, state: "unknown"}
 }
 
 const (
@@ -164,6 +170,7 @@ type Tunnel struct {
 	probeMT       func(ctx context.Context, hostport string) error
 	probeMTTunnel func(ctx context.Context, hostport string) error
 	ipv6Route     func() bool // nil: hasIPv6Route
+	now           func() time.Time
 
 	mu          sync.Mutex
 	mode        string
@@ -349,6 +356,13 @@ func Start(cfg Config) (*Tunnel, error) {
 	return t, nil
 }
 
+func (t *Tunnel) timeNow() time.Time {
+	if t.now != nil {
+		return t.now()
+	}
+	return time.Now()
+}
+
 // useProbeTargets makes a pinned relay group for each of cfg.ProbeTargets.
 func (t *Tunnel) useProbeTargets() {
 	if len(t.cfg.ProbeTargets) == 0 {
@@ -361,7 +375,8 @@ func (t *Tunnel) useProbeTargets() {
 		}
 		g := t.relayLocked(host)
 		g.pinned = true
-		g.hosts[g.name] = time.Now()
+		g.hostSeq++
+		g.hosts[g.name] = hostSeen{at: t.timeNow(), seq: g.hostSeq}
 		g.ports[g.name] = port
 	}
 	t.log.add("probing fixed hosts: %s", strings.Join(t.cfg.ProbeTargets, ", "))
@@ -810,22 +825,25 @@ func (t *Tunnel) learn(g *group, addr string) {
 	}
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	g.used = time.Now()
+	now := t.timeNow()
+	g.used = now
 	switch g.kind {
 	case kindRelay:
-		g.hosts[g.name] = time.Now()
+		g.hostSeq++
+		g.hosts[g.name] = hostSeen{at: now, seq: g.hostSeq}
 		g.ports[g.name] = probePort(addr)
 	case kindTelegram:
 		if !g.seen {
 			g.seen = true
 			t.kickProbe()
 		}
-		g.hosts[host] = time.Now()
+		g.hostSeq++
+		g.hosts[host] = hostSeen{at: now, seq: g.hostSeq}
 		g.ports[host] = port
 		for len(g.hosts) > maxTelegramHosts {
 			oldest := ""
-			for h, at := range g.hosts {
-				if oldest == "" || at.Before(g.hosts[oldest]) {
+			for h, seen := range g.hosts {
+				if oldest == "" || seen.at.Before(g.hosts[oldest].at) || (seen.at.Equal(g.hosts[oldest].at) && seen.seq < g.hosts[oldest].seq) {
 					oldest = h
 				}
 			}
@@ -1070,7 +1088,13 @@ func (t *Tunnel) targetsLocked(g *group) []string {
 	for h := range gs.hosts {
 		hosts = append(hosts, h)
 	}
-	sort.Slice(hosts, func(i, j int) bool { return gs.hosts[hosts[i]].After(gs.hosts[hosts[j]]) })
+	sort.Slice(hosts, func(i, j int) bool {
+		a, b := gs.hosts[hosts[i]], gs.hosts[hosts[j]]
+		if a.at.Equal(b.at) {
+			return a.seq > b.seq
+		}
+		return a.at.After(b.at)
+	})
 	var out []string
 	for _, h := range hosts {
 		if len(out) == maxProbedRelays {
