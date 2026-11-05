@@ -149,6 +149,7 @@ type fakePlatform struct{ copied string }
 
 func (f *fakePlatform) copyText(s string) error { f.copied = s; return nil }
 func (f *fakePlatform) open(string) error       { return nil }
+func (f *fakePlatform) canOpen(string) bool     { return false }
 func (f *fakePlatform) autostart() bool         { return false }
 func (f *fakePlatform) setAutostart(bool) error { return nil }
 func (f *fakePlatform) device() map[string]any  { return map[string]any{"os": "test"} }
@@ -290,3 +291,24 @@ func TestInsideArchive(t *testing.T) {
 
 func (*fakePlatform) updateTarget() string             { return "" }
 func (*fakePlatform) applyUpdate(string, string) error { return nil }
+
+type linkPlatform struct {
+	fakePlatform
+	opened string
+	can    bool
+}
+
+func (p *linkPlatform) canOpen(string) bool { return p.can }
+func (p *linkPlatform) open(s string) error { p.opened = s; return nil }
+
+func TestOpenTgOnlyWithAHandler(t *testing.T) {
+	p := &linkPlatform{}
+	a := newApp(t.TempDir(), "1.0.0", "", "en", p)
+	if opened, err := a.call("openTg", nil); err != nil || opened != false || p.opened != "" {
+		t.Fatal(opened, err, p.opened)
+	}
+	p.can = true
+	if opened, err := a.call("openTg", nil); err != nil || opened != true || !strings.HasPrefix(p.opened, "tg://socks?server=") {
+		t.Fatal(opened, err, p.opened)
+	}
+}

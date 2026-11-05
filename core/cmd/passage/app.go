@@ -31,6 +31,7 @@ const (
 type platform interface {
 	copyText(text string) error
 	open(target string) error // a URL or a folder
+	canOpen(scheme string) bool
 	autostart() bool
 	setAutostart(on bool) error
 	device() map[string]any // for the report
@@ -632,6 +633,14 @@ func (a *App) call(method string, arg json.RawMessage) (any, error) {
 		return nil, a.os.open(target)
 	case "openFolder":
 		return nil, a.os.open(a.dir)
+	case "openTg":
+		if !a.os.canOpen("tg") {
+			return false, nil
+		}
+		a.mu.Lock()
+		link := a.settings.proxyLink("tg://socks")
+		a.mu.Unlock()
+		return true, a.os.open(link)
 	case "report":
 		text := a.report()
 		return nil, a.os.copyText(text)

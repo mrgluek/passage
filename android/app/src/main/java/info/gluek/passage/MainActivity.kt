@@ -167,9 +167,9 @@ class MainActivity : Activity() {
             setPadding(Ui.dp(this@MainActivity, 4), 0, 0, 0)
         }
         icons.addView(Ui.iconButton(this, R.drawable.ic_copy, getString(R.string.copy_proxy_link)) {
-            Ui.copy(this, "Passage proxy", settings.proxyLink(), getString(R.string.proxy_link_copied))
+            Ui.copy(this, "Passage proxy", settings.socksLink(), getString(R.string.proxy_link_copied))
         })
-        icons.addView(Ui.iconButton(this, R.drawable.ic_open, getString(R.string.open_proxy_link)) { openProxyLink() })
+        icons.addView(Ui.iconButton(this, R.drawable.ic_send, getString(R.string.open_proxy_link)) { openProxyLink() })
         proxyRow.addView(icons)
         connectBox.addView(proxyRow)
         col.addView(connectBox)
@@ -225,7 +225,7 @@ class MainActivity : Activity() {
     /** Hands the proxy to an app that handles tg://socks links; it asks before adding it. */
     private fun openProxyLink() {
         try {
-            startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(settings.proxyLink("tg://socks"))))
+            startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(settings.tgLink())))
         } catch (_: ActivityNotFoundException) {
             Toast.makeText(this, getString(R.string.no_app_for_link), Toast.LENGTH_LONG).show()
         }

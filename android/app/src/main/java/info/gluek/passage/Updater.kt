@@ -47,7 +47,22 @@ object Updater {
 
     /** The newer version last found, after an app restart too. */
     fun pending(context: Context): String? =
-        Settings(context).availableVersion.takeIf { it.isNotEmpty() && it != version(context) }
+        Settings(context).availableVersion.takeIf { keyed && newer(it, version(context)) }
+
+    private val keyed by lazy { enabled() }
+
+    /** Compares dotted numbers; anything after them, like -beta1, is ignored. */
+    private fun newer(a: String, b: String): Boolean {
+        fun parts(v: String) = v.substringBefore('-').split('.').map { it.toIntOrNull() ?: 0 }
+        val x = parts(a)
+        val y = parts(b)
+        for (i in 0 until maxOf(x.size, y.size)) {
+            val p = x.getOrElse(i) { 0 }
+            val q = y.getOrElse(i) { 0 }
+            if (p != q) return p > q
+        }
+        return false
+    }
 
     /** This build can update itself: it has the update key. */
     fun enabled(): Boolean = try {

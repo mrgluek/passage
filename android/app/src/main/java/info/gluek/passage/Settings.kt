@@ -129,14 +129,16 @@ class Settings(context: Context) {
 
     val listen: String get() = "$HOST:$port"
 
-    /**
-     * The proxy as a t.me/socks link: messaging apps accept it in their proxy
-     * settings, and some add the proxy when it is tapped. [scheme] "tg://socks"
-     * opens it in an app directly.
-     */
-    fun proxyLink(scheme: String = "https://t.me/socks"): String {
+    /** The proxy as a socks5:// URL, which apps take in their proxy settings. */
+    fun socksLink(): String {
+        val creds = if (auth) "$user:$pass@" else ""
+        return "socks5://$creds$HOST:$port"
+    }
+
+    /** The proxy as a tg://socks link: opening it hands the proxy to an app directly. */
+    fun tgLink(): String {
         val creds = if (auth) "&user=$user&pass=$pass" else ""
-        return "$scheme?server=$HOST&port=$port$creds"
+        return "tg://socks?server=$HOST&port=$port$creds"
     }
 
     /** New port, username and password; apps set up with the old ones must be updated. */

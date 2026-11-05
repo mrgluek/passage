@@ -389,7 +389,7 @@ $("head").onclick = () => {
   setTimeout(refresh, 3100);
 };
 $("copyLink").onclick = () => last && copy(last.proxy_link, t("proxy_link_copied"));
-$("copyTg").onclick = () => last && copy(last.tg_link, t("tg_link_copied"));
+$("copyTg").onclick = () => last && call("openTg").then(opened => copy(last.tg_link, t(opened ? "tg_link_opened" : "tg_link_copied")), fail);
 let reporting = false;
 $("report").onclick = () => {
   if (reporting) return;

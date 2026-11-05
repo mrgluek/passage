@@ -10,6 +10,9 @@
 - macOS builds have no Apple Developer ID signature or notarization.
   First-launch instructions are included in the ZIP.
 - Fixes a crash on older Android versions when a link route starts its helper.
+- Copy proxy link on Android now gives a socks5:// link, as on a computer. On
+  a computer, the second link button also opens the link in an app that
+  handles it.
 
 ## 0.6.0
 

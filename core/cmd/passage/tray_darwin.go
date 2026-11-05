@@ -224,6 +224,12 @@ func (macPlatform) open(target string) error {
 	return exec.Command("/usr/bin/open", target).Run()
 }
 
+func (macPlatform) canOpen(scheme string) bool {
+	text := C.CString(scheme)
+	defer C.free(unsafe.Pointer(text))
+	return C.passageCanOpen(text) != 0
+}
+
 func (macPlatform) device() map[string]any {
 	return map[string]any{"os": "darwin", "arch": runtime.GOARCH, "go": runtime.Version()}
 }

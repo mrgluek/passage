@@ -241,6 +241,11 @@ void passageError(const char *message) {
     }
 }
 
+int passageCanOpen(const char *scheme) {
+    NSURL *url = [NSURL URLWithString:[NSString stringWithFormat:@"%s://", scheme]];
+    return url && [NSWorkspace.sharedWorkspace URLForApplicationToOpenURL:url] != nil;
+}
+
 const char *passageLanguage(void) {
     return NSLocale.preferredLanguages.firstObject.UTF8String;
 }

@@ -83,6 +83,8 @@ func (devPlatform) open(target string) error {
 	return exec.Command(name, target).Start()
 }
 
+func (devPlatform) canOpen(string) bool { return false }
+
 func (devPlatform) device() map[string]any {
 	return map[string]any{"os": runtime.GOOS, "arch": runtime.GOARCH, "go": runtime.Version()}
 }

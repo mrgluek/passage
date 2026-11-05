@@ -79,6 +79,17 @@ func (winPlatform) open(target string) error {
 	return windows.ShellExecute(0, verb, file, nil, nil, windows.SW_SHOWNORMAL)
 }
 
+// canOpen reports whether an app is registered for the scheme. Asking the
+// shell to open it without one would offer the Microsoft Store.
+func (winPlatform) canOpen(scheme string) bool {
+	k, err := registry.OpenKey(registry.CLASSES_ROOT, scheme+`\shell\open\command`, registry.QUERY_VALUE)
+	if err != nil {
+		return false
+	}
+	k.Close()
+	return true
+}
+
 // startCommand is how sign-in starts this copy of Passage.
 func startCommand() string {
 	exe, _ := os.Executable()
