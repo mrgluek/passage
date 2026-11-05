@@ -10,7 +10,6 @@ import (
 	"io"
 	"net"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -52,30 +51,25 @@ func startIroh(ctx context.Context, r links.Route, binaryPath string, privateDir
 	childCtx, cancel := context.WithCancel(ctx)
 	// Loopback only: relay traffic needs no listening socket on the network.
 	args := append(listen, "--relay", p.Relay, "--no-direct", "--ipv4-addr", "127.0.0.1:0", "--ipv6-addr", "[::1]:0", p.Ticket)
-	cmd := exec.CommandContext(childCtx, binaryPath, args...)
+	var env []string
 	for _, v := range os.Environ() {
 		if !strings.HasPrefix(v, "IROH_SECRET=") {
-			cmd.Env = append(cmd.Env, v)
+			env = append(env, v)
 		}
 	}
 	for _, resolver := range dns {
 		host, _, err := net.SplitHostPort(resolver)
 		if err == nil && net.ParseIP(host) != nil {
-			cmd.Args = append(cmd.Args, "--dns-server", host)
+			args = append(args, "--dns-server", host)
 			break
 		}
 	}
-	cmd.Dir = dir
-	cmd.Stdout = io.Discard
-	cmd.Stderr = io.Discard
-	hideConsole(cmd)
-	if err = cmd.Start(); err != nil {
+	done, err := startHelper(childCtx, binaryPath, args, env, dir)
+	if err != nil {
 		cancel()
 		os.RemoveAll(dir)
 		return nil, nil, err
 	}
-	done := make(chan struct{})
-	go func() { cmd.Wait(); close(done) }()
 	cleanup := func() { cancel(); <-done; os.RemoveAll(dir) }
 	dial := func(ctx context.Context, _, target string) (net.Conn, error) {
 		for {

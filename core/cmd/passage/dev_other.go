@@ -1,4 +1,4 @@
-//go:build !windows
+//go:build !windows && (!darwin || !cgo)
 
 package main
 
@@ -83,9 +83,14 @@ func (devPlatform) open(target string) error {
 	return exec.Command(name, target).Start()
 }
 
+func (devPlatform) canOpen(string) bool { return false }
+
 func (devPlatform) device() map[string]any {
 	return map[string]any{"os": runtime.GOOS, "arch": runtime.GOARCH, "go": runtime.Version()}
 }
 
 func (devPlatform) autostart() bool         { return false }
 func (devPlatform) setAutostart(bool) error { return errors.New("start at sign-in is Windows only") }
+
+func (devPlatform) updateTarget() string             { return "" }
+func (devPlatform) applyUpdate(string, string) error { return nil }

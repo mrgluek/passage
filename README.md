@@ -4,8 +4,8 @@
 
 A local SOCKS5 proxy for messaging apps on Android, Windows, Linux and macOS.
 Apps that support a SOCKS5 proxy connect to it on `127.0.0.1`, and Passage
-picks the best available connection for them automatically. Android and
-Windows (10 or later, nothing else to install) have an app; Linux, macOS and
+picks the best available connection for them automatically. Android,
+Windows 10+ and macOS 13+ have an app; Linux, macOS and
 Windows can run it as `passage-cli` ([On a computer](#on-a-computer)).
 
 Website: <https://passage.gluek.info>
@@ -44,6 +44,12 @@ C3:C9:73:50:37:FF:A5:00:6D:D9:88:AB:29:D6:11:D6:A4:41:31:E5:3F:D8:1D:FA:CF:06:49
   `gh release verify-asset v<version> passage-<version>-arm64.apk -R mrgluek/passage`.
 
 Passage shows the same fingerprint in Settings → About.
+
+### Updates in the app
+
+Settings → **Updates** checks for a new version, downloads it and asks Android
+to install it. With the proxy on, the app also checks once a day and shows a
+notification; this can be turned off on the same screen.
 
 ### Updates with F-Droid
 
@@ -94,6 +100,39 @@ Runtime that comes with Windows; on a system without it, Passage offers the
 download and the proxy keeps working. SmartScreen may warn about an unsigned
 program first.
 
+Settings → **Updates** checks for a new version and installs it: Passage
+replaces its program files in the same folder and starts again, keeping
+`passage.ini`, `link.txt` and the app history. If the new version does not
+start, the previous one comes back.
+
+On macOS 13 or later, unpack `passage-<version>-darwin-arm64.zip` for Apple
+silicon or `passage-<version>-darwin-amd64.zip` for Intel Macs.
+Move `Passage.app` to Applications before enabling **Start Passage when I
+sign in** in its settings. It starts in the menu bar at login and restores
+the saved proxy state. Opening Passage again shows its existing window.
+The website's **Open in Passage** button opens received `passage://` links
+in the app. Passage asks for confirmation before importing them.
+After replacing a build, quit the old copy and open the installed app once
+to register its link handler.
+
+The macOS app checks for updates once a day while the proxy runs. Turn this
+off in Settings → Updates, or check from the main window. Downloads start
+only when you choose Download; Install and restart keeps your settings.
+
+**The macOS app is not signed with an Apple Developer ID and is not
+notarized.** macOS may block it on first launch. After trying to open it,
+use **System Settings → Privacy & Security → Open Anyway**
+([Apple's instructions](https://support.apple.com/en-gb/102445)). Alternatively,
+remove quarantine from this app in Terminal, then open it:
+
+```bash
+xattr -dr com.apple.quarantine /Applications/Passage.app
+open /Applications/Passage.app
+```
+
+Adjust the path if you installed it elsewhere. This removes the downloaded
+app's quarantine flag; it does not disable Gatekeeper for other apps.
+
 Releases also have `passage-cli` for Linux and macOS (`amd64`, `arm64`) and
 Windows (`amd64`): the same proxy without the app. Unpack the archive for
 your system and run
@@ -113,6 +152,24 @@ terminal in the unpacked folder.
 ## Build
 
 See [AGENTS.md](AGENTS.md).
+
+Build the macOS menu bar app with Go, Rust and Xcode command line tools:
+
+```bash
+scripts/build-mac.sh dev build/mac
+ditto -x -k build/mac/passage-dev-darwin-arm64.zip build/mac
+open build/mac/Passage.app
+```
+
+Use `amd64` as the script's third argument on Intel Macs and in the archive
+name. The bundle includes the iroh helper and uses the same window as the
+Windows app. Closing the window keeps Passage running in the menu bar;
+choose Open Passage to show it again, or Quit to stop it. Settings and
+`link.txt` live in `~/Library/Application Support/Passage`. The executable
+also accepts `-dir <folder>` for a separate test configuration.
+
+Builds use an ad hoc signature, without an Apple Developer ID or notarization.
+See the first-launch instructions under [On a computer](#on-a-computer).
 
 The native build also needs Python 3.12+ and Rust 1.99.1 with rustup.
 It builds the pinned iroh helper for both Android ABIs from source.

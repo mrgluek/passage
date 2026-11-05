@@ -83,6 +83,9 @@ func ImportLink(existing Config, text string, replaceIDs bool) (ImportResult, er
 	result.Config.Zone = ""
 	result.Config.Key = ""
 	result.Config.Routes = installed
+	if decoded.Signature == "trusted_author" && len(decoded.Bundle.Updates) > 0 {
+		result.Config.UpdateSources = decoded.Bundle.Updates
+	}
 	result.Config, err = result.Config.Normalize()
 	return result, err
 }

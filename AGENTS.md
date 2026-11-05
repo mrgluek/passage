@@ -10,8 +10,10 @@ other apps on the phone. It has two parts:
   (`passage.exe`): a tray icon (`fyne.io/systray`) and a WebView2 window
   (`jchv/go-webview2`) showing `ui/index.html`, with settings in
   `passage.ini` and the link in `link.txt` next to the program. Its strings
-  are in `strings.go` (English and Russian). Elsewhere it serves the same
-  window on loopback for development (`go run ./cmd/passage -dir <folder>`).
+  are in `strings.go` (English and Russian). On macOS with cgo enabled it
+  runs a menu bar app with a WKWebView window; settings live in
+  `~/Library/Application Support/Passage`. Other platforms, and macOS
+  without cgo, serve the same window on loopback for development.
 - `android/`: the Kotlin app (`info.gluek.passage`), a foreground service
   around that library, a home screen (state, proxy link, status) with
   start/stop, report and settings in the title bar, and a settings screen.
@@ -40,7 +42,7 @@ other apps on the phone. It has two parts:
 Go router (from `core/`; `cmd/libpassage` builds for Android only):
 
 ```bash
-go vet ./tunnel ./internal/... ./cmd/passage-cli ./cmd/passage ./cmd/passage-http-exit
+go vet ./tunnel ./update ./internal/... ./cmd/passage-cli ./cmd/passage ./cmd/passage-http-exit ./cmd/passage-update-manifest
 go test -race ./...
 ```
 
@@ -59,6 +61,19 @@ gets its icon and manifest from `go-winres`, run by the script:
 ```bash
 scripts/build-cli.sh <version> <out-dir> [os/arch ...]
 ```
+
+macOS app bundle (macOS 13+, Xcode command line tools and Rust):
+
+```bash
+scripts/build-mac.sh <version> <out-dir> [arm64|amd64]
+```
+
+This produces an ad hoc signed `.app` in a ZIP archive. It is not yet
+Developer ID signed or notarized. Launch at login uses `SMAppService`;
+install the app in Applications before enabling it. Repeated launches
+open the running app's window; `-dir` configurations have separate instances.
+Run `scripts/test-mac.sh` in a macOS desktop session to check the native
+window, HTML bridge and shutdown with a separate test configuration.
 
 The helper needs Rust for each target: macOS targets build on macOS, Linux
 ones (static musl) on Linux of the same architecture with `musl-tools`,
@@ -83,6 +98,9 @@ releases.
 
 CI (`ci.yml`) runs the same steps on every push and pull request, except
 those that only touch the website, store listing or docs.
+It also tests and builds the macOS app on Apple silicon and Intel runners.
+The release workflow publishes both app ZIPs alongside the macOS CLI
+archives, with checksums and first-launch instructions.
 
 ## Release
 
@@ -91,6 +109,16 @@ those that only touch the website, store listing or docs.
 3. Tag `v<version>` on `main` and push the tag; `release.yml` builds, signs
    and publishes the APKs and `passage-cli` archives with `SHA256SUMS`, then
    deploys the website.
+
+The release also signs `update.json`, the manifest the app's update check
+reads, with the `PASSAGE_UPDATE_KEY` secret of the `release` environment.
+`passage-update-manifest keygen` makes the key. Its public half is the
+`PASSAGE_UPDATE_PUBLIC_KEY` variable, built into the app; without it the app
+shows no updates. Desktop builds use the same variables. The
+`PASSAGE_UPDATE_SOURCES` variable adds comma-separated sources: directories
+with `update.json`, the APKs and desktop app ZIPs, like `fdroid/repo`.
+Run `python3 scripts/test-mac-update.py` in a macOS desktop session to check
+an app update and restart with isolated settings and temporary keys.
 
 ## Website and F-Droid repository
 

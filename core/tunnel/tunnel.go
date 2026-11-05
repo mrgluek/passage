@@ -911,6 +911,21 @@ func (t *Tunnel) dial(g *group, addr string) (net.Conn, Route, error) {
 	}
 }
 
+// Dials lists the routes the current mode allows, direct first, for the
+// app's own connections.
+func (t *Tunnel) Dials() []func(ctx context.Context, network, addr string) (net.Conn, error) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	var out []func(ctx context.Context, network, addr string) (net.Conn, error)
+	for r := RouteDirect; r < numRoutes; r++ {
+		if t.ways[r].dial == nil || t.mode == ModeAlways && r != RouteTunnel || t.mode == ModeOff && r == RouteTunnel {
+			continue
+		}
+		out = append(out, t.ways[r].dial)
+	}
+	return out
+}
+
 // nextRouteLocked is the next route after r usable for g, or r itself if
 // there is none. Caller holds t.mu.
 func (t *Tunnel) nextRouteLocked(g *group, r Route) Route {

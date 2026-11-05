@@ -61,3 +61,43 @@ func TestImportLegacyAndClear(t *testing.T) {
 		t.Fatal("clear failed", err)
 	}
 }
+
+func TestImportUpdateSources(t *testing.T) {
+	public, private, err := ed25519.GenerateKey(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	bundle := links.Bundle{V: 2, Kind: "routes", Mode: "replace", Updates: []string{"https://example.org/repo"}, Routes: []links.Route{{
+		ID: "dns", Type: "soar", Wire: "soar-v1", Priority: 10,
+		Params: map[string]any{"zone": "t.example.org", "key": base64.StdEncoding.EncodeToString(bytes.Repeat([]byte{7}, 32))},
+	}}}
+	sign := func(key ed25519.PrivateKey) string {
+		raw, err := links.Encode(bundle, key)
+		if err != nil {
+			t.Fatal(err)
+		}
+		uri, err := links.URI(raw, "")
+		if err != nil {
+			t.Fatal(err)
+		}
+		return uri
+	}
+	old := AuthorKey
+	AuthorKey = base64.RawURLEncoding.EncodeToString(public)
+	defer func() { AuthorKey = old }()
+	trusted, err := ImportLink(Config{}, sign(private), false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(trusted.Config.UpdateSources) != 1 {
+		t.Fatalf("trusted link: %v", trusted.Config.UpdateSources)
+	}
+	_, other, _ := ed25519.GenerateKey(nil)
+	foreign, err := ImportLink(Config{}, sign(other), false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(foreign.Config.UpdateSources) != 0 {
+		t.Fatalf("foreign link: %v", foreign.Config.UpdateSources)
+	}
+}

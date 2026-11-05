@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.6.1
+
+- Passage can check for a new version and install it from inside the app, in
+  Settings → Updates, on Android, Windows and macOS. The download continues
+  where it stopped.
+- Passage for macOS: a menu bar app for Apple silicon and Intel, with launch
+  at login and connection-link imports.
+- macOS builds have no Apple Developer ID signature or notarization.
+  First-launch instructions are included in the ZIP.
+- Fixes a crash on older Android versions when a link route starts its helper.
+- Copy proxy link on Android now gives a socks5:// link, as on a computer. On
+  a computer, the second link button also opens the link in an app that
+  handles it.
+
 ## 0.6.0
 
 - Adds a new connection type for links (HTTP).

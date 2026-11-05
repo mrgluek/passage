@@ -22,6 +22,8 @@ header h1 { flex: 1; margin: 0; font-size: 16px; font-weight: 600; }
 main { padding: 4px 16px 24px; max-width: 720px; }
 h2 { margin: 20px 0 4px; font-size: 14px; font-weight: 600; }
 .hint { color: var(--muted); font-size: 13px; margin: 2px 0; white-space: pre-line; }
+#updateStatus { margin: 8px 0 0; }
+#updateDetail { overflow-wrap: anywhere; user-select: text; }
 .warn { color: var(--warn); }
 .row { display: flex; align-items: center; gap: 8px; }
 .grow { flex: 1; min-width: 0; }
@@ -78,6 +80,7 @@ a { color: var(--accent); cursor: pointer; text-decoration: underline; }
 </header>
 
 <main id="home">
+  <button id="updateNotice" class="primary hidden"></button>
   <div class="state" id="head"></div>
   <div id="line"></div>
   <div id="noLink" class="hidden">
@@ -132,6 +135,7 @@ a { color: var(--accent); cursor: pointer; text-decoration: underline; }
   <button id="newAccess" data-t="new_access"></button>
   <p class="hint" data-t="new_access_help"></p>
 
+  <div id="updateSettings" class="hidden"><h2 data-t="updates"></h2><button id="updateCheck" data-t="update_check"></button><p id="updateStatus" aria-live="polite"></p><p id="updateDetail" class="hint hidden"></p><progress id="updateProgress" class="hidden"></progress><div><button id="updateDownload" data-t="update_download"></button><button id="updateCancel" data-t="cancel"></button><button id="updateInstall" data-t="update_install"></button></div><label class="check"><input type="checkbox" id="autoUpdate"><span data-t="update_auto"></span></label><p class="hint" data-t="update_help"></p></div>
   <h2 data-t="startup_label"></h2>
   <label class="check"><input type="checkbox" id="autostart"><span data-t="autostart"></span></label>
   <p class="hint" data-t="autostart_help"></p>
@@ -157,7 +161,7 @@ a { color: var(--accent); cursor: pointer; text-decoration: underline; }
 
 <script>
 "use strict";
-// The bridge: the Windows window binds passageCall and answers through
+// The bridge: the desktop window binds passageCall and answers through
 // passageReply; the development server answers over HTTP.
 const pending = {};
 let seq = 0;
@@ -280,6 +284,21 @@ let last = null, shownRoutes = "", shownValues = "";
 function render(v) {
   v.routes = v.routes || [];
   last = v;
+  const u = v.update;
+  $("updateNotice").classList.toggle("hidden", !u.enabled || !["available", "downloading", "ready", "installing"].includes(u.state));
+  $("updateNotice").textContent = t("update_" + u.state, u.version);
+  $("updateSettings").classList.toggle("hidden", !u.enabled);
+  $("updateStatus").textContent = u.error || t("update_" + u.state, u.version);
+  const failures = u.detail.split("\n").filter(Boolean);
+  $("updateDetail").textContent = failures.length > 1 ? failures.map(s => "• " + s).join("\n") : u.detail;
+  $("updateDetail").classList.toggle("hidden", !u.detail);
+  $("updateProgress").classList.toggle("hidden", u.state !== "downloading");
+  $("updateProgress").max = u.total || 1;
+  $("updateProgress").value = u.done;
+  $("updateCheck").disabled = ["checking", "downloading", "installing"].includes(u.state);
+  $("updateDownload").classList.toggle("hidden", !u.version || ["checking", "downloading", "ready", "installing"].includes(u.state));
+  $("updateInstall").classList.toggle("hidden", !u.ready);
+  $("updateCancel").classList.toggle("hidden", !["checking", "downloading"].includes(u.state));
   $("head").textContent = v.head;
   $("line").textContent = v.line;
   $("startStopPath").setAttribute("d", v.running
@@ -333,6 +352,7 @@ function showLink(open) {
 }
 function showSettings() {
   call("settings").then(s => {
+    $("autoUpdate").checked = s.auto_update;
     $("auth").checked = s.auth;
     $("autostart").checked = s.autostart;
     $("my").value = s.my;
@@ -340,6 +360,9 @@ function showSettings() {
     $("about").textContent = t("about_version", info.version, s.soar);
   }, fail);
   showLink(false);
+}
+function refreshAutostart() {
+  return call("settings").then(s => { $("autostart").checked = s.autostart; }, fail);
 }
 function page(name) {
   $("home").classList.toggle("hidden", name !== "home");
@@ -351,6 +374,12 @@ function page(name) {
   scrollTo(0, 0);
 }
 
+$("updateNotice").onclick = () => page("settings");
+$("autoUpdate").onchange = () => call("setAutoUpdate", $("autoUpdate").checked).catch(fail);
+for (const method of ["updateCheck", "updateDownload", "updateCancel"]) $(method).onclick = () => call(method).then(refresh, fail);
+$("updateInstall").onclick = async () => {
+  if (await modal(t("update_install"), t("update_restart"), t("update_install"), t("cancel"))) call("updateInstall").then(refresh, fail);
+};
 $("startStop").onclick = () => call(last && last.running ? "stop" : "start").then(refresh, fail);
 $("settingsBtn").onclick = $("openSettings").onclick = () => page("settings");
 $("backBtn").onclick = () => page("home");
@@ -360,7 +389,7 @@ $("head").onclick = () => {
   setTimeout(refresh, 3100);
 };
 $("copyLink").onclick = () => last && copy(last.proxy_link, t("proxy_link_copied"));
-$("copyTg").onclick = () => last && copy(last.tg_link, t("tg_link_copied"));
+$("copyTg").onclick = () => last && call("openTg").then(opened => copy(last.tg_link, t(opened ? "tg_link_opened" : "tg_link_copied")), fail);
 let reporting = false;
 $("report").onclick = () => {
   if (reporting) return;
@@ -373,8 +402,7 @@ $("report").onclick = () => {
 };
 
 $("changeLink").onclick = () => showLink(true).then(() => $("linkText").focus());
-$("saveLink").onclick = async () => {
-  const text = $("linkText").value;
+async function importLink(text) {
   try {
     const preview = await call("importPreview", text);
     if (!await modal(t("import_title"), preview, t("save"), t("cancel"))) return;
@@ -384,7 +412,8 @@ $("saveLink").onclick = async () => {
     showLink(false);
     refresh();
   } catch (e) { toast(t("link_error", e.message)); }
-};
+}
+$("saveLink").onclick = () => importLink($("linkText").value);
 $("my").oninput = () => $("myClear").classList.toggle("hidden", !$("my").value);
 $("myClear").onclick = () => { $("my").value = ""; $("my").oninput(); $("my").focus(); };
 $("saveMy").onclick = () => call("saveMy", $("my").value).then(v => {
@@ -395,9 +424,12 @@ $("saveMy").onclick = () => call("saveMy", $("my").value).then(v => {
 }, fail);
 $("auth").onchange = () => call("setAuth", $("auth").checked).then(refresh, fail);
 $("newAccess").onclick = () => call("newAccess").then(() => { toast(t("new_access_done")); refresh(); }, fail);
-$("autostart").onchange = () => call("setAutostart", $("autostart").checked).catch(e => {
-  $("autostart").checked = !$("autostart").checked;
+$("autostart").onchange = () => call("setAutostart", $("autostart").checked).then(refreshAutostart, e => {
+  refreshAutostart();
   fail(e);
+});
+window.addEventListener("focus", () => {
+  if (!$("settings").classList.contains("hidden")) refreshAutostart();
 });
 $("openFolder").onclick = () => call("openFolder").catch(fail);
 $("site").onclick = () => call("open", info.site).catch(fail);
@@ -408,7 +440,7 @@ document.addEventListener("keydown", e => {
   ($("modalCancel").classList.contains("hidden") ? $("modalOk") : $("modalCancel")).click();
 });
 
-call("init").then(i => {
+const initialized = call("init").then(i => {
   info = i;
   S = i.strings;
   document.documentElement.lang = i.lang;
@@ -428,7 +460,19 @@ call("init").then(i => {
   refresh();
   // Only while the window is visible, as the app polls only on screen.
   setInterval(() => { if (!document.hidden) refresh(); }, 2000);
-}, fail);
+});
+initialized.catch(fail);
+
+let incomingImports = Promise.resolve();
+window.passageImport = text => {
+  incomingImports = incomingImports.then(async () => {
+    await initialized;
+    while (!$("modal").classList.contains("hidden")) {
+      await new Promise(resolve => setTimeout(resolve, 100));
+    }
+    await importLink(text);
+  }).catch(fail);
+};
 </script>
 </body>
 </html>

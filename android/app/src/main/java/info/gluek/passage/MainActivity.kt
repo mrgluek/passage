@@ -43,6 +43,7 @@ class MainActivity : Activity() {
     private lateinit var batteryButton: Button
     private lateinit var statusView: TextView
     private lateinit var startStopButton: ImageButton
+    private lateinit var updateNotice: Button
     private var shownActive: Boolean? = null
     /** A network test for a bug report; kept across screen rotation. */
     private class NetworkTest {
@@ -127,6 +128,14 @@ class MainActivity : Activity() {
         routeView = TextView(this).apply { textSize = 15f }
         col.addView(routeView)
 
+        updateNotice = Button(this).apply {
+            visibility = View.GONE
+            setOnClickListener {
+                startActivity(Intent(this@MainActivity, SettingsActivity::class.java).setAction(Updater.ACTION_SHOW))
+            }
+        }
+        col.addView(updateNotice)
+
         noLinkBox = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         noLinkBox.addView(Ui.hint(this, getString(R.string.no_link)).apply {
             setPadding(0, Ui.dp(this@MainActivity, 8), 0, 0)
@@ -158,9 +167,9 @@ class MainActivity : Activity() {
             setPadding(Ui.dp(this@MainActivity, 4), 0, 0, 0)
         }
         icons.addView(Ui.iconButton(this, R.drawable.ic_copy, getString(R.string.copy_proxy_link)) {
-            Ui.copy(this, "Passage proxy", settings.proxyLink(), getString(R.string.proxy_link_copied))
+            Ui.copy(this, "Passage proxy", settings.socksLink(), getString(R.string.proxy_link_copied))
         })
-        icons.addView(Ui.iconButton(this, R.drawable.ic_open, getString(R.string.open_proxy_link)) { openProxyLink() })
+        icons.addView(Ui.iconButton(this, R.drawable.ic_send, getString(R.string.open_proxy_link)) { openProxyLink() })
         proxyRow.addView(icons)
         connectBox.addView(proxyRow)
         col.addView(connectBox)
@@ -216,7 +225,7 @@ class MainActivity : Activity() {
     /** Hands the proxy to an app that handles tg://socks links; it asks before adding it. */
     private fun openProxyLink() {
         try {
-            startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(settings.proxyLink("tg://socks"))))
+            startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(settings.tgLink())))
         } catch (_: ActivityNotFoundException) {
             Toast.makeText(this, getString(R.string.no_app_for_link), Toast.LENGTH_LONG).show()
         }
@@ -268,6 +277,9 @@ class MainActivity : Activity() {
     private fun refresh() {
         if (isFinishing || isDestroyed) return
         showNetworkTest()
+        val newer = Updater.pending(this)
+        updateNotice.visibility = if (newer == null) View.GONE else View.VISIBLE
+        if (newer != null) updateNotice.text = getString(R.string.update_available, newer)
         val active = PassageService.active
         if (shownActive != active) {
             shownActive = active

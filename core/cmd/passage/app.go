@@ -31,9 +31,12 @@ const (
 type platform interface {
 	copyText(text string) error
 	open(target string) error // a URL or a folder
+	canOpen(scheme string) bool
 	autostart() bool
 	setAutostart(on bool) error
 	device() map[string]any // for the report
+	updateTarget() string
+	applyUpdate(archive, version string) error
 }
 
 // App runs the proxy from passage.ini and link.txt in dir, and
@@ -47,17 +50,20 @@ type App struct {
 	os      platform
 	changed func() // the tray redraws
 
-	mu        sync.Mutex
-	settings  Settings
-	tun       *tunnel.Tunnel
-	lastErr   string
-	linkStamp fileStamp
-	linkCfg   tunnel.Config
-	linkErr   string
-	results   []tunnel.ImportResult
-	netKey    string
-	checking  time.Time
-	log       *appLog
+	mu              sync.Mutex
+	settings        Settings
+	tun             *tunnel.Tunnel
+	lastErr         string
+	linkStamp       fileStamp
+	linkCfg         tunnel.Config
+	linkErr         string
+	results         []tunnel.ImportResult
+	netKey          string
+	checking        time.Time
+	log             *appLog
+	updater         desktopUpdate
+	updateTransport updateTransport
+	runningSince    time.Time
 }
 
 func newApp(dir, version, iroh, lang string, os platform) *App {
@@ -209,6 +215,7 @@ func (a *App) tick() {
 func (a *App) run(ctx context.Context) {
 	a.mu.Lock()
 	if a.settings.Running {
+		a.runningSince = time.Now()
 		a.startLocked("app start")
 	}
 	a.mu.Unlock()
@@ -218,6 +225,7 @@ func (a *App) run(ctx context.Context) {
 	for {
 		select {
 		case <-ctx.Done():
+			a.cancelUpdate()
 			a.event("app quit")
 			a.mu.Lock()
 			if a.tun != nil {
@@ -228,12 +236,19 @@ func (a *App) run(ctx context.Context) {
 			return
 		case <-tk.C:
 			a.tick()
+			a.updateTick(time.Now())
 		}
 	}
 }
 
 func (a *App) setRunning(on bool) {
 	a.mu.Lock()
+	if on && !a.settings.Running {
+		a.runningSince = time.Now()
+	}
+	if !on {
+		a.runningSince = time.Time{}
+	}
 	a.settings.Running = on
 	a.saveSettings()
 	if on {
@@ -280,6 +295,7 @@ type trayState struct {
 	Mode    string
 	Routes  []routeChoice
 	My      bool
+	Update  string
 }
 
 func (a *App) trayState() trayState {
@@ -296,6 +312,10 @@ func (a *App) trayState() trayState {
 	default:
 		st.Tooltip = "Passage: " + a.t.f("starting")
 	}
+	if a.updater.offer != nil {
+		st.Update = a.updater.offer.Version
+		st.Tooltip += " · " + a.t.f("update_available", st.Update)
+	}
 	// The notification area cuts tooltips at 127 characters.
 	if r := []rune(st.Tooltip); len(r) > 120 {
 		st.Tooltip = string(r[:119]) + "…"
@@ -305,6 +325,7 @@ func (a *App) trayState() trayState {
 
 // view is the home screen's state.
 type view struct {
+	Update    updateView    `json:"update"`
 	Running   bool          `json:"running"`
 	Head      string        `json:"head"`
 	Line      string        `json:"line"`
@@ -356,6 +377,7 @@ func (a *App) view() view {
 	if events := a.log.text(32); events != "" {
 		full += "\n" + a.t.f("app_events") + "\n" + events
 	}
+	v.Update = a.updateViewLocked()
 	v.Full = full
 	return v
 }
@@ -575,11 +597,24 @@ func (a *App) call(method string, arg json.RawMessage) (any, error) {
 		return a.importPreview(str())
 	case "saveLink":
 		return nil, a.saveLink(str())
+	case "updateCheck":
+		return nil, a.checkUpdate()
+	case "updateDownload":
+		return nil, a.downloadUpdate()
+	case "updateCancel":
+		a.cancelUpdate()
+	case "updateInstall":
+		return nil, a.installUpdate()
+	case "setAutoUpdate":
+		a.mu.Lock()
+		a.settings.AutoUpdate = flag()
+		a.saveSettings()
+		a.mu.Unlock()
 	case "settings":
 		a.mu.Lock()
 		defer a.mu.Unlock()
 		return map[string]any{"auth": a.settings.Auth, "my": a.settings.My, "autostart": a.os.autostart(),
-			"soar": tunnel.SoarVersion()}, nil
+			"auto_update": a.settings.AutoUpdate, "soar": tunnel.SoarVersion()}, nil
 	case "saveMy":
 		return a.saveMy(str())
 	case "setAuth":
@@ -598,6 +633,14 @@ func (a *App) call(method string, arg json.RawMessage) (any, error) {
 		return nil, a.os.open(target)
 	case "openFolder":
 		return nil, a.os.open(a.dir)
+	case "openTg":
+		if !a.os.canOpen("tg") {
+			return false, nil
+		}
+		a.mu.Lock()
+		link := a.settings.proxyLink("tg://socks")
+		a.mu.Unlock()
+		return true, a.os.open(link)
 	case "report":
 		text := a.report()
 		return nil, a.os.copyText(text)

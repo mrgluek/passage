@@ -144,6 +144,9 @@ code.block {
   word-break: break-all;
 }
 
+pre { white-space: pre-wrap; overflow-wrap: anywhere; padding: 10px 12px; background: var(--code-bg); border-radius: 4px; }
+pre code { padding: 0; background: none; }
+
 .repo {
   display: flex;
   gap: 20px;

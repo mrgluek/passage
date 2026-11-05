@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Builds the website with the F-Droid repository for one release.
 # Usage: build-site.sh <version> <apk-dir> <out-dir>
-# <apk-dir> holds passage-<version>-{arm64,armv7}.apk, signed.
+# <apk-dir> holds the signed APKs, desktop app ZIPs and optional update.json.
 # Needs fdroid (fdroidserver), python3 with qrcode, keytool, ANDROID_HOME,
 # and the repository key: FDROID_KEYSTORE (PKCS12), FDROID_KEYSTORE_PASS,
 # FDROID_KEY_ALIAS. FDROID_MIRRORS may list mirrors, one URL per line, each
@@ -55,6 +55,14 @@ test ${#fingerprint} -eq 64 || { echo "cannot read the repository key" >&2; exit
 rm -rf "$out"
 mkdir -p "$out/fdroid"
 cp -R "$work/repo" "$out/fdroid/repo"
+# The app's own update check reads this, here and on the mirrors.
+if [ -f "$apks/update.json" ]; then
+  cp "$apks/update.json" "$out/fdroid/repo/"
+  for target in windows-amd64 darwin-arm64 darwin-amd64; do
+    cp "$apks/passage-$version-$target.zip" "$out/fdroid/repo/"
+  done
+fi
+du -sh "$out/fdroid/repo"
 cp "$root/site/style.css" "$root/site/icon.svg" "$out/"
 # App Links: lets Android open https://passage.gluek.info/link#… in the app.
 cp -R "$root/site/.well-known" "$out/"

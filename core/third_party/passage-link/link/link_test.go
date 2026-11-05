@@ -170,3 +170,15 @@ func FuzzDecode(f *testing.F) {
 		Decode(data, nil)
 	})
 }
+
+func TestValidateUpdateAddresses(t *testing.T) {
+	route := Route{ID: "dns", Type: "soar", Wire: "soar-v1", Priority: 1, Params: map[string]any{"zone": "t.example.org", "key": make([]byte, 32)}}
+	base := Bundle{V: 2, Kind: "routes", Mode: "merge", Routes: []Route{route}}
+	for _, updates := range [][]string{{"http://example.org/repo"}, {"https://"}, {"https://u@example.org/repo"}, {"https://example.org/repo?a=b"}, {"https://example.org/repo#a"}, {"https://a.example", "https://b.example", "https://c.example", "https://d.example", "https://e.example"}} {
+		b := base
+		b.Updates = updates
+		if _, err := b.Validate(); err == nil {
+			t.Errorf("accepted %v", updates)
+		}
+	}
+}

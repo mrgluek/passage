@@ -1,6 +1,6 @@
 name: Website
 
-# Builds the website with a release's APKs and deploys it. release.yml calls
+# Builds the website with a release's apps and deploys it. release.yml calls
 # it for each new release; run it by hand to republish between releases.
 on:
   workflow_dispatch:
@@ -42,7 +42,7 @@ jobs:
           TAG: ${{ inputs.tag }}
         run: |
           tag=${TAG:-$(gh release view --json tagName -q .tagName)}
-          gh release download "$tag" --pattern 'passage-*.apk' --dir dist
+          gh release download "$tag" --pattern 'passage-*.apk' --pattern 'passage-*-windows-amd64.zip' --pattern 'passage-*-darwin-*.zip' --pattern update.json --dir dist
           echo "TAG=$tag" >> "$GITHUB_ENV"
 
       - name: Install fdroidserver

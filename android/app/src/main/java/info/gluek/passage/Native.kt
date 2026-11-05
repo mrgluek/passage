@@ -22,6 +22,10 @@ object Native {
     @JvmStatic external fun recheck()
     @JvmStatic external fun diagnose(): ByteArray
     @JvmStatic external fun versions(): ByteArray
+    @JvmStatic external fun updateCheck(request: ByteArray): ByteArray
+    @JvmStatic external fun updateDownload(dest: ByteArray): ByteArray
+    @JvmStatic external fun updateProgress(): ByteArray
+    @JvmStatic external fun updateCancel()
 
     fun json(out: ByteArray): JSONObject = JSONObject(String(out, Charsets.UTF_8))
 

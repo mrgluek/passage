@@ -31,8 +31,8 @@
 <main class="wrap">
   <section class="hero">
     <h1><span class="en">You shall pass.</span><span class="ru">Ты пройдёшь.</span></h1>
-    <p class="en">A local SOCKS5 proxy for messaging apps on Android, Windows, Linux and macOS. Apps connect to it on <code>127.0.0.1</code>, and Passage picks the best available connection for them automatically. Android and Windows (10 or later, nothing else to install) have an app; Linux, macOS and Windows can run it as <code>passage-cli</code>.</p>
-    <p class="ru">Локальный SOCKS5-прокси для мессенджеров на Android, Windows, Linux и macOS. Приложения подключаются к нему на <code>127.0.0.1</code>, а Passage сам выбирает для них лучшее доступное соединение. Для Android и Windows (10 и новее, ничего доустанавливать не нужно) есть приложение; на Linux, macOS и Windows можно запустить <code>passage-cli</code>.</p>
+    <p class="en">A local SOCKS5 proxy for messaging apps on Android, Windows, Linux and macOS. Apps connect to it on <code>127.0.0.1</code>, and Passage picks the best available connection for them automatically. Android, Windows 10+ and macOS 13+ have an app; Linux, macOS and Windows can run it as <code>passage-cli</code>.</p>
+    <p class="ru">Локальный SOCKS5-прокси для мессенджеров на Android, Windows, Linux и macOS. Приложения подключаются к нему на <code>127.0.0.1</code>, а Passage сам выбирает для них лучшее доступное соединение. Для Android, Windows 10+ и macOS 13+ есть приложение; на Linux, macOS и Windows можно запустить <code>passage-cli</code>.</p>
   </section>
 
   <section id="connect" hidden>
@@ -69,13 +69,23 @@
     <p class="muted"><span class="en">Version</span><span class="ru">Версия</span> {{VERSION}}</p>
     <div class="buttons">
       <a class="button" href="{{RELEASE}}/passage-{{VERSION}}-windows-amd64.zip">Windows <small>x64</small></a>
-      <a class="button" href="{{RELEASE}}/passage-cli-{{VERSION}}-darwin-arm64.tar.gz">macOS <small>Apple silicon</small></a>
-      <a class="button" href="{{RELEASE}}/passage-cli-{{VERSION}}-darwin-amd64.tar.gz">macOS <small>Intel</small></a>
+      <a class="button" href="{{RELEASE}}/passage-{{VERSION}}-darwin-arm64.zip">macOS <small>Apple silicon</small></a>
+      <a class="button" href="{{RELEASE}}/passage-{{VERSION}}-darwin-amd64.zip">macOS <small>Intel</small></a>
       <a class="button" href="{{RELEASE}}/passage-cli-{{VERSION}}-linux-amd64.tar.gz">Linux <small>x64</small></a>
       <a class="button" href="{{RELEASE}}/passage-cli-{{VERSION}}-linux-arm64.tar.gz">Linux <small>arm64</small></a>
     </div>
     <p class="en">Windows 10 or later: unpack the archive and run <code>passage.exe</code>, nothing else to install. It stays in the notification area when its window is closed. Settings (<code>passage.ini</code>) and the link (<code>link.txt</code>) are kept in the same folder; put a new <code>link.txt</code> there to update the link.</p>
     <p class="ru">Windows 10 и новее: распакуйте архив и запустите <code>passage.exe</code>, ничего доустанавливать не нужно. Когда окно закрыто, он остаётся в области уведомлений. Настройки (<code>passage.ini</code>) и ссылка (<code>link.txt</code>) хранятся в той же папке; чтобы обновить ссылку, положите туда новый <code>link.txt</code>.</p>
+    <p class="en">macOS 13 or later: unpack the ZIP, move <code>Passage.app</code> to Applications and open it. Closing the window keeps Passage in the menu bar. Settings can enable launch at login. Open a received link and choose <b>Open in Passage</b> to import it.</p>
+    <p class="ru">macOS 13 и новее: распакуйте ZIP, перенесите <code>Passage.app</code> в «Программы» и откройте его. После закрытия окна Passage остаётся в строке меню. В настройках можно включить автозапуск. Откройте полученную ссылку и нажмите <b>Открыть в Passage</b>, чтобы импортировать её.</p>
+    <p class="en"><b>The macOS app has no Apple Developer ID signature and is not notarized.</b> If macOS blocks the first launch, try opening it, then choose <b>System Settings → Privacy &amp; Security → Open Anyway</b>. Alternatively, remove quarantine from this app in Terminal:</p>
+    <p class="ru"><b>У приложения для macOS нет подписи Apple Developer ID и нотариализации.</b> Если macOS не даёт запустить его, попробуйте открыть приложение, затем выберите <b>Системные настройки → Конфиденциальность и безопасность → Всё равно открыть</b>. Другой способ — снять карантин с этого приложения в Терминале:</p>
+    <pre><code>xattr -dr com.apple.quarantine /Applications/Passage.app
+open /Applications/Passage.app</code></pre>
+    <p class="muted en">Adjust the path if you installed it elsewhere. This only removes quarantine from Passage; it does not disable Gatekeeper.</p>
+    <p class="muted ru">Если приложение установлено в другой папке, измените путь. Команда снимает карантин только с Passage и не отключает Gatekeeper.</p>
+    <p class="en">macOS command-line downloads: <a href="{{RELEASE}}/passage-cli-{{VERSION}}-darwin-arm64.tar.gz">Apple silicon</a> · <a href="{{RELEASE}}/passage-cli-{{VERSION}}-darwin-amd64.tar.gz">Intel</a>.</p>
+    <p class="ru">Версия для командной строки macOS: <a href="{{RELEASE}}/passage-cli-{{VERSION}}-darwin-arm64.tar.gz">Apple silicon</a> · <a href="{{RELEASE}}/passage-cli-{{VERSION}}-darwin-amd64.tar.gz">Intel</a>.</p>
     <p class="en">Linux, macOS, or Windows without the window: unpack the archive, save your link to <code>link.txt</code> next to it and run <code>passage-cli -link-file link.txt</code> in a terminal, then set the SOCKS5 proxy <code>127.0.0.1:18000</code> in the app. Keep <code>passage-iroh</code> in the same folder.</p>
     <p class="ru">Linux, macOS или Windows без окна: распакуйте архив, сохраните ссылку в <code>link.txt</code> рядом и запустите в терминале <code>passage-cli -link-file link.txt</code>, затем укажите в приложении SOCKS5-прокси <code>127.0.0.1:18000</code>. <code>passage-iroh</code> держите в той же папке.</p>
   </section>
