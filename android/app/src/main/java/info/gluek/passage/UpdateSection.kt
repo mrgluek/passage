@@ -28,11 +28,11 @@ class UpdateSection(private val activity: Activity) {
     val view: LinearLayout = LinearLayout(activity).apply {
         orientation = LinearLayout.VERTICAL
         addView(Ui.heading(activity, activity.getString(R.string.updates_label)))
-        addView(check, LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT))
+        addView(check)
         addView(state)
         addView(detail)
         addView(bar)
-        addView(action, LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT))
+        addView(action)
         addView(CheckBox(activity).apply {
             text = activity.getString(R.string.update_auto)
             isChecked = settings.updateChecks
@@ -63,7 +63,7 @@ class UpdateSection(private val activity: Activity) {
         val busy = Updater.checking || Updater.downloading
         check.isEnabled = !busy
         bar.visibility = if (Updater.downloading) View.VISIBLE else View.GONE
-        detail.text = Updater.detail ?: ""
+        detail.text = bullets(Updater.detail ?: "")
         detail.visibility = if (Updater.detail == null) View.GONE else View.VISIBLE
         state.text = when {
             Updater.checking -> activity.getString(R.string.update_checking)
@@ -85,6 +85,12 @@ class UpdateSection(private val activity: Activity) {
             action.setText(label)
             action.setOnClickListener { click() }
         }
+    }
+
+    /** One failure per source: several become a list. */
+    private fun bullets(text: String): String {
+        val lines = text.lines().filter { it.isNotBlank() }
+        return if (lines.size > 1) lines.joinToString("\n") { "• $it" } else text
     }
 
     private fun size(bytes: Long) = Formatter.formatShortFileSize(activity, bytes)

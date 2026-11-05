@@ -289,7 +289,8 @@ function render(v) {
   $("updateNotice").textContent = t("update_" + u.state, u.version);
   $("updateSettings").classList.toggle("hidden", !u.enabled);
   $("updateStatus").textContent = u.error || t("update_" + u.state, u.version);
-  $("updateDetail").textContent = u.detail;
+  const failures = u.detail.split("\n").filter(Boolean);
+  $("updateDetail").textContent = failures.length > 1 ? failures.map(s => "• " + s).join("\n") : u.detail;
   $("updateDetail").classList.toggle("hidden", !u.detail);
   $("updateProgress").classList.toggle("hidden", u.state !== "downloading");
   $("updateProgress").max = u.total || 1;

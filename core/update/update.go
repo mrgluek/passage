@@ -14,6 +14,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"regexp"
 	"strconv"
@@ -243,23 +244,28 @@ func (c *Client) Check(ctx context.Context, current, target string) (*Offer, err
 }
 
 func (c *Client) manifest(ctx context.Context, source string) (Manifest, error) {
+	address := source + "/" + ManifestName
 	var last error = errors.New("no route")
 	for _, dial := range c.dials() {
-		raw, err := fetchAll(ctx, dial, source+"/"+ManifestName)
+		raw, err := fetchAll(ctx, dial, address)
 		if err == nil {
 			m, err := Parse(raw, c.Key)
 			if err == nil {
 				return m, nil
 			}
-			last = fmt.Errorf("%s: %w", source, err)
+			last = err
 			continue
+		}
+		var failed *url.Error
+		if errors.As(err, &failed) {
+			err = failed.Err
 		}
 		last = err
 		if ctx.Err() != nil {
 			break
 		}
 	}
-	return Manifest{}, last
+	return Manifest{}, fmt.Errorf("%s: %w", address, last)
 }
 
 func (c *Client) dials() []Dial {
@@ -356,11 +362,11 @@ func verify(f *os.File, want File) error {
 
 // open starts a GET on its own connection. Stalled reads end the request:
 // the returned reader fails when no data comes for stallTimeout.
-func open(ctx context.Context, dial Dial, url, byteRange string) (*http.Response, io.Reader, func(), error) {
+func open(ctx context.Context, dial Dial, address, byteRange string) (*http.Response, io.Reader, func(), error) {
 	ctx, cancel := context.WithCancel(ctx)
 	stall := time.AfterFunc(stallTimeout, cancel)
 	stop := func() { stall.Stop(); cancel() }
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, address, nil)
 	if err != nil {
 		stop()
 		return nil, nil, nil, err
@@ -392,14 +398,14 @@ func (w watched) Read(p []byte) (int, error) {
 	return n, err
 }
 
-func fetchAll(ctx context.Context, dial Dial, url string) ([]byte, error) {
-	resp, body, closeBody, err := open(ctx, dial, url, "")
+func fetchAll(ctx context.Context, dial Dial, address string) ([]byte, error) {
+	resp, body, closeBody, err := open(ctx, dial, address, "")
 	if err != nil {
 		return nil, err
 	}
 	defer closeBody()
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("%s: %s", url, resp.Status)
+		return nil, errors.New(resp.Status)
 	}
 	raw, err := io.ReadAll(io.LimitReader(body, maxManifest+1))
 	if err != nil {
@@ -413,9 +419,9 @@ func fetchAll(ctx context.Context, dial Dial, url string) ([]byte, error) {
 
 // fetchChunk appends up to chunkSize bytes at offset and returns how many it
 // wrote, also when it fails partway.
-func fetchChunk(ctx context.Context, dial Dial, url string, f *os.File, offset, size int64) (int64, error) {
+func fetchChunk(ctx context.Context, dial Dial, address string, f *os.File, offset, size int64) (int64, error) {
 	want := min(size-offset, chunkSize)
-	resp, body, closeBody, err := open(ctx, dial, url, fmt.Sprintf("bytes=%d-%d", offset, offset+want-1))
+	resp, body, closeBody, err := open(ctx, dial, address, fmt.Sprintf("bytes=%d-%d", offset, offset+want-1))
 	if err != nil {
 		return 0, err
 	}
@@ -430,7 +436,7 @@ func fetchChunk(ctx context.Context, dial Dial, url string, f *os.File, offset, 
 			return 0, err
 		}
 	default:
-		return 0, fmt.Errorf("%s: %s", url, resp.Status)
+		return 0, fmt.Errorf("%s: %s", address, resp.Status)
 	}
 	if _, err := f.Seek(offset, io.SeekStart); err != nil {
 		return 0, err
