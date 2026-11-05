@@ -49,6 +49,8 @@ func NewHTTPClient(params links.HTTPParams) (*WSSClient, error) {
 	tr := c.httpClient.Transport.(*http.Transport)
 	tr.DisableCompression = true
 	tr.ResponseHeaderTimeout = 10 * time.Second
+	// Keep the download and every upload in flight on reusable connections.
+	tr.MaxIdleConnsPerHost = httpUploadWindow + 2
 	if params.SNI != "" {
 		if tr.TLSClientConfig == nil {
 			tr.TLSClientConfig = &tls.Config{}

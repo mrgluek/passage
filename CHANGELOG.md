@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.6.4
+
+- Faster and steadier HTTP connection type: it reuses its connections.
+
 ## 0.6.3
 
 - Faster uploads over the HTTP connection type, about eight times in our tests.
