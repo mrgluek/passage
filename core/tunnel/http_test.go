@@ -62,7 +62,8 @@ func httpFixture(t *testing.T) (*WSSClient, *HTTPExit, *httptest.Server) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	client.httpClient = server.Client()
+	// Use the production transport, trusting the test server's certificate.
+	client.httpClient.Transport.(*http.Transport).TLSClientConfig = server.Client().Transport.(*http.Transport).TLSClientConfig.Clone()
 	t.Cleanup(func() { client.Close(); exit.Close(); server.Close() })
 	return client, exit, server
 }
