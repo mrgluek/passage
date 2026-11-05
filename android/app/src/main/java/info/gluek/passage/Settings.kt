@@ -8,6 +8,10 @@ import java.security.SecureRandom
 class Settings(context: Context) {
     private val prefs = context.getSharedPreferences("passage", Context.MODE_PRIVATE)
 
+    var theme: String
+        get() = prefs.getString("theme", "system").takeIf { it in THEMES } ?: "system"
+        set(v) = prefs.edit().putString("theme", v.takeIf { it in THEMES } ?: "system").apply()
+
     var link: String
         get() = prefs.getString("link", "") ?: ""
         set(v) = prefs.edit().putString("link", v.trim()).apply()
@@ -155,6 +159,7 @@ class Settings(context: Context) {
     }
 
     companion object {
+        val THEMES = listOf("system", "light", "dark")
         const val HOST = "127.0.0.1"
         /** Route types that can be chosen, as in the Go core's RouteKinds. */
         val ROUTE_KINDS = listOf("my", "http", "wss", "iroh", "soar")

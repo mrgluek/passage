@@ -106,7 +106,7 @@ object Ui {
                     minWidth = dp(c, 48)
                     setPadding(dp(c, 4), dp(c, 8), dp(c, 4), dp(c, 8))
                     if (i == selected) {
-                        setTextColor(Color.WHITE)
+                        setTextColor(c.getColor(R.color.on_accent))
                         setTypeface(typeface, Typeface.BOLD)
                         background = rounded(radius, accent)
                     } else {
@@ -164,7 +164,7 @@ object Ui {
         if (menuIndex >= 0) (bar.getChildAt(menuIndex) as TextView).apply {
             setCompoundDrawablesRelativeWithIntrinsicBounds(0, 0, R.drawable.ic_dropdown, 0)
             compoundDrawablePadding = dp(c, 2)
-            compoundDrawableTintList = ColorStateList.valueOf(if (fixed == null) accent(c) else Color.WHITE)
+            compoundDrawableTintList = ColorStateList.valueOf(if (fixed == null) accent(c) else c.getColor(R.color.on_accent))
             contentDescription = if (fixed == null) c.getString(R.string.route_menu)
                 else "${fixed.priority} ${fixed.id} (${fixed.type})"
         }
@@ -178,7 +178,7 @@ object Ui {
     fun valueBlock(c: Context, rows: List<Pair<String, String>>, note: String? = null): LinearLayout =
         LinearLayout(c).apply {
             orientation = LinearLayout.VERTICAL
-            background = rounded(dp(c, 8).toFloat(), Color.argb(0x14, 0, 0, 0))
+            background = rounded(dp(c, 8).toFloat(), c.getColor(R.color.value_background))
             val pad = dp(c, 10)
             setPadding(pad, dp(c, 6), pad, dp(c, 6))
             for ((label, value) in rows) {

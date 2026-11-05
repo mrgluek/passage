@@ -161,4 +161,8 @@
     <string name="update_install_failed">Не удалось установить обновление. Попробуйте ещё раз.</string>
     <string name="update_auto">Проверять раз в день, пока прокси включён</string>
     <string name="update_auto_help">Passage сам только проверяет и сообщает, а скачивание и установку запускаете вы. Android попросит подтвердить установку и примет только версию с той же подписью.</string>
+    <string name="theme_label">Тема</string>
+    <string name="theme_system">Системная</string>
+    <string name="theme_light">Светлая</string>
+    <string name="theme_dark">Тёмная</string>
 </resources>

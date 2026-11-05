@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.6.2
+
+- Android: a dark theme. Choose System, Light or Dark in Settings; by default
+  the app follows the system.
+- Android: unsaved text in Settings stays when the screen rotates or the theme
+  changes.
+
 ## 0.6.1
 
 - Passage can check for a new version and install it from inside the app, in

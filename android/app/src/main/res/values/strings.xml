@@ -161,4 +161,8 @@
     <string name="update_install_failed">Could not install the update. Try again.</string>
     <string name="update_auto">Check once a day while the proxy is on</string>
     <string name="update_auto_help">Passage only checks on its own and tells you; downloading and installing are up to you. Android asks to confirm the install, and only accepts a version signed like this one.</string>
+    <string name="theme_label">Theme</string>
+    <string name="theme_system">System</string>
+    <string name="theme_light">Light</string>
+    <string name="theme_dark">Dark</string>
 </resources>
