@@ -1,5 +1,6 @@
 // Command passage-update-manifest makes the update key and signs a release's
-// manifest. The key comes from the PASSAGE_UPDATE_KEY environment variable.
+// manifest. The key comes from the PASSAGE_UPDATE_KEY environment variable;
+// PASSAGE_UPDATE_PUBLIC_KEY, if set, must be its public half.
 //
 //	passage-update-manifest keygen
 //	passage-update-manifest sign <version> <dir>
@@ -50,6 +51,11 @@ func sign(version, dir string) error {
 	if err != nil || len(seed) != ed25519.SeedSize {
 		return errors.New("PASSAGE_UPDATE_KEY is missing or invalid")
 	}
+	key := ed25519.NewKeyFromSeed(seed)
+	public := base64.RawURLEncoding.EncodeToString(key.Public().(ed25519.PublicKey))
+	if want := os.Getenv("PASSAGE_UPDATE_PUBLIC_KEY"); want != "" && want != public {
+		return errors.New("PASSAGE_UPDATE_KEY does not match PASSAGE_UPDATE_PUBLIC_KEY")
+	}
 	m := update.Manifest{Version: version, Files: map[string]update.File{}}
 	for _, target := range []string{"arm64", "armv7", "windows-amd64", "darwin-arm64", "darwin-amd64"} {
 		ext := "zip"
@@ -62,7 +68,7 @@ func sign(version, dir string) error {
 		}
 		m.Files[target] = file
 	}
-	raw, err := update.Sign(m, ed25519.NewKeyFromSeed(seed))
+	raw, err := update.Sign(m, key)
 	if err != nil {
 		return err
 	}

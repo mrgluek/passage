@@ -39,6 +39,15 @@ func TestSignDesktopTargets(t *testing.T) {
 			t.Fatal("missing", target)
 		}
 	}
+	t.Setenv("PASSAGE_UPDATE_PUBLIC_KEY", base64.RawURLEncoding.EncodeToString(public))
+	if err := sign("1.0.1", dir); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PASSAGE_UPDATE_PUBLIC_KEY", base64.RawURLEncoding.EncodeToString(make([]byte, ed25519.PublicKeySize)))
+	if err := sign("1.0.1", dir); err == nil {
+		t.Fatal("mismatched public key accepted")
+	}
+	t.Setenv("PASSAGE_UPDATE_PUBLIC_KEY", "")
 	for _, name := range names {
 		file := filepath.Join(dir, name)
 		os.Remove(file)
