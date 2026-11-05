@@ -55,6 +55,8 @@ jobs:
       - name: Build passage-cli
         env:
           PASSAGE_LINK_AUTHOR_KEY: ${{ vars.PASSAGE_LINK_AUTHOR_KEY }}
+          PASSAGE_UPDATE_PUBLIC_KEY: ${{ vars.PASSAGE_UPDATE_PUBLIC_KEY }}
+          PASSAGE_UPDATE_SOURCES: ${{ vars.PASSAGE_UPDATE_SOURCES }}
           PYTHON: ${{ runner.os == 'Windows' && 'python' || 'python3' }}
           TAG: ${{ github.ref_name }}
         run: scripts/build-cli.sh "${TAG#v}" dist ${{ matrix.targets }}
@@ -63,6 +65,8 @@ jobs:
         if: runner.os == 'macOS'
         env:
           PASSAGE_LINK_AUTHOR_KEY: ${{ vars.PASSAGE_LINK_AUTHOR_KEY }}
+          PASSAGE_UPDATE_PUBLIC_KEY: ${{ vars.PASSAGE_UPDATE_PUBLIC_KEY }}
+          PASSAGE_UPDATE_SOURCES: ${{ vars.PASSAGE_UPDATE_SOURCES }}
           TAG: ${{ github.ref_name }}
           ARCH: ${{ matrix.arch }}
         run: |

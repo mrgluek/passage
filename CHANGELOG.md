@@ -3,7 +3,8 @@
 ## 0.6.1
 
 - Passage can check for a new version and install it from inside the app, in
-  Settings → Updates. The download continues where it stopped.
+  Settings → Updates, on Android, Windows and macOS. The download continues
+  where it stopped.
 - Passage for macOS: a menu bar app for Apple silicon and Intel, with launch
   at login and connection-link imports.
 - macOS builds have no Apple Developer ID signature or notarization.

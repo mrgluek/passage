@@ -11,6 +11,7 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/mrgluek/passage/core/tunnel"
 )
@@ -28,17 +29,19 @@ const (
 
 // Settings is what passage.ini keeps. The link is in link.txt.
 type Settings struct {
-	Port    int
-	User    string
-	Pass    string
-	Auth    bool
-	Mode    string
-	My      string
-	Running bool
+	Port       int
+	User       string
+	Pass       string
+	Auth       bool
+	Mode       string
+	My         string
+	Running    bool
+	AutoUpdate bool
+	NextUpdate time.Time
 }
 
 func defaultSettings() Settings {
-	s := Settings{Auth: true, Mode: tunnel.ModeAuto, Running: true}
+	s := Settings{Auth: true, Mode: tunnel.ModeAuto, Running: true, AutoUpdate: true}
 	s.newAccess()
 	return s
 }
@@ -83,7 +86,7 @@ func (s Settings) socksURL() string {
 // loadSettings reads passage.ini; missing keys keep their defaults, and a
 // missing port or credentials get new ones.
 func loadSettings(path string) (Settings, bool, error) {
-	s := Settings{Auth: true, Mode: tunnel.ModeAuto, Running: true}
+	s := Settings{Auth: true, Mode: tunnel.ModeAuto, Running: true, AutoUpdate: true}
 	f, err := os.Open(path)
 	if os.IsNotExist(err) {
 		return defaultSettings(), false, nil
@@ -118,6 +121,10 @@ func loadSettings(path string) (Settings, bool, error) {
 			s.Mode = v
 		case "my_route":
 			s.My = v
+		case "auto_update":
+			s.AutoUpdate = v != "false" && v != "0"
+		case "next_update":
+			s.NextUpdate, _ = time.Parse(time.RFC3339, v)
 		case "running":
 			s.Running = v != "false" && v != "0"
 		}
@@ -145,7 +152,9 @@ auth=%t
 mode=%s
 my_route=%s
 running=%t
-`, s.Port, s.User, s.Pass, s.Auth, s.Mode, s.My, s.Running)
+auto_update=%t
+next_update=%s
+`, s.Port, s.User, s.Pass, s.Auth, s.Mode, s.My, s.Running, s.AutoUpdate, s.NextUpdate.Format(time.RFC3339))
 	return writeFile(path, []byte(text))
 }
 

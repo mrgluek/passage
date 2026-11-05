@@ -9,6 +9,7 @@ import (
 	"runtime"
 	"slices"
 	"sync"
+	"time"
 
 	"fyne.io/systray"
 	"github.com/jchv/go-webview2"
@@ -27,6 +28,8 @@ var (
 const webviewDownload = "https://go.microsoft.com/fwlink/p/?LinkId=2124703"
 
 func runDesktop(dir string, autostart bool) {
+	health := os.Getenv(updateHealthEnv)
+	os.Unsetenv(updateHealthEnv)
 	t := tr(table(language(uiLanguage())))
 	if insideArchive(dir, os.TempDir()) {
 		messageBox(t.f("inside_archive"), windows.MB_OK|windows.MB_ICONWARNING)
@@ -36,25 +39,41 @@ func runDesktop(dir string, autostart bool) {
 	if !first {
 		return
 	}
+	programDir := ""
+	if exe, err := programPath(); err == nil {
+		programDir = filepath.Dir(exe)
+	}
+	if health == "" && programDir != "" {
+		go cleanLeftovers(programDir)
+	}
 	a := newApp(dir, version, irohHelper(), language(uiLanguage()), winPlatform{})
+	winApp = a
 	d := &desktop{app: a, dir: dir}
 	a.changed = d.update
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
+	waited := make(chan struct{})
 	systray.Run(func() {
 		systray.SetOnTapped(d.openWindow)
 		d.update()
 		go func() { a.run(ctx); close(done) }()
-		if event != 0 {
-			go func() {
-				for {
-					if _, err := windows.WaitForSingleObject(event, windows.INFINITE); err != nil {
-						return
-					}
+		if health != "" {
+			go confirmUpdate(ctx, health, programDir)
+		}
+		// Waits in slices: a pending wait would keep the event's name alive
+		// past shutdown and turn away an updated Passage as a second start.
+		go func() {
+			defer close(waited)
+			for event != 0 && ctx.Err() == nil {
+				r, err := windows.WaitForSingleObject(event, 500)
+				if err != nil {
+					return
+				}
+				if r == windows.WAIT_OBJECT_0 {
 					d.openWindow()
 				}
-			}()
-		}
+			}
+		}()
 		if !autostart {
 			d.openWindow()
 		}
@@ -62,6 +81,14 @@ func runDesktop(dir string, autostart bool) {
 		cancel()
 		<-done
 	})
+	if u := pendingUpdate.Load(); u != nil {
+		d.closeWindow()
+		<-waited
+		if event != 0 {
+			windows.CloseHandle(event)
+		}
+		finishUpdate(u, t)
+	}
 }
 
 // desktop is the tray icon with its menu, and the window.
@@ -89,7 +116,7 @@ func (d *desktop) update() {
 		systray.SetIcon(iconOff)
 	}
 	systray.SetTooltip(st.Tooltip)
-	if d.shown == nil || d.shown.My != st.My || !slices.Equal(d.shown.Routes, st.Routes) {
+	if d.shown == nil || d.shown.My != st.My || d.shown.Update != st.Update || !slices.Equal(d.shown.Routes, st.Routes) {
 		d.buildMenu(st)
 	}
 	t := d.app.t
@@ -112,6 +139,9 @@ func (d *desktop) buildMenu(st trayState) {
 	t := d.app.t
 	systray.ResetMenu()
 	onClick(systray.AddMenuItem(t.f("tray_open"), ""), d.openWindow)
+	if st.Update != "" {
+		onClick(systray.AddMenuItem(t.f("update_available", st.Update), ""), d.openWindow)
+	}
 	systray.AddSeparator()
 	d.toggle = systray.AddMenuItem(t.f("action_start"), "")
 	onClick(d.toggle, func() { d.app.setRunning(!d.app.trayState().Running) })
@@ -158,6 +188,27 @@ func (d *desktop) openWindow() {
 	}
 	d.opening = true
 	go d.runWindow()
+}
+
+// closeWindow ends the window and waits for it, so the next process can open
+// the same browser data.
+func (d *desktop) closeWindow() {
+	d.mu.Lock()
+	w := d.view
+	d.mu.Unlock()
+	if w == nil {
+		return
+	}
+	w.Dispatch(w.Terminate)
+	for range 60 {
+		d.mu.Lock()
+		closed := d.view == nil
+		d.mu.Unlock()
+		if closed {
+			return
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
 }
 
 func (d *desktop) runWindow() {

@@ -100,6 +100,11 @@ Runtime that comes with Windows; on a system without it, Passage offers the
 download and the proxy keeps working. SmartScreen may warn about an unsigned
 program first.
 
+Settings → **Updates** checks for a new version and installs it: Passage
+replaces its program files in the same folder and starts again, keeping
+`passage.ini`, `link.txt` and the app history. If the new version does not
+start, the previous one comes back.
+
 On macOS 13 or later, unpack `passage-<version>-darwin-arm64.zip` for Apple
 silicon or `passage-<version>-darwin-amd64.zip` for Intel Macs.
 Move `Passage.app` to Applications before enabling **Start Passage when I
@@ -109,6 +114,10 @@ The website's **Open in Passage** button opens received `passage://` links
 in the app. Passage asks for confirmation before importing them.
 After replacing a build, quit the old copy and open the installed app once
 to register its link handler.
+
+The macOS app checks for updates once a day while the proxy runs. Turn this
+off in Settings → Updates, or check from the main window. Downloads start
+only when you choose Download; Install and restart keeps your settings.
 
 **The macOS app is not signed with an Apple Developer ID and is not
 notarized.** macOS may block it on first launch. After trying to open it,

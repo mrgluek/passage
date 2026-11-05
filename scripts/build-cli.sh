@@ -24,6 +24,15 @@ if [[ -n "${PASSAGE_LINK_AUTHOR_KEY:-}" ]]; then
   [[ "$PASSAGE_LINK_AUTHOR_KEY" =~ ^[A-Za-z0-9_-]{43}$ ]] || { echo "invalid author public key" >&2; exit 1; }
   link_flags="-X github.com/mrgluek/passage/core/tunnel.AuthorKey=$PASSAGE_LINK_AUTHOR_KEY"
 fi
+if [[ -n "${PASSAGE_UPDATE_PUBLIC_KEY:-}" ]]; then
+  [[ "$PASSAGE_UPDATE_PUBLIC_KEY" =~ ^[A-Za-z0-9_-]{43}$ ]] || { echo "invalid update public key" >&2; exit 1; }
+  link_flags+=" -X github.com/mrgluek/passage/core/update.PublicKey=$PASSAGE_UPDATE_PUBLIC_KEY"
+fi
+if [[ -n "${PASSAGE_UPDATE_SOURCES:-}" ]]; then
+  [[ "$PASSAGE_UPDATE_SOURCES" =~ ^[^[:space:]\'\"]+$ ]] || { echo "invalid update sources" >&2; exit 1; }
+  link_flags+=" -X github.com/mrgluek/passage/core/update.ExtraSources=$PASSAGE_UPDATE_SOURCES"
+fi
+
 work=$(mktemp -d)
 syso="$root/core/cmd/passage/rsrc_windows.syso"
 trap 'rm -rf "$work" "$syso"' EXIT
