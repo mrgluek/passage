@@ -42,6 +42,7 @@ class MainActivity : ThemedActivity() {
     private lateinit var batteryButton: Button
     private lateinit var statusView: TextView
     private lateinit var startStopButton: ImageButton
+    private lateinit var routesNotice: TextView
     private lateinit var updateNotice: Button
     private var shownActive: Boolean? = null
     /** A network test for a bug report; kept across screen rotation. */
@@ -134,6 +135,11 @@ class MainActivity : ThemedActivity() {
             }
         }
         col.addView(updateNotice)
+        routesNotice = Ui.hint(this, "").apply {
+            visibility = View.GONE
+            setOnClickListener { settings.routesNotice = ""; visibility = View.GONE }
+        }
+        col.addView(routesNotice)
 
         noLinkBox = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         noLinkBox.addView(Ui.hint(this, getString(R.string.no_link)).apply {
@@ -287,7 +293,10 @@ class MainActivity : ThemedActivity() {
             startStopButton.contentDescription = label
             if (Build.VERSION.SDK_INT >= 26) startStopButton.tooltipText = label
         }
-        val hasLink = settings.link.isNotEmpty()
+        val notice = settings.routesNotice.split(',').mapNotNull { it.toIntOrNull() }
+        routesNotice.visibility = if (notice.size == 2) View.VISIBLE else View.GONE
+        if (notice.size == 2) routesNotice.text = getString(R.string.sub_routes_updated, notice[0], notice[1])
+        val hasLink = settings.link.isNotEmpty() || settings.subscriptions.isNotEmpty() || settings.savedRoutes.isNotEmpty()
         noLinkBox.visibility = if (hasLink) View.GONE else View.VISIBLE
         showRoutes()
         showDetails()
