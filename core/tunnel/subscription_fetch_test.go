@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/ed25519"
+	"encoding/binary"
 	"errors"
 	"net"
 	"net/http"
@@ -11,7 +12,9 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"github.com/fxamacker/cbor/v2"
 	links "github.com/mrgluek/passage-link/link"
+	"golang.org/x/crypto/chacha20poly1305"
 )
 
 func TestSubscriptionFetchFallbackAnd304(t *testing.T) {
@@ -67,6 +70,9 @@ func TestSubscriptionFetchFallbackAnd304(t *testing.T) {
 
 func TestSubscriptionFetchRefusesRedirectAndOversize(t *testing.T) {
 	s, _, _ := subFixture(t)
+	if _, _, code := fetchSubscription(context.Background(), s, "http://example.org/sub", (&net.Dialer{}).DialContext); code != "http" {
+		t.Fatal("HTTP allowed by default")
+	}
 	subscriptionTestHTTP = true
 	t.Cleanup(func() { subscriptionTestHTTP = false })
 	var followed atomic.Int32
@@ -95,6 +101,8 @@ func TestSubscriptionFetchRefusesRedirectAndOversize(t *testing.T) {
 }
 
 func TestSubscriptionAuthentication(t *testing.T) {
+	subscriptionTestHTTP = true
+	t.Cleanup(func() { subscriptionTestHTTP = false })
 	s, key, b := subFixture(t)
 	blob, err := links.SealSubFile(b, b.Sub, s.ReadKey, key)
 	if err != nil {
@@ -113,6 +121,77 @@ func TestSubscriptionAuthentication(t *testing.T) {
 			if _, err := links.OpenSubFile(tc.blob, b.Sub, tc.key, ed25519.PublicKey(tc.pub)); err == nil {
 				t.Fatal("accepted invalid file")
 			}
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.Write(tc.blob) }))
+			defer server.Close()
+			bad := s
+			bad.Sources = []string{server.URL}
+			bad.Signer = tc.pub
+			bad.ReadKey = tc.key
+			var fetcher SubscriptionRefresher
+			out := fetcher.Refresh(context.Background(), Config{Subscriptions: []Subscription{bad}}, nil)
+			if out.Changed || len(out.Config.Routes) != 0 || out.Config.Subscriptions[0].LastError == "" {
+				t.Fatal("fetch activated invalid file")
+			}
 		})
+	}
+}
+
+func TestSubscriptionFetchRequiredFeature(t *testing.T) {
+	s, key, b := subFixture(t)
+	raw, err := links.Encode(b, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var tag cbor.Tag
+	if err = cbor.Unmarshal(raw, &tag); err != nil {
+		t.Fatal(err)
+	}
+	parts := tag.Content.([]any)
+	var fields map[string]cbor.RawMessage
+	if err = cbor.Unmarshal(parts[2].([]byte), &fields); err != nil {
+		t.Fatal(err)
+	}
+	enc, err := cbor.CanonicalEncOptions().EncMode()
+	if err != nil {
+		t.Fatal(err)
+	}
+	fields["required"], err = enc.Marshal([]string{"future"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, err := enc.Marshal(fields)
+	if err != nil {
+		t.Fatal(err)
+	}
+	toSign, err := enc.Marshal([]any{"Signature1", parts[0], []byte("passage-link-v2"), body})
+	if err != nil {
+		t.Fatal(err)
+	}
+	parts[2], parts[3] = body, ed25519.Sign(key, toSign)
+	signed, err := enc.Marshal(cbor.Tag{Number: 18, Content: parts})
+	if err != nil {
+		t.Fatal(err)
+	}
+	plain := make([]byte, 1024)
+	if len(signed) > len(plain)-4 {
+		t.Fatal("fixture too large")
+	}
+	binary.BigEndian.PutUint32(plain, uint32(len(signed)))
+	copy(plain[4:], signed)
+	header := append([]byte("PSUB1"), bytes.Repeat([]byte{5}, 24)...)
+	aead, err := chacha20poly1305.NewX(s.ReadKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	blob := aead.Seal(header, header[5:], plain, append([]byte("PSUB1"), b.Sub...))
+	subscriptionTestHTTP = true
+	t.Cleanup(func() { subscriptionTestHTTP = false })
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.Write(blob) }))
+	defer server.Close()
+	s.Sources = []string{server.URL}
+	var fetcher SubscriptionRefresher
+	out := fetcher.Refresh(context.Background(), Config{Subscriptions: []Subscription{s}}, nil)
+	if out.Changed || out.Config.Subscriptions[0].LastError != "required" {
+		t.Fatal("required feature accepted")
 	}
 }

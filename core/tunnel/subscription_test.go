@@ -38,13 +38,16 @@ func subInvite(t *testing.T, s Subscription, key ed25519.PrivateKey, seed []byte
 }
 func TestSubscriptionSeedAndSignerCollision(t *testing.T) {
 	s, key, b := subFixture(t)
+	old := AuthorKey
+	AuthorKey = base64.RawURLEncoding.EncodeToString(s.Signer)
+	t.Cleanup(func() { AuthorKey = old })
 	seed, err := links.SealSubFile(b, b.Sub, s.ReadKey, key)
 	if err != nil {
 		t.Fatal(err)
 	}
 	uri := subInvite(t, s, key, seed)
 	preview, err := ImportLink(Config{}, uri, false)
-	if err != nil || preview.Mode != "subscribe" || preview.Subscription == nil || !preview.Subscription.HasSeed || len(preview.Config.Subscriptions) != 0 {
+	if err != nil || preview.Signature != "trusted_author" || preview.Mode != "subscribe" || preview.Subscription == nil || !preview.Subscription.HasSeed || len(preview.Config.Subscriptions) != 0 {
 		t.Fatal(preview, err)
 	}
 	result, err := SubscribeLink(Config{}, uri, false)
@@ -53,7 +56,7 @@ func TestSubscriptionSeedAndSignerCollision(t *testing.T) {
 	}
 	_, other, _ := ed25519.GenerateKey(nil)
 	collision, err := SubscribeLink(result.Config, subInvite(t, s, other, nil), false)
-	if err != nil || !collision.Collision || !bytes.Equal(collision.Config.Subscriptions[0].Signer, s.Signer) {
+	if err != nil || collision.Signature != "unknown_signer" || !collision.Collision || !bytes.Equal(collision.Config.Subscriptions[0].Signer, s.Signer) {
 		t.Fatal("signer collision", err)
 	}
 	again, err := SubscribeLink(result.Config, uri, false)
@@ -117,6 +120,11 @@ func TestSubscriptionUpdatesAndRouteLimit(t *testing.T) {
 	if len(pool.(*routePool).clients) != 16 {
 		t.Fatal("pool cap")
 	}
+	b.Routes = append(b.Routes, subRoute("extra"))
+	if _, err = b.Validate(); err == nil {
+		t.Fatal("subscription route cap lifted")
+	}
+	b.Routes = b.Routes[:16]
 	b.Sub = nil
 	b.Revision = 0
 	if _, err = b.Validate(); err == nil {

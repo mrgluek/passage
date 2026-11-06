@@ -4,12 +4,13 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
-	links "github.com/mrgluek/passage-link/link"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
+
+	links "github.com/mrgluek/passage-link/link"
 )
 
 func TestSubscriptionScheduleFakeClock(t *testing.T) {

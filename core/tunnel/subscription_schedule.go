@@ -75,7 +75,7 @@ func (t *Tunnel) RefreshSubscriptions(ctx context.Context) SubscriptionRefreshRe
 	t.mu.Lock()
 	mode := cmp.Or(t.only, t.mode)
 	var dials []SubscriptionDial
-	if d := t.ways[RouteTunnel].dial; d != nil {
+	if d := t.ways[RouteTunnel].dial; d != nil && t.mode != ModeOff {
 		dials = append(dials, d)
 	}
 	t.mu.Unlock()
@@ -111,6 +111,13 @@ func (t *Tunnel) RefreshSubscriptions(ctx context.Context) SubscriptionRefreshRe
 func (t *Tunnel) subscriptionLoop() {
 	defer t.wg.Done()
 	var schedule subscriptionSchedule
+	t.subs.mu.Lock()
+	for _, sub := range t.subs.cfg.Subscriptions {
+		if tried := time.Unix(sub.LastTry, 0); sub.LastTry > 0 && tried.After(schedule.lastUrgent) {
+			schedule.lastUrgent = tried
+		}
+	}
+	t.subs.mu.Unlock()
 	timer := time.NewTimer(schedule.first(subscriptionJitter))
 	defer timer.Stop()
 	for {
@@ -127,6 +134,7 @@ func (t *Tunnel) subscriptionLoop() {
 			return
 		}
 		result := t.RefreshSubscriptions(t.ctx)
+		schedule.lastUrgent = time.Now()
 		ok := true
 		for _, sub := range result.Config.Subscriptions {
 			if sub.LastError != "" && sub.LastError != "unchanged" && sub.LastError != "collision" {
