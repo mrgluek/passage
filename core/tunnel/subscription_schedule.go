@@ -86,6 +86,9 @@ func (t *Tunnel) RefreshSubscriptions(ctx context.Context) SubscriptionRefreshRe
 	cfg := state.cfg
 	cfg.Mode = mode
 	state.mu.Unlock()
+	if state.changed.Load() {
+		return SubscriptionRefreshResult{Config: cfg, Changed: true}
+	}
 	state.refreshing.Store(true)
 	defer state.refreshing.Store(false)
 	child, cancel := context.WithCancel(ctx)

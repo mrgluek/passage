@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -58,7 +59,8 @@ func TestSubscriptionRuntimePublishesPrivateConfig(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.Write(raw) }))
+	var requests atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { requests.Add(1); w.Write(raw) }))
 	defer server.Close()
 	subscriptionTestHTTP = true
 	t.Cleanup(func() { subscriptionTestHTTP = false })
@@ -73,6 +75,11 @@ func TestSubscriptionRuntimePublishesPrivateConfig(t *testing.T) {
 	out := tun.RefreshSubscriptions(context.Background())
 	if !out.Changed || len(out.Config.Routes) != 2 || !out.Config.RouteEdits["manual"].Off {
 		t.Fatal("private config lost installed routes")
+	}
+	before := requests.Load()
+	pending := tun.RefreshSubscriptions(context.Background())
+	if !pending.Changed || len(pending.Config.Routes) != 2 || requests.Load() != before {
+		t.Fatal("pending private config fetched again")
 	}
 	if !tun.Status(0).ConfigChanged || tun.Status(0).Subscriptions[0].Revision != 1 {
 		t.Fatal("missing status notification")
