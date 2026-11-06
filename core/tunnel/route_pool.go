@@ -93,6 +93,19 @@ func newRoutePool(cfg Config) (soarClient, error) {
 				resolvers, _ = withoutIPv6(resolvers)
 			}
 			client = newLazySoar(soar.Config{Zone: params.Zone, ServerKey: ed25519.PublicKey(params.Key), Resolvers: resolvers, TCP: "auto", SafeQName: cmp.Or(cfg.SafeQName, soarSafeQName), MaxPathWindow: soarPathWindow, DialTCP: dialResolver, StreamOnly: isDoT, Logger: slog.New(slog.NewTextHandler(io.Discard, nil))})
+		case "turn":
+			params, err := links.Params[links.TURNParams](r)
+			if err != nil {
+				p.Close()
+				return nil, err
+			}
+			c, err := NewTURNClient(params)
+			if err != nil {
+				p.Close()
+				return nil, err
+			}
+			client = c
+			server = turnServer(params, c)
 		case "http":
 			params, err := links.Params[links.HTTPParams](r)
 			if err != nil {

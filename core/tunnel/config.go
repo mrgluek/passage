@@ -33,7 +33,7 @@ func routeMode(mode string) bool {
 }
 
 // RouteKinds are the route types that can be chosen as the mode.
-var RouteKinds = []string{"my", "http", "wss", "iroh", "soar"}
+var RouteKinds = []string{"my", "http", "wss", "turn", "iroh", "soar"}
 
 // DefaultResolvers are public resolvers used in addition to the network's
 // and the link's. soar uses all of them and backs off the ones that don't
