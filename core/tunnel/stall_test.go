@@ -83,31 +83,11 @@ func TestResponseWatch(t *testing.T) {
 			if _, err := c.Write([]byte("x")); err != nil {
 				t.Fatal(err)
 			}
-			stopWrites := make(chan struct{})
-			writesDone := make(chan struct{})
-			go func() {
-				defer close(writesDone)
-				ticker := time.NewTicker(5 * time.Millisecond)
-				defer ticker.Stop()
-				for {
-					select {
-					case <-ticker.C:
-						if _, err := c.Write([]byte("x")); err != nil {
-							return
-						}
-					case <-stopWrites:
-						return
-					}
-				}
-			}()
 			select {
 			case <-stalled:
 			case <-time.After(time.Second):
 				t.Fatal("stall was not detected")
 			}
-			close(stopWrites)
-			c.Close()
-			<-writesDone
 			limit := firstResponseTimeout
 			if scenario == "partial" {
 				limit = responseStallTimeout
@@ -315,33 +295,6 @@ func TestStallDecisionHysteresis(t *testing.T) {
 	}
 }
 
-func TestStallDuringBlockedWrite(t *testing.T) {
-	shortStalls(t)
-	a, b := net.Pipe()
-	served := make(chan struct{})
-	release := make(chan struct{})
-	go func() {
-		defer close(served)
-		defer b.Close()
-		io.CopyN(io.Discard, b, 1)
-		b.Write(bytes.Repeat([]byte("x"), 16*1024))
-		<-release
-	}()
-	stalled := make(chan struct{})
-	c := watchResponses(a, nil, func() { close(stalled) })
-	written := make(chan struct{})
-	go func() { defer close(written); c.Write(make([]byte, 64*1024)) }()
-	defer func() { c.Close(); close(release); <-served; <-written }()
-	if _, err := io.ReadFull(c, make([]byte, 16*1024)); err != nil {
-		t.Fatal(err)
-	}
-	select {
-	case <-stalled:
-	case <-time.After(time.Second):
-		t.Fatal("blocked upload had no stall deadline")
-	}
-}
-
 func TestPoolDoesNotRaceStalledRoute(t *testing.T) {
 	saved := routeStagger
 	routeStagger = 5 * time.Millisecond
@@ -374,5 +327,150 @@ func TestPoolDoesNotRaceStalledRoute(t *testing.T) {
 	c.Close()
 	if blockedCalls.Load() != 0 {
 		t.Fatal("stalled route raced a usable backup")
+	}
+}
+
+func TestUploadProgressRestartsDeadline(t *testing.T) {
+	shortStalls(t)
+	for _, received := range []bool{false, true} {
+		for _, reply := range []bool{false, true} {
+			name := "first-response"
+			if received {
+				name = "later-response"
+			}
+			if reply {
+				name += "/reply"
+			} else {
+				name += "/silent"
+			}
+			t.Run(name, func(t *testing.T) {
+				a, b := net.Pipe()
+				done := make(chan struct{})
+				go func() {
+					defer close(done)
+					defer b.Close()
+					if received {
+						b.Write([]byte("hello"))
+					}
+					for i := 0; i < 24; i++ {
+						if _, err := io.CopyN(io.Discard, b, 1); err != nil {
+							return
+						}
+					}
+					if reply {
+						b.Write([]byte("reply"))
+					}
+					io.Copy(io.Discard, b)
+				}()
+				stalled := make(chan struct{})
+				c := watchResponses(a, nil, func() { close(stalled) })
+				defer func() { c.Close(); b.Close(); <-done }()
+				c.SetDeadline(time.Now().Add(3 * time.Second))
+				if received {
+					if _, err := io.ReadFull(c, make([]byte, 5)); err != nil {
+						t.Fatal(err)
+					}
+				}
+				limit := firstResponseTimeout
+				if received {
+					limit = responseStallTimeout
+				}
+				var completed time.Time
+				for i := 0; i < 24; i++ {
+					if _, err := c.Write([]byte("x")); err != nil {
+						t.Fatal("upload interrupted", err)
+					}
+					completed = time.Now()
+					select {
+					case <-stalled:
+						t.Fatal("upload progress counted as a stall")
+					case <-time.After(limit / 4):
+					}
+				}
+				if !reply {
+					select {
+					case <-stalled:
+					case <-time.After(time.Second):
+						t.Fatal("silence after upload did not stall")
+					}
+					if elapsed := time.Since(completed); elapsed < limit || elapsed > limit+200*time.Millisecond {
+						t.Fatalf("deadline %v, want %v after final write", elapsed, limit)
+					}
+					return
+				}
+				if _, err := io.ReadFull(c, make([]byte, 5)); err != nil {
+					t.Fatal("reply after upload failed", err)
+				}
+				select {
+				case <-stalled:
+					t.Fatal("completed reply counted as a stall")
+				case <-time.After(2 * limit):
+				}
+			})
+		}
+	}
+}
+
+func TestSlowWriteDoesNotStall(t *testing.T) {
+	shortStalls(t)
+	for _, received := range []bool{false, true} {
+		name := "first-response"
+		if received {
+			name = "later-response"
+		}
+		t.Run(name, func(t *testing.T) {
+			a, b := net.Pipe()
+			done := make(chan struct{})
+			release := make(chan struct{})
+			var releaseOnce sync.Once
+			allowRead := func() { releaseOnce.Do(func() { close(release) }) }
+			go func() {
+				defer close(done)
+				defer b.Close()
+				if received {
+					b.Write([]byte("hello"))
+				}
+				<-release
+				if _, err := io.CopyN(io.Discard, b, 1); err != nil {
+					return
+				}
+				b.Write([]byte("reply"))
+				io.Copy(io.Discard, b)
+			}()
+			stalled := make(chan struct{})
+			c := watchResponses(a, nil, func() { close(stalled) })
+			written := make(chan error, 1)
+			defer func() { allowRead(); c.Close(); b.Close(); <-done }()
+			c.SetDeadline(time.Now().Add(3 * time.Second))
+			if received {
+				if _, err := io.ReadFull(c, make([]byte, 5)); err != nil {
+					t.Fatal(err)
+				}
+			}
+			go func() { _, err := c.Write([]byte("x")); written <- err }()
+			limit := firstResponseTimeout
+			if received {
+				limit = responseStallTimeout
+			}
+			select {
+			case <-stalled:
+				allowRead()
+				<-written
+				t.Fatal("in-flight write counted as a stall")
+			case <-time.After(3 * limit):
+			}
+			allowRead()
+			if err := <-written; err != nil {
+				t.Fatal("slow write failed", err)
+			}
+			if _, err := io.ReadFull(c, make([]byte, 5)); err != nil {
+				t.Fatal("prompt reply failed", err)
+			}
+			select {
+			case <-stalled:
+				t.Fatal("reply did not clear deadline")
+			case <-time.After(2 * limit):
+			}
+		})
 	}
 }

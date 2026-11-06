@@ -29,7 +29,7 @@ func (s *stallState) fail(now time.Time) {
 }
 func (s *stallState) success() { s.Steps = 0; s.Until = time.Time{} }
 
-// responseWatch only runs a deadline while a write is awaiting a read.
+// responseWatch waits for a reply only after all writes have completed.
 type responseWatch struct {
 	net.Conn
 	mu                     sync.Mutex
@@ -44,12 +44,18 @@ type responseWatch struct {
 func watchResponses(c net.Conn, success, stalled func()) net.Conn {
 	return &responseWatch{Conn: c, first: true, firstLimit: firstResponseTimeout, laterLimit: responseStallTimeout, success: success, stalled: stalled}
 }
+func (c *responseWatch) stopTimerLocked() {
+	c.generation++
+	if c.timer != nil {
+		c.timer.Stop()
+		c.timer = nil
+	}
+}
 func (c *responseWatch) armLocked() {
-	if c.closed || c.pending {
+	c.stopTimerLocked()
+	if c.closed || !c.pending || c.writing > 0 {
 		return
 	}
-	c.pending = true
-	c.generation++
 	generation := c.generation
 	limit := c.laterLimit
 	if c.first {
@@ -57,7 +63,7 @@ func (c *responseWatch) armLocked() {
 	}
 	c.timer = time.AfterFunc(limit, func() {
 		c.mu.Lock()
-		if !c.pending || c.closed || c.generation != generation {
+		if !c.pending || c.closed || c.writing > 0 || c.generation != generation {
 			c.mu.Unlock()
 			return
 		}
@@ -73,11 +79,17 @@ func (c *responseWatch) Write(b []byte) (int, error) {
 	}
 	c.mu.Lock()
 	c.writing++
-	c.armLocked()
+	c.stopTimerLocked()
 	c.mu.Unlock()
 	n, err := c.Conn.Write(b)
 	c.mu.Lock()
 	c.writing--
+	if n > 0 && err == nil {
+		c.pending = true
+	}
+	if c.writing == 0 {
+		c.armLocked()
+	}
 	c.mu.Unlock()
 	return n, err
 }
@@ -88,12 +100,7 @@ func (c *responseWatch) Read(b []byte) (int, error) {
 		if !c.closed {
 			first := c.first
 			c.first, c.pending = false, false
-			if c.timer != nil {
-				c.timer.Stop()
-			}
-			if c.writing > 0 {
-				c.armLocked()
-			}
+			c.stopTimerLocked()
 			// Serialize the first byte with expiry and subsequent writes.
 			if first && c.success != nil {
 				c.success()
@@ -106,9 +113,7 @@ func (c *responseWatch) Read(b []byte) (int, error) {
 func (c *responseWatch) Close() error {
 	c.mu.Lock()
 	c.closed = true
-	if c.timer != nil {
-		c.timer.Stop()
-	}
+	c.stopTimerLocked()
 	c.mu.Unlock()
 	return c.Conn.Close()
 }
