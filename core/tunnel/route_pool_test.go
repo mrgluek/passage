@@ -127,7 +127,7 @@ func TestRoutePoolReportsViaAndStates(t *testing.T) {
 	if _, ok := conn.(interface{ CloseWrite() error }); !ok {
 		t.Fatal("wrapped connection lost CloseWrite")
 	}
-	want := []RouteState{{"fast", "iroh", routeFailed}, {"dns", "soar", routeUp}}
+	want := []RouteState{{ID: "fast", Type: "iroh", State: routeFailed}, {ID: "dns", Type: "soar", State: routeUp}}
 	if got := pool.states(); fmt.Sprint(got) != fmt.Sprint(want) {
 		t.Fatalf("states = %v, want %v", got, want)
 	}
