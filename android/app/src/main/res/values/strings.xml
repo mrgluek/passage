@@ -73,7 +73,7 @@
     <string name="no_link">No link yet: Passage works directly and with tuning. A link adds a tunnel for networks where nothing else gets through; add it in settings.</string>
     <string name="open_settings">Open settings</string>
     <string name="connect_label">Connect an app</string>
-    <string name="connect_help">Add the proxy to the app\'s proxy settings (Delta Chat, ArcaneChat: Settings → Advanced → Proxy → Add proxy). The buttons on the right copy the proxy link or open it in an app that adds proxies from links. Tap a value to copy just that.</string>
+    <string name="connect_help">Add the proxy to the app\'s proxy settings (Delta Chat, ArcaneChat: Settings > Advanced > Proxy > Add proxy). The buttons on the right copy the proxy link or open it in an app that adds proxies from links. Tap a value to copy just that.</string>
     <string name="copy_proxy_link">Copy proxy link</string>
     <string name="proxy_link_copied">Proxy link copied</string>
     <string name="status_label">Status</string>
