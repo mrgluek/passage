@@ -38,10 +38,11 @@ type responseWatch struct {
 	generation             uint64
 	writing                int
 	firstLimit, laterLimit time.Duration
-	success, stalled       func()
+	success                func()
+	stalled                func(bool)
 }
 
-func watchResponses(c net.Conn, success, stalled func()) net.Conn {
+func watchResponses(c net.Conn, success func(), stalled func(bool)) net.Conn {
 	return &responseWatch{Conn: c, first: true, firstLimit: firstResponseTimeout, laterLimit: responseStallTimeout, success: success, stalled: stalled}
 }
 func (c *responseWatch) stopTimerLocked() {
@@ -68,8 +69,9 @@ func (c *responseWatch) armLocked() {
 			return
 		}
 		c.closed = true
+		first := c.first
 		c.mu.Unlock()
-		c.stalled()
+		c.stalled(first)
 		c.Conn.Close()
 	})
 }
@@ -122,4 +124,36 @@ func (c *responseWatch) CloseWrite() error {
 		return cw.CloseWrite()
 	}
 	return c.Close()
+}
+
+func (s *stallState) blocked(now time.Time, log *eventLog, route string) bool {
+	if s == nil || s.Until.IsZero() {
+		return false
+	}
+	if now.Before(s.Until) {
+		return true
+	}
+	s.Until = time.Time{}
+	if log != nil {
+		log.add("unblocked: %s (cooldown ended)", route)
+	}
+	return false
+}
+func (s *stallState) recovered(log *eventLog, route string) {
+	if !s.Until.IsZero() || s.Steps > 0 {
+		if log != nil {
+			log.add("unblocked: %s (first reply)", route)
+		}
+	}
+	s.success()
+}
+func (s *stallState) record(now time.Time, log *eventLog, route string, first bool) {
+	s.fail(now)
+	if log != nil {
+		kind := "later reply"
+		if first {
+			kind = "first reply"
+		}
+		log.stalled(now, route, kind, s.Until.Sub(now), s.Count)
+	}
 }

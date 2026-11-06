@@ -169,6 +169,7 @@ func (a *App) mode() string {
 func (a *App) startLocked(why string) {
 	if a.tun != nil {
 		a.tun.Close()
+		a.log.copyStalls(a.tun.Status(500).Events)
 		a.tun = nil
 	}
 	cfg := a.linkCfg
@@ -204,6 +205,9 @@ func (a *App) startLocked(why string) {
 func (a *App) tick() {
 	a.mu.Lock()
 	defer a.mu.Unlock()
+	if a.tun != nil {
+		a.log.copyStalls(a.tun.Status(500).Events)
+	}
 	reload := stampOf(linkFile(a.dir)) != a.linkStamp
 	if reload {
 		a.loadLink()
@@ -260,6 +264,7 @@ func (a *App) run(ctx context.Context) {
 			a.mu.Lock()
 			if a.tun != nil {
 				a.tun.Close()
+				a.log.copyStalls(a.tun.Status(500).Events)
 				a.tun = nil
 			}
 			a.mu.Unlock()
@@ -287,6 +292,7 @@ func (a *App) setRunning(on bool) {
 		a.event("user stop")
 		if a.tun != nil {
 			a.tun.Close()
+			a.log.copyStalls(a.tun.Status(500).Events)
 			a.tun = nil
 		}
 		a.lastErr = ""
@@ -394,7 +400,11 @@ func (a *App) view() view {
 	}
 	var full string
 	if a.tun != nil {
-		st := a.tun.Status(30)
+		st := a.tun.Status(500)
+		a.log.copyStalls(st.Events)
+		if len(st.Events) > 30 {
+			st.Events = st.Events[len(st.Events)-30:]
+		}
 		v.Line = oneLine(a.t, st)
 		full = fullStatus(a.t, st)
 	} else {
@@ -704,7 +714,12 @@ func (a *App) report() string {
 	r := map[string]any{"running": a.tun != nil}
 	if a.tun != nil {
 		var st map[string]any
-		b, _ := json.Marshal(a.tun.Status(100))
+		status := a.tun.Status(500)
+		a.log.copyStalls(status.Events)
+		if len(status.Events) > 100 {
+			status.Events = status.Events[len(status.Events)-100:]
+		}
+		b, _ := json.Marshal(status)
 		json.Unmarshal(b, &st)
 		delete(st, "zone")
 		for k, v := range st {

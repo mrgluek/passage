@@ -21,6 +21,7 @@ object Diagnostics {
     private var file: AtomicFile? = null
     private var history = JSONObject()
     private var version = "?"
+    private val routerHistory = RouterHistory()
 
     @Synchronized
     fun init(context: Context) {
@@ -40,6 +41,16 @@ object Diagnostics {
     @Synchronized
     fun event(message: String) {
         record(entry(message))
+    }
+
+    @Synchronized
+    fun routerEvents(status: JSONObject?) {
+        val events = status?.optJSONArray("events") ?: return
+        val selected = routerHistory.select((0 until events.length()).map { i ->
+            val event = events.getJSONObject(i)
+            event.optString("t") to event.optString("msg")
+        })
+        for ((time, message) in selected) record(entry(message).put("t", time))
     }
 
     /** A battery sample (PassageService.sampleBattery), kept for the report. */

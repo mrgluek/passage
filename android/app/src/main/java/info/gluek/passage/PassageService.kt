@@ -91,6 +91,7 @@ class PassageService : Service() {
                 try {
                     checkNetwork(nudge = false)
                     val status = status()
+                    Diagnostics.routerEvents(status)
                     updateWakeLock(status)
                     updateNotification(status)
                     sampleBattery()
@@ -179,7 +180,7 @@ class PassageService : Service() {
     }
 
     /** The router's status, or null while it can't be read. */
-    private fun status(): JSONObject? = try { Native.status() } catch (_: Throwable) { null }
+    private fun status(): JSONObject? = try { Native.json(Native.status(500)) } catch (_: Throwable) { null }
 
     /**
      * The CPU stays awake while a Soar route carries connections: it polls
@@ -265,7 +266,10 @@ class PassageService : Service() {
         netCallback = null
         wakeLock?.let { if (it.isHeld) it.release() }
         wakeLock = null
-        bg { Native.stop() }
+        bg {
+            Diagnostics.routerEvents(status())
+            Native.stop()
+        }
     }
 
     /**
@@ -314,6 +318,7 @@ class PassageService : Service() {
             cfg.put("iroh_binary", java.io.File(applicationInfo.nativeLibraryDir, "libpassage_iroh.so").path)
             cfg.put("private_dir", java.io.File(filesDir, "iroh").path)
             cfg.put("state_file", java.io.File(filesDir, "router-state.json").path)
+            Diagnostics.routerEvents(status())
             val out = Native.json(Native.start(cfg.toString().toByteArray(Charsets.UTF_8)))
             out.optString("error").takeIf { it.isNotEmpty() }?.let { throw IllegalStateException(it) }
             runningRoutesConfig = savedConfig
@@ -334,7 +339,8 @@ class PassageService : Service() {
     private fun checkNetwork(nudge: Boolean) {
         if (!active) return
         val running = try {
-            val current = Native.status()
+            val current = Native.json(Native.status(500))
+            Diagnostics.routerEvents(current)
             if (current.optBoolean("config_changed") && !acceptSubscriptionUpdate()) return
             current.optBoolean("running")
         } catch (e: Throwable) {

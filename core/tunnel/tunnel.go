@@ -354,8 +354,11 @@ func Start(cfg Config) (*Tunnel, error) {
 	if skippedPrivate > 0 {
 		t.log.add("skipped %d private-address resolvers this network did not hand out", skippedPrivate)
 	}
-	if pool, ok := t.client.(*routePool); ok && len(rawConfig.Subscriptions) > 0 {
-		pool.onFailure = t.requestSubscriptionRefresh
+	if pool, ok := t.client.(*routePool); ok {
+		pool.log = t.log
+		if len(rawConfig.Subscriptions) > 0 {
+			pool.onFailure = t.requestSubscriptionRefresh
+		}
 	}
 	t.wg.Add(2)
 	go t.serve()
@@ -809,9 +812,9 @@ func (t *Tunnel) handle(c net.Conn) {
 	remote = watchResponses(raw, func() {
 		poolFeedback(raw, false)
 		t.connectionFeedback(g, route, key, false)
-	}, func() {
-		poolFeedback(raw, true)
-		t.connectionFeedback(g, route, key, true)
+	}, func(first bool) {
+		poolFeedback(raw, true, first)
+		t.connectionFeedback(g, route, key, true, first)
 		c.Close()
 	})
 	defer remote.Close()
@@ -1727,7 +1730,6 @@ func (t *Tunnel) Status(n int) Status {
 	for c := range t.conns {
 		s.Active[c.route.String()]++
 	}
-	s.Events = t.log.last(n)
 	s.Tunnels = []RouteState{}
 	if p, ok := t.client.(*routePool); ok {
 		s.Tunnels = p.states()
@@ -1747,6 +1749,7 @@ func (t *Tunnel) Status(n int) Status {
 			}
 		}
 	}
+	s.Events = t.log.last(n)
 	return s
 }
 
@@ -1810,9 +1813,9 @@ func (h *logHandler) WithGroup(string) slog.Handler { return h }
 
 func (t *Tunnel) routeStalledLocked(r Route) bool {
 	h := t.stalls[networkKey(t.cfg)][r]
-	return h != nil && t.timeNow().Before(h.Until)
+	return h.blocked(t.timeNow(), t.log, r.String())
 }
-func (t *Tunnel) connectionFeedback(g *group, r Route, key string, stalled bool) {
+func (t *Tunnel) connectionFeedback(g *group, r Route, key string, stalled bool, first ...bool) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	if t.stalls == nil {
@@ -1827,14 +1830,14 @@ func (t *Tunnel) connectionFeedback(g *group, r Route, key string, stalled bool)
 		t.stalls[key][r] = h
 	}
 	if !stalled {
-		h.success()
+		h.recovered(t.log, r.String())
 		return
 	}
 	t.stats[r].Fails++
 	t.stats[r].Stalls++
 	// Individual tunnel routes carry their own cooldown.
 	if r != RouteTunnel {
-		h.fail(t.timeNow())
+		h.record(t.timeNow(), t.log, r.String(), len(first) == 0 || first[0])
 	}
 	if key == networkKey(t.cfg) && g.route == r && r != RouteTunnel {
 		next, fail, ok, state := decide(r, probeResult{Stalled: true, SmartOK: t.usableLocked(g, RouteSmart) && !t.routeStalledLocked(RouteSmart)}, g.failStreak, g.okStreak, true)

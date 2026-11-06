@@ -8,6 +8,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/mrgluek/passage/core/tunnel"
 )
 
 const (
@@ -23,8 +25,10 @@ type appLog struct {
 	path    string
 	version string
 
-	mu    sync.Mutex
-	lines []string
+	mu     sync.Mutex
+	lines  []string
+	copied time.Time
+	copyMu sync.Mutex
 }
 
 func openLog(path, version string) *appLog {
@@ -48,12 +52,16 @@ func (l *appLog) keep(line string) {
 
 // add records one event. Links, keys and credentials are redacted first.
 func (l *appLog) add(format string, args ...any) {
-	msg := redact(fmt.Sprintf(format, args...))
+	l.addAt(time.Now(), fmt.Sprintf(format, args...))
+}
+
+func (l *appLog) addAt(stamp time.Time, message string) {
+	msg := redact(message)
 	if r := []rune(msg); len(r) > logMsgMax {
 		msg = string(r[:logMsgMax])
 	}
 	msg = strings.ReplaceAll(msg, "\n", " ")
-	line := fmt.Sprintf("%s [%d] %s %s", time.Now().UTC().Format("2006-01-02T15:04:05.000Z"), os.Getpid(), l.version, msg)
+	line := fmt.Sprintf("%s [%d] %s %s", stamp.UTC().Format("2006-01-02T15:04:05.000Z"), os.Getpid(), l.version, msg)
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	l.keep(line)
@@ -95,4 +103,19 @@ var (
 func redact(s string) string {
 	s = redactURL.ReplaceAllString(s, "[link]")
 	return redactSecret.ReplaceAllString(s, "${1}[redacted]")
+}
+
+func (l *appLog) copyStalls(events []tunnel.Event) {
+	l.copyMu.Lock()
+	defer l.copyMu.Unlock()
+	for _, e := range events {
+		if !strings.HasPrefix(e.Msg, "stalled:") && !strings.HasPrefix(e.Msg, "unblocked:") {
+			continue
+		}
+		if !e.Time.After(l.copied) {
+			continue
+		}
+		l.addAt(e.Time, e.Msg)
+		l.copied = e.Time
+	}
 }

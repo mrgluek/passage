@@ -40,6 +40,7 @@ const (
 )
 
 type routePool struct {
+	log         *eventLog
 	onFailure   func()
 	clients     []soarClient
 	ipv6        []bool
@@ -547,7 +548,7 @@ type poolConn struct {
 	network string
 }
 
-func (c *poolConn) feedback(stalled bool) {
+func (c *poolConn) feedback(stalled bool, first ...bool) {
 	p := c.pool
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -563,7 +564,7 @@ func (c *poolConn) feedback(stalled bool) {
 		p.stalls[c.network][c.index] = h
 	}
 	if stalled {
-		h.fail(p.clock())
+		h.record(p.clock(), p.log, p.routeName(c.index), len(first) == 0 || first[0])
 		all := len(p.clients) > 0
 		for i := range p.clients {
 			if p.matches(i, p.only) && !p.stalledLocked(p.network, i, p.clock()) && !p.clock().Before(p.failedUntil[i]) {
@@ -575,7 +576,7 @@ func (c *poolConn) feedback(stalled bool) {
 			p.onFailure()
 		}
 	} else {
-		h.success()
+		h.recovered(p.log, p.routeName(c.index))
 		delete(p.failedUntil, c.index)
 	}
 }
@@ -587,13 +588,20 @@ func (c *poolConn) CloseWrite() error {
 }
 func (p *routePool) stalledLocked(network string, i int, now time.Time) bool {
 	h := p.stalls[network][i]
-	return h != nil && now.Before(h.Until)
+	return h.blocked(now, p.log, p.routeName(i))
 }
-func poolFeedback(c net.Conn, stalled bool) {
+func poolFeedback(c net.Conn, stalled bool, first ...bool) {
 	if v, ok := c.(viaConn); ok {
 		c = v.Conn
 	}
 	if v, ok := c.(*poolConn); ok {
-		v.feedback(stalled)
+		v.feedback(stalled, first...)
 	}
+}
+
+func (p *routePool) routeName(i int) string {
+	if i < len(p.ids) {
+		return p.ids[i]
+	}
+	return "tunnel"
 }

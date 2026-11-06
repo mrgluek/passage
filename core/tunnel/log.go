@@ -15,10 +15,11 @@ type Event struct {
 
 // eventLog is a fixed-size ring of recent events for the diagnostics report.
 type eventLog struct {
-	mu   sync.Mutex
-	buf  []Event
-	next int
-	full bool
+	mu          sync.Mutex
+	buf         []Event
+	next        int
+	full        bool
+	stallLogged map[string]time.Time
 }
 
 func newEventLog(n int) *eventLog { return &eventLog{buf: make([]Event, n)} }
@@ -53,4 +54,18 @@ func (l *eventLog) last(n int) []Event {
 		out = append(out, l.buf[idx])
 	}
 	return out
+}
+
+func (l *eventLog) stalled(now time.Time, route, kind string, delay time.Duration, count int64) {
+	l.mu.Lock()
+	if last, ok := l.stallLogged[route]; ok && now.Sub(last) < 30*time.Second {
+		l.mu.Unlock()
+		return
+	}
+	if l.stallLogged == nil {
+		l.stallLogged = make(map[string]time.Time)
+	}
+	l.stallLogged[route] = now
+	l.mu.Unlock()
+	l.add("stalled: %s (%s), blocked for %d min, count=%d", route, kind, int(delay/time.Minute), count)
 }
