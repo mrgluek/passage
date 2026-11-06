@@ -18,6 +18,7 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"unicode"
 	"unicode/utf8"
 
 	"github.com/fxamacker/cbor/v2"
@@ -96,6 +97,56 @@ type HTTPParams struct {
 	Key      []byte `json:"key"`
 	DialIP   string `json:"dial_ip,omitempty"`
 	SNI      string `json:"sni,omitempty"`
+}
+
+type TURNParams struct {
+	Relay      string `json:"relay"`
+	Exit       string `json:"exit"`
+	Key        []byte `json:"key"`
+	Secret     string `json:"secret,omitempty"`
+	Username   string `json:"username,omitempty"`
+	Credential string `json:"credential,omitempty"`
+	DialIP     string `json:"dial_ip,omitempty"`
+	SNI        string `json:"sni,omitempty"`
+}
+
+// TURNURL accepts the hierarchical and opaque TURN URI forms.
+func TURNURL(raw string) (*url.URL, error) {
+	if len(raw) > 1024 || strings.ContainsAny(raw, "#\\") {
+		return nil, errors.New("invalid TURN relay")
+	}
+	for _, c := range raw {
+		if unicode.IsSpace(c) || unicode.IsControl(c) {
+			return nil, errors.New("invalid TURN relay")
+		}
+	}
+	scheme, rest, ok := strings.Cut(raw, ":")
+	if !ok || (scheme != "turn" && scheme != "turns") {
+		return nil, errors.New("invalid TURN scheme")
+	}
+	if !strings.HasPrefix(rest, "//") {
+		rest = "//" + rest
+	}
+	u, err := url.Parse(scheme + ":" + rest)
+	if err != nil {
+		return nil, err
+	}
+	host := u.Hostname()
+	if host == "" || u.User != nil || (u.Path != "" && u.Path != "/") || u.ForceQuery || (u.RawQuery != "" && u.RawQuery != "transport=udp" && u.RawQuery != "transport=tcp") || (scheme == "turns" && u.RawQuery == "transport=udp") {
+		return nil, errors.New("invalid TURN relay")
+	}
+	if net.ParseIP(host) == nil && !validZone(strings.ToLower(host)) {
+		return nil, errors.New("invalid TURN host")
+	}
+	if strings.HasSuffix(u.Host, ":") {
+		return nil, errors.New("invalid TURN port")
+	}
+	if u.Port() != "" {
+		if err := validateHostPort(u.Host, false); err != nil {
+			return nil, err
+		}
+	}
+	return u, nil
 }
 
 type IrohParams struct {
@@ -257,6 +308,26 @@ func ValidateRoute(r Route) (bool, error) {
 		return false, errors.New("invalid route fields")
 	}
 	switch r.Type + "/" + r.Wire {
+	case "turn/turn-v1":
+		p, err := Params[TURNParams](r)
+		if err != nil {
+			return true, err
+		}
+		if len(p.Key) != 32 || len(p.Secret) > 255 || len(p.Username) > 255 || len(p.Credential) > 255 || (p.Username == "") != (p.Credential == "") || (p.Secret != "" && p.Username != "") || (p.Secret == "" && p.Username == "") {
+			return true, errors.New("invalid TURN credentials")
+		}
+		if _, err := TURNURL(p.Relay); err != nil {
+			return true, err
+		}
+		if err := validateHostPort(p.Exit, true); err != nil {
+			return true, err
+		}
+		if p.DialIP != "" && net.ParseIP(p.DialIP) == nil {
+			return true, errors.New("invalid TURN dial IP")
+		}
+		if p.SNI != "" && (len(p.SNI) > 253 || net.ParseIP(p.SNI) != nil || !validZone(p.SNI)) {
+			return true, errors.New("invalid TURN SNI")
+		}
 	case "soar/soar-v1":
 		p, err := Params[SoarParams](r)
 		if err != nil {
