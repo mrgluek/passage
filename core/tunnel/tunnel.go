@@ -141,6 +141,7 @@ type dialFunc func(ctx context.Context, network, addr string) (net.Conn, error)
 
 // Tunnel is a running local proxy.
 type Tunnel struct {
+	subs      *subscriptionRuntime
 	cfg       Config
 	resolvers []string // the paths handed to soar (IPv6 dropped without a route)
 	ln        net.Listener
@@ -240,6 +241,7 @@ func Start(cfg Config) (*Tunnel, error) {
 	if err != nil {
 		return nil, err
 	}
+	rawConfig := cfg
 	cfg.Routes = Edited(cfg.Routes, cfg.RouteEdits)
 	mode := cfg.Mode
 	if routeMode(mode) {
@@ -247,6 +249,7 @@ func Start(cfg Config) (*Tunnel, error) {
 	}
 	t := &Tunnel{
 		cfg:    cfg,
+		subs:   &subscriptionRuntime{cfg: rawConfig, updates: make(chan SubscriptionRefreshResult, 1), urgent: make(chan struct{}, 1)},
 		log:    newEventLog(500),
 		kick:   make(chan struct{}, 1),
 		mode:   mode,
@@ -351,9 +354,16 @@ func Start(cfg Config) (*Tunnel, error) {
 	if skippedPrivate > 0 {
 		t.log.add("skipped %d private-address resolvers this network did not hand out", skippedPrivate)
 	}
+	if pool, ok := t.client.(*routePool); ok && len(rawConfig.Subscriptions) > 0 {
+		pool.onFailure = t.requestSubscriptionRefresh
+	}
 	t.wg.Add(2)
 	go t.serve()
 	go t.monitor()
+	if len(rawConfig.Subscriptions) > 0 {
+		t.wg.Add(1)
+		go t.subscriptionLoop()
+	}
 	return t, nil
 }
 
@@ -942,6 +952,7 @@ func (t *Tunnel) dial(g *group, addr string) (net.Conn, Route, error) {
 			return c, r, nil
 		}
 		if next == r {
+			t.requestSubscriptionRefresh()
 			return nil, r, err
 		}
 		t.kickProbe()
@@ -1594,25 +1605,27 @@ func dialResolver(ctx context.Context, network, addr string) (net.Conn, error) {
 
 // Status is the diagnostics snapshot shown in the app and sent in reports.
 type Status struct {
-	RouteCount int                   `json:"route_count"`
-	Zone       string                `json:"zone"`
-	TunnelIPv6 bool                  `json:"tunnel_ipv6"`
-	Mode       string                `json:"mode"`
-	Route      string                `json:"route"`
-	Via        string                `json:"via,omitempty"`      // route type under "tunnel": iroh, soar
-	Strategy   string                `json:"strategy,omitempty"` // the smart route's, when it works
-	Routes     []string              `json:"routes"`             // set-up routes, in fallback order
-	RouteSince time.Time             `json:"route_since"`
-	State      string                `json:"state"`
-	Resolvers  int                   `json:"resolvers"`
-	Network    []string              `json:"network_resolvers"`
-	Operator   string                `json:"operator"`
-	Relays     []string              `json:"relays"`
-	LastProbe  time.Time             `json:"last_probe"`
-	LastResult probeResult           `json:"last_result"`
-	Active     map[string]int        `json:"active"`
-	Stats      map[string]routeStats `json:"stats"`
-	Soar       string                `json:"soar"`
+	Subscriptions []SubscriptionStatus  `json:"subscriptions,omitempty"`
+	ConfigChanged bool                  `json:"config_changed,omitempty"`
+	RouteCount    int                   `json:"route_count"`
+	Zone          string                `json:"zone"`
+	TunnelIPv6    bool                  `json:"tunnel_ipv6"`
+	Mode          string                `json:"mode"`
+	Route         string                `json:"route"`
+	Via           string                `json:"via,omitempty"`      // route type under "tunnel": iroh, soar
+	Strategy      string                `json:"strategy,omitempty"` // the smart route's, when it works
+	Routes        []string              `json:"routes"`             // set-up routes, in fallback order
+	RouteSince    time.Time             `json:"route_since"`
+	State         string                `json:"state"`
+	Resolvers     int                   `json:"resolvers"`
+	Network       []string              `json:"network_resolvers"`
+	Operator      string                `json:"operator"`
+	Relays        []string              `json:"relays"`
+	LastProbe     time.Time             `json:"last_probe"`
+	LastResult    probeResult           `json:"last_result"`
+	Active        map[string]int        `json:"active"`
+	Stats         map[string]routeStats `json:"stats"`
+	Soar          string                `json:"soar"`
 	// Tunnels has one row per configured tunnel route, in priority order.
 	Tunnels []RouteState `json:"tunnels"`
 	// Session is whether the soar session with the server is up; Paths is
@@ -1656,7 +1669,16 @@ func (t *Tunnel) Status(n int) Status {
 	if mail == t.other && t.telegram.seen {
 		mail = t.telegram
 	}
+	var subscriptions []SubscriptionStatus
+	changed := false
+	if t.subs != nil {
+		t.subs.mu.Lock()
+		subscriptions = subscriptionStatuses(t.subs.cfg)
+		changed = t.subs.changed.Load()
+		t.subs.mu.Unlock()
+	}
 	s := Status{
+		Subscriptions: subscriptions, ConfigChanged: changed,
 		Zone:           t.cfg.Zone,
 		RouteCount:     len(t.cfg.Routes),
 		TunnelIPv6:     t.cfg.HasTunnel() && t.cfg.TunnelIPv6,

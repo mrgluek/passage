@@ -40,6 +40,7 @@ const (
 )
 
 type routePool struct {
+	onFailure   func()
 	clients     []soarClient
 	ipv6        []bool
 	kinds       []string // route type per client, reported as the connection's via
@@ -257,6 +258,9 @@ func (p *routePool) DialContext(ctx context.Context, network, address string) (n
 		return nil, errDestinationRefused
 	}
 	p.established.Store(false)
+	if p.onFailure != nil {
+		p.onFailure()
+	}
 	return nil, errors.New("all configured routes failed")
 }
 
@@ -560,6 +564,16 @@ func (c *poolConn) feedback(stalled bool) {
 	}
 	if stalled {
 		h.fail(p.clock())
+		all := len(p.clients) > 0
+		for i := range p.clients {
+			if p.matches(i, p.only) && !p.stalledLocked(p.network, i, p.clock()) && !p.clock().Before(p.failedUntil[i]) {
+				all = false
+				break
+			}
+		}
+		if all && p.onFailure != nil {
+			p.onFailure()
+		}
 	} else {
 		h.success()
 		delete(p.failedUntil, c.index)
