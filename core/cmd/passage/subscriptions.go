@@ -63,7 +63,7 @@ func (a *App) previewImport(text string) (invitePreview, error) {
 		if d.HasSeed {
 			seed = a.t.f("sub_seed")
 		}
-		body := d.Name + "\n" + a.t.f("sub_addresses", d.Sources) + "\n" + seed + "\n\n" + signer
+		body := d.Name + "\n" + a.t.quantity("sub_addresses", int64(d.Sources), d.Sources) + "\n" + seed + "\n\n" + signer
 		if r.Collision {
 			body += "\n\n" + a.t.f("sub_collision")
 		}
@@ -151,7 +151,7 @@ type subscriptionRow struct {
 func (a *App) subscriptionRowsLocked() []subscriptionRow {
 	rows := []subscriptionRow{}
 	for _, sub := range a.linkCfg.Subscriptions {
-		detail := a.t.f("sub_detail", sub.Revision, len(sub.RouteIDs))
+		detail := a.t.quantity("sub_detail", int64(len(sub.RouteIDs)), sub.Revision, len(sub.RouteIDs))
 		status := subscriptionFailure(a.t, sub.LastError)
 		if status == "" && sub.LastOK > 0 {
 			mins := max(int64(0), (time.Now().Unix()-sub.LastOK)/60)
@@ -163,7 +163,7 @@ func (a *App) subscriptionRowsLocked() []subscriptionRow {
 			case mins < 1440:
 				status = a.t.f("sub_hours", mins/60)
 			default:
-				status = a.t.f("sub_days", mins/1440)
+				status = a.t.quantity("sub_days", mins/1440, mins/1440)
 			}
 		}
 		if status != "" {

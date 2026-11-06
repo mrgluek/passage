@@ -225,7 +225,13 @@ func TestAppCalls(t *testing.T) {
 
 func TestStrings(t *testing.T) {
 	for key := range texts["ru"] {
-		if _, ok := texts["en"][key]; !ok {
+		englishKey := key
+		for _, form := range []string{"_few", "_many"} {
+			if strings.HasSuffix(key, form) {
+				englishKey = strings.TrimSuffix(key, form) + "_other"
+			}
+		}
+		if _, ok := texts["en"][englishKey]; !ok {
 			t.Errorf("ru has %q, en does not", key)
 		}
 	}

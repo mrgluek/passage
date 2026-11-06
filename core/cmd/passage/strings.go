@@ -13,18 +13,21 @@ var texts = map[string]map[string]string{
 		"subscriptions":       "Subscriptions",
 		"sub_closed":          "Closed by its owner",
 		"subscribe":           "Subscribe",
-		"sub_addresses":       "%[1]d addresses",
+		"sub_addresses_one":   "%[1]d address",
+		"sub_addresses_other": "%[1]d addresses",
 		"sub_seed":            "Includes a first route list",
 		"sub_no_seed":         "Routes will be loaded from the address in the link",
 		"sub_trusted":         "Signed by the app’s author",
 		"sub_unknown":         "Unknown signer",
 		"sub_collision":       "This subscription has a different signer. Subscribe only if you trust the new signer.",
 		"sub_save_failed":     "Could not save subscriptions. Try again.",
-		"sub_detail":          "revision %[1]d · %[2]d routes",
+		"sub_detail_one":      "revision %[1]d · %[2]d route",
+		"sub_detail_other":    "revision %[1]d · %[2]d routes",
 		"sub_just_now":        "updated just now",
 		"sub_minutes":         "updated %[1]d min ago",
 		"sub_hours":           "updated %[1]d h ago",
-		"sub_days":            "updated %[1]d days ago",
+		"sub_days_one":        "updated %[1]d day ago",
+		"sub_days_other":      "updated %[1]d days ago",
 		"sub_refresh":         "Refresh now",
 		"sub_refreshing":      "Refreshing…",
 		"sub_remove":          "Remove",
@@ -211,18 +214,27 @@ var texts = map[string]map[string]string{
 		"subscriptions":       "Подписки",
 		"sub_closed":          "Закрыта владельцем",
 		"subscribe":           "Подписаться",
-		"sub_addresses":       "Адресов: %[1]d",
+		"sub_addresses_one":   "%[1]d адрес",
+		"sub_addresses_few":   "%[1]d адреса",
+		"sub_addresses_many":  "%[1]d адресов",
+		"sub_addresses_other": "%[1]d адреса",
 		"sub_seed":            "Есть начальный список маршрутов",
 		"sub_no_seed":         "Маршруты будут загружены по адресу из ссылки",
 		"sub_trusted":         "Подписано автором приложения",
 		"sub_unknown":         "Неизвестный автор подписи",
 		"sub_collision":       "У этой подписки другая подпись. Продолжайте, только если доверяете новому автору.",
 		"sub_save_failed":     "Не удалось сохранить подписки. Попробуйте ещё раз.",
-		"sub_detail":          "Версия %[1]d · маршрутов: %[2]d",
+		"sub_detail_one":      "Версия %[1]d · %[2]d маршрут",
+		"sub_detail_few":      "Версия %[1]d · %[2]d маршрута",
+		"sub_detail_many":     "Версия %[1]d · %[2]d маршрутов",
+		"sub_detail_other":    "Версия %[1]d · %[2]d маршрута",
 		"sub_just_now":        "обновлено только что",
 		"sub_minutes":         "обновлено %[1]d мин. назад",
 		"sub_hours":           "обновлено %[1]d ч. назад",
-		"sub_days":            "обновлено %[1]d дн. назад",
+		"sub_days_one":        "обновлено %[1]d дн. назад",
+		"sub_days_few":        "обновлено %[1]d дн. назад",
+		"sub_days_many":       "обновлено %[1]d дн. назад",
+		"sub_days_other":      "обновлено %[1]d дн. назад",
 		"sub_refresh":         "Обновить сейчас",
 		"sub_refreshing":      "Обновление…",
 		"sub_remove":          "Удалить",
@@ -432,4 +444,21 @@ func (t tr) f(key string, args ...any) string {
 		return s
 	}
 	return fmt.Sprintf(s, args...)
+}
+
+func (t tr) quantity(key string, count int64, args ...any) string {
+	form := "other"
+	if _, russian := t[key+"_few"]; russian {
+		switch {
+		case count%10 == 1 && count%100 != 11:
+			form = "one"
+		case count%10 >= 2 && count%10 <= 4 && (count%100 < 12 || count%100 > 14):
+			form = "few"
+		default:
+			form = "many"
+		}
+	} else if count == 1 {
+		form = "one"
+	}
+	return t.f(key+"_"+form, args...)
 }

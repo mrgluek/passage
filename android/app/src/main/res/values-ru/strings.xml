@@ -171,18 +171,33 @@
     <string name="sub_one">Вставьте одну ссылку подписки и нажмите «Подписаться».</string>
     <string name="subscriptions">Подписки</string>
     <string name="subscribe">Подписаться</string>
-    <string name="sub_addresses">Адресов: %1$d</string>
+    <plurals name="sub_addresses">
+        <item quantity="one">%1$d адрес</item>
+        <item quantity="few">%1$d адреса</item>
+        <item quantity="many">%1$d адресов</item>
+        <item quantity="other">%1$d адреса</item>
+    </plurals>
     <string name="sub_seed">Есть начальный список маршрутов</string>
     <string name="sub_no_seed">Маршруты будут загружены по адресу из ссылки</string>
     <string name="sub_trusted">Подписано автором приложения</string>
     <string name="sub_unknown">Неизвестный автор подписи</string>
     <string name="sub_collision">У этой подписки другая подпись. Продолжайте, только если доверяете новому автору.</string>
     <string name="sub_save_failed">Не удалось сохранить подписки. Попробуйте ещё раз.</string>
-    <string name="sub_detail">Версия %1$d · маршрутов: %2$d</string>
+    <plurals name="sub_detail">
+        <item quantity="one">Версия %1$d · %2$d маршрут</item>
+        <item quantity="few">Версия %1$d · %2$d маршрута</item>
+        <item quantity="many">Версия %1$d · %2$d маршрутов</item>
+        <item quantity="other">Версия %1$d · %2$d маршрута</item>
+    </plurals>
     <string name="sub_just_now">обновлено только что</string>
     <string name="sub_minutes">обновлено %1$d мин. назад</string>
     <string name="sub_hours">обновлено %1$d ч. назад</string>
-    <string name="sub_days">обновлено %1$d дн. назад</string>
+    <plurals name="sub_days">
+        <item quantity="one">обновлено %1$d дн. назад</item>
+        <item quantity="few">обновлено %1$d дн. назад</item>
+        <item quantity="many">обновлено %1$d дн. назад</item>
+        <item quantity="other">обновлено %1$d дн. назад</item>
+    </plurals>
     <string name="sub_refresh">Обновить сейчас</string>
     <string name="sub_refreshing">Обновление…</string>
     <string name="sub_remove">Удалить</string>

@@ -91,7 +91,7 @@ func TestDesktopSubscriptionPreviewAcceptRemove(t *testing.T) {
 	invite := desktopInvite(t, key, true)
 	a := newSubscriptionTestApp(t, "en")
 	p, err := a.previewImport(invite)
-	if err != nil || p.Mode != "subscribe" || p.Collision || !strings.Contains(p.Text, "Unknown signer") || !strings.Contains(p.Text, "first route list") || !strings.Contains(p.Text, "1 addresses") || a.hasLink() {
+	if err != nil || p.Mode != "subscribe" || p.Collision || !strings.Contains(p.Text, "Unknown signer") || !strings.Contains(p.Text, "first route list") || !strings.Contains(p.Text, "1 address") || a.hasLink() {
 		t.Fatalf("preview %+v %v", p, err)
 	}
 	old := tunnel.AuthorKey

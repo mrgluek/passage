@@ -43,7 +43,7 @@ object Subscriptions {
     fun detail(context: Context, sub: JSONObject, now: Long = System.currentTimeMillis() / 1000): String {
         if (isClosed(sub)) return context.getString(R.string.sub_closed)
         val count = if (sub.has("routes")) sub.optInt("routes") else sub.optJSONArray("route_ids")?.length() ?: 0
-        val heading = context.getString(R.string.sub_detail, sub.optLong("revision"), count)
+        val heading = context.resources.getQuantityString(R.plurals.sub_detail, count, sub.optLong("revision"), count)
         val error = errorResource(sub.optString("last_error"))
         if (error != null) return heading + "\n" + context.getString(error)
         val last = sub.optLong("last_ok")
@@ -53,7 +53,7 @@ object Subscriptions {
             minutes < 1 -> context.getString(R.string.sub_just_now)
             minutes < 60 -> context.getString(R.string.sub_minutes, minutes)
             minutes < 1440 -> context.getString(R.string.sub_hours, minutes / 60)
-            else -> context.getString(R.string.sub_days, minutes / 1440)
+            else -> context.resources.getQuantityString(R.plurals.sub_days, (minutes / 1440).coerceAtMost(Int.MAX_VALUE.toLong()).toInt(), minutes / 1440)
         }
         return "$heading\n$time"
     }

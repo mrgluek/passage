@@ -171,18 +171,27 @@
     <string name="sub_one">Paste one subscription link at a time and confirm Subscribe.</string>
     <string name="subscriptions">Subscriptions</string>
     <string name="subscribe">Subscribe</string>
-    <string name="sub_addresses">%1$d addresses</string>
+    <plurals name="sub_addresses">
+        <item quantity="one">%1$d address</item>
+        <item quantity="other">%1$d addresses</item>
+    </plurals>
     <string name="sub_seed">Includes a first route list</string>
     <string name="sub_no_seed">Routes will be loaded from the address in the link</string>
     <string name="sub_trusted">Signed by the app’s author</string>
     <string name="sub_unknown">Unknown signer</string>
     <string name="sub_collision">This subscription has a different signer. Subscribe only if you trust the new signer.</string>
     <string name="sub_save_failed">Could not save subscriptions. Try again.</string>
-    <string name="sub_detail">revision %1$d · %2$d routes</string>
+    <plurals name="sub_detail">
+        <item quantity="one">revision %1$d · %2$d route</item>
+        <item quantity="other">revision %1$d · %2$d routes</item>
+    </plurals>
     <string name="sub_just_now">updated just now</string>
     <string name="sub_minutes">updated %1$d min ago</string>
     <string name="sub_hours">updated %1$d h ago</string>
-    <string name="sub_days">updated %1$d days ago</string>
+    <plurals name="sub_days">
+        <item quantity="one">updated %1$d day ago</item>
+        <item quantity="other">updated %1$d days ago</item>
+    </plurals>
     <string name="sub_refresh">Refresh now</string>
     <string name="sub_refreshing">Refreshing…</string>
     <string name="sub_remove">Remove</string>

@@ -474,7 +474,7 @@ class SettingsActivity : ThemedActivity() {
         val sub = preview.getJSONObject("subscription")
         return listOf(
             sub.optString("name"),
-            getString(R.string.sub_addresses, sub.optInt("sources")),
+            resources.getQuantityString(R.plurals.sub_addresses, sub.optInt("sources"), sub.optInt("sources")),
             getString(if (sub.optBoolean("has_seed")) R.string.sub_seed else R.string.sub_no_seed),
             getString(if (preview.optString("signature") == "trusted_author") R.string.sub_trusted else R.string.sub_unknown),
         ).joinToString("\n") + if (preview.optBoolean("collision")) "\n\n" + getString(R.string.sub_collision) else ""
