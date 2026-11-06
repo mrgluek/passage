@@ -45,6 +45,7 @@ func main() {
 	every := flag.Duration("status", time.Minute, "print a status line this often (0 = never)")
 	paths := flag.Bool("paths", false, "also print one line per resolver path with each status")
 	iroh := flag.String("iroh", "", "iroh helper binary (default: passage-iroh next to passage-cli)")
+	remove := flag.String("subscribe-remove", "", "remove a subscription by ID and exit")
 	refresh := flag.Bool("subscribe-refresh", false, "refresh subscriptions now")
 	test := flag.Bool("test", false, "run the network test once, print it as JSON and exit")
 	flag.Parse()
@@ -88,6 +89,17 @@ func main() {
 		cfg = restored
 	} else {
 		fmt.Fprintln(os.Stderr, "passage-cli: subscription state not loaded")
+	}
+	if *remove != "" {
+		cfg, err = tunnel.RemoveSubscription(cfg, *remove)
+		if err == nil {
+			err = tunnel.SaveSubscriptionState(statePath, cfg)
+		}
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "passage-cli:", err)
+			os.Exit(2)
+		}
+		return
 	}
 	for _, r := range cfg.Routes {
 		if r.Type == "iroh" && cfg.IrohBinary == "" {

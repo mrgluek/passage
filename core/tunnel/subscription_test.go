@@ -131,3 +131,23 @@ func TestSubscriptionUpdatesAndRouteLimit(t *testing.T) {
 		t.Fatal("plain route cap lifted")
 	}
 }
+
+func TestRemoveSubscription(t *testing.T) {
+	sub, _, _ := subFixture(t)
+	sub.RouteIDs = []string{"one", "shared"}
+	other := sub
+	other.ID = "other"
+	other.RouteIDs = []string{"shared"}
+	cfg := Config{Subscriptions: []Subscription{sub, other}, Routes: []links.Route{subRoute("one"), subRoute("manual"), subRoute("shared")}, RouteEdits: map[string]RouteEdit{"one": {Off: true}, "manual": {Off: true}, "shared": {Off: true}}}
+	before := fmt.Sprintf("%#v", cfg)
+	got, err := RemoveSubscription(cfg, sub.ID)
+	if err != nil || len(got.Subscriptions) != 1 || len(got.Routes) != 2 || got.Routes[0].ID != "manual" || len(got.RouteEdits) != 2 {
+		t.Fatalf("%+v %v", got, err)
+	}
+	if fmt.Sprintf("%#v", cfg) != before {
+		t.Fatal("input changed")
+	}
+	if _, err := RemoveSubscription(cfg, "missing"); err == nil {
+		t.Fatal("missing ID accepted")
+	}
+}

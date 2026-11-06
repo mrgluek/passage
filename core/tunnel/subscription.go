@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"errors"
+	"maps"
 	"slices"
 	"strings"
 
@@ -232,4 +233,30 @@ func subscriptionError(err error) string {
 	default:
 		return "decrypt"
 	}
+}
+
+// RemoveSubscription removes the subscription and its remaining owned routes.
+func RemoveSubscription(cfg Config, id string) (Config, error) {
+	at := slices.IndexFunc(cfg.Subscriptions, func(s Subscription) bool { return s.ID == id })
+	if at < 0 {
+		return cfg, errors.New("unknown subscription")
+	}
+	owned := map[string]bool{}
+	for _, rid := range cfg.Subscriptions[at].RouteIDs {
+		owned[rid] = true
+	}
+	for _, sub := range cfg.Subscriptions {
+		if sub.ID != id {
+			for _, rid := range sub.RouteIDs {
+				delete(owned, rid)
+			}
+		}
+	}
+	cfg.Subscriptions = slices.Delete(slices.Clone(cfg.Subscriptions), at, at+1)
+	cfg.Routes = slices.DeleteFunc(slices.Clone(cfg.Routes), func(r links.Route) bool { return owned[r.ID] })
+	cfg.RouteEdits = maps.Clone(cfg.RouteEdits)
+	for rid := range owned {
+		delete(cfg.RouteEdits, rid)
+	}
+	return cfg, nil
 }

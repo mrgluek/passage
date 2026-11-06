@@ -108,6 +108,24 @@ func Java_info_gluek_passage_Native_importLink(env *C.JNIEnv, cls C.jclass, requ
 	return result(env, out)
 }
 
+//export Java_info_gluek_passage_Native_removeSubscription
+func Java_info_gluek_passage_Native_removeSubscription(env *C.JNIEnv, cls C.jclass, request C.jbyteArray) C.jbyteArray {
+	var in struct {
+		Existing tunnel.Config `json:"existing"`
+		ID       string        `json:"id"`
+	}
+	if err := json.Unmarshal([]byte(goString(env, request)), &in); err != nil {
+		return fail(env, errors.New("invalid remove request"))
+	}
+	cfg, err := tunnel.RemoveSubscription(in.Existing, in.ID)
+	if err != nil {
+		return fail(env, err)
+	}
+	return result(env, struct {
+		Config tunnel.Config `json:"config"`
+	}{cfg})
+}
+
 //export Java_info_gluek_passage_Native_refreshSubscriptions
 func Java_info_gluek_passage_Native_refreshSubscriptions(env *C.JNIEnv, cls C.jclass, request C.jbyteArray) C.jbyteArray {
 	var in struct {
