@@ -50,6 +50,35 @@ class SettingsActivity : ThemedActivity() {
     private lateinit var editRoutesBar: LinearLayout
     private lateinit var routesEditHint: TextView
 
+    private lateinit var subscriptionsSection: LinearLayout
+    private var shownSubscriptionConfig = ""
+    private var subscriptionStatus = emptyList<org.json.JSONObject>()
+    private var refreshingSubscriptions = false
+    private var refreshResult = ""
+    private var pollingSubscriptions = false
+    private var subscriptionPollGeneration = 0
+    private val main = android.os.Handler(android.os.Looper.getMainLooper())
+    private val subscriptionPoll = object : Runnable {
+        override fun run() {
+            val generation = subscriptionPollGeneration
+            worker.execute {
+                val rows = try { Subscriptions.rows(org.json.JSONObject().put("subscriptions", Native.status().optJSONArray("subscriptions"))) }
+                    catch (_: Throwable) { emptyList() }
+                runOnUiThread {
+                    if (isFinishing || isDestroyed || generation != subscriptionPollGeneration) return@runOnUiThread
+                    subscriptionStatus = rows
+                    if (editingRoutes) renderSubscriptions() else renderSavedRoutes()
+                    if (shownSubscriptionConfig != settings.routesConfig) {
+                        shownSubscriptionConfig = settings.routesConfig
+                        describeLink()
+                        showRoutes()
+                    }
+                    if (pollingSubscriptions) main.postDelayed(this, 2000)
+                }
+            }
+        }
+    }
+
     private var editingRoutes = false
     private var routeDraft: MutableList<Settings.SavedRoute>? = null
 
@@ -72,7 +101,7 @@ class SettingsActivity : ThemedActivity() {
         actionBar?.setDisplayHomeAsUpEnabled(true)
         setContentView(buildUi())
         val draft = lastNonConfigurationInstance as? Draft
-        linkEdit.setText(draft?.link ?: settings.link)
+        linkEdit.setText(draft?.link ?: "")
         myEdit.setText(draft?.myRoute ?: settings.myRoute)
         editingRoutes = draft?.editingRoutes ?: savedInstanceState?.getBoolean("editing_routes") ?: false
         routeDraft = draft?.routeDraft?.map { it.copy() }?.toMutableList()
@@ -81,7 +110,7 @@ class SettingsActivity : ThemedActivity() {
         }
         // Folded at once when a link is saved, so the key never flashes on
         // screen while describeLink checks it (a bad link unfolds).
-        setLinkOpen(savedInstanceState?.getBoolean("link_open") ?: settings.link.isEmpty())
+        setLinkOpen(savedInstanceState?.getBoolean("link_open") ?: (settings.link.isEmpty() && settings.routesConfig.isEmpty()))
         renderSavedRoutes()
         showRoutes()
         describeLink()
@@ -112,9 +141,16 @@ class SettingsActivity : ThemedActivity() {
         batteryButton.visibility = if (exempt) View.GONE else View.VISIBLE
         backgroundState.visibility = if (exempt) View.VISIBLE else View.GONE
         if (updates.view.visibility == View.VISIBLE) updates.resume()
+        main.removeCallbacks(subscriptionPoll)
+        subscriptionPollGeneration++
+        pollingSubscriptions = true
+        main.post(subscriptionPoll)
     }
 
     override fun onPause() {
+        subscriptionPollGeneration++
+        pollingSubscriptions = false
+        main.removeCallbacks(subscriptionPoll)
         updates.pause()
         super.onPause()
     }
@@ -205,6 +241,9 @@ class SettingsActivity : ThemedActivity() {
             setPadding(0, Ui.dp(this@SettingsActivity, 6), 0, 0)
         }
         savedRoutesSection.addView(routesEditHint)
+
+        subscriptionsSection = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        col.addView(subscriptionsSection)
 
         linkHeading = Ui.heading(this, getString(R.string.link_label))
         col.addView(linkHeading)
@@ -386,36 +425,41 @@ class SettingsActivity : ThemedActivity() {
             try {
                 val existing = if (previous.isNotEmpty()) org.json.JSONObject(previous)
                     else if (previousLink.isNotEmpty()) Native.parse(previousLink) else org.json.JSONObject()
-                fun prepare(replace: Boolean): org.json.JSONObject {
-                    val request = org.json.JSONObject().put("existing", existing).put("link", incoming).put("replace", replace)
+                fun prepare(replace: Boolean, subscribe: Boolean = false): org.json.JSONObject {
+                    val request = org.json.JSONObject().put("existing", existing).put("link", incoming).put("replace", replace).put("subscribe", subscribe)
                     return Native.json(Native.importLink(request.toString().toByteArray(Charsets.UTF_8)))
                 }
                 val preview = prepare(false)
                 if (preview.has("error")) throw IllegalArgumentException(preview.optString("error"))
                 runOnUiThread {
                     if (isFinishing || isDestroyed) return@runOnUiThread
+                    val subscribing = preview.optString("mode") == "subscribe"
                     val trust = if (preview.optString("signature") == "trusted_author") getString(R.string.import_trusted)
                         else getString(R.string.import_untrusted)
                     val collision = if (preview.optBoolean("collision")) "\n" + getString(R.string.import_collision) else ""
                     val operation = if (incoming.isEmpty()) getString(R.string.import_clear)
                         else if (preview.optString("mode") == "replace") getString(R.string.import_replace)
                         else getString(R.string.import_merge)
-                    AlertDialog.Builder(this).setTitle(R.string.import_title)
-                        .setMessage(trust + "\n\n" + operation + collision + "\n" + (preview.optJSONArray("route_ids")?.join(", ") ?: "") + "\n\n" + getString(R.string.import_personal))
+                    AlertDialog.Builder(this).setTitle(if (subscribing) R.string.subscribe else R.string.import_title)
+                        .setMessage(if (subscribing) subscriptionPreview(preview) else trust + "\n\n" + operation + collision + "\n" + (preview.optJSONArray("route_ids")?.join(", ") ?: "") + "\n\n" + getString(R.string.import_personal))
                         .setNegativeButton(android.R.string.cancel, null)
-                        .setPositiveButton(R.string.save) { _, _ ->
+                        .setPositiveButton(if (subscribing) R.string.subscribe else R.string.save) { _, _ ->
                             worker.execute {
                                 try {
                                     if (settings.routesConfig != previous || settings.link != previousLink) throw IllegalStateException("Settings changed; retry import")
-                                    val result = prepare(true)
+                                    val result = prepare(if (subscribing) preview.optBoolean("collision") else true, subscribing)
                                     if (result.has("error")) throw IllegalArgumentException(result.optString("error"))
-                                    settings.saveRoutes(incoming, result.getJSONObject("config").toString())
+                                    synchronized(Settings.configLock) {
+                                        if (settings.routesConfig != previous || settings.link != previousLink) throw IllegalStateException("Settings changed; retry import")
+                                        settings.saveRoutes(if (subscribing) previousLink else incoming, result.getJSONObject("config").toString())
+                                    }
                                     runOnUiThread {
                                         restartIfRunning()
                                         if (isFinishing || isDestroyed) return@runOnUiThread
                                         editingRoutes = false
                                         routeDraft = null
                                         renderSavedRoutes()
+                                        linkEdit.setText("")
                                         describeLink(); setLinkOpen(false); showRoutes()
                                     }
                                 } catch (e: Throwable) { runOnUiThread { Toast.makeText(this, getString(R.string.link_error_toast, e.message), Toast.LENGTH_LONG).show() } }
@@ -423,6 +467,107 @@ class SettingsActivity : ThemedActivity() {
                         }.show()
                 }
             } catch (e: Throwable) { runOnUiThread { Toast.makeText(this, getString(R.string.link_error_toast, e.message), Toast.LENGTH_LONG).show() } }
+        }
+    }
+
+    private fun subscriptionPreview(preview: org.json.JSONObject): String {
+        val sub = preview.getJSONObject("subscription")
+        return listOf(
+            sub.optString("name"),
+            getString(R.string.sub_addresses, sub.optInt("sources")),
+            getString(if (sub.optBoolean("has_seed")) R.string.sub_seed else R.string.sub_no_seed),
+            getString(if (preview.optString("signature") == "trusted_author") R.string.sub_trusted else R.string.sub_unknown),
+        ).joinToString("\n") + if (preview.optBoolean("collision")) "\n\n" + getString(R.string.sub_collision) else ""
+    }
+
+    private fun renderSubscriptions() {
+        if (!::subscriptionsSection.isInitialized) return
+        val rows = settings.subscriptions
+        subscriptionsSection.removeAllViews()
+        subscriptionsSection.visibility = if (rows.isEmpty()) View.GONE else View.VISIBLE
+        if (rows.isEmpty()) return
+        subscriptionsSection.addView(Ui.heading(this, getString(R.string.subscriptions)))
+        for (sub in rows) {
+            val id = sub.getString("id")
+            val status = subscriptionStatus.firstOrNull { it.optString("id") == id.take(8) } ?: sub
+            subscriptionsSection.addView(TextView(this).apply {
+                text = sub.optString("name")
+                textSize = 16f
+            })
+            subscriptionsSection.addView(Ui.hint(this, Subscriptions.detail(this, status)))
+            if (refreshingSubscriptions || refreshResult.isNotEmpty()) {
+                subscriptionsSection.addView(Ui.hint(this, if (refreshingSubscriptions) getString(R.string.sub_refreshing) else refreshResult))
+            }
+            val buttons = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+            buttons.addView(Button(this).apply {
+                text = getString(R.string.sub_refresh)
+                isEnabled = !refreshingSubscriptions && !editingRoutes
+                setOnClickListener { refreshSubscriptions() }
+            })
+            buttons.addView(Button(this).apply {
+                text = getString(R.string.sub_remove)
+                isEnabled = !refreshingSubscriptions && !editingRoutes
+                setOnClickListener {
+                    AlertDialog.Builder(this@SettingsActivity)
+                        .setMessage(getString(R.string.sub_remove_confirm, sub.optString("name")))
+                        .setNegativeButton(android.R.string.cancel, null)
+                        .setPositiveButton(R.string.sub_remove) { _, _ -> removeSubscription(id) }.show()
+                }
+            })
+            subscriptionsSection.addView(buttons)
+        }
+    }
+
+    private fun refreshSubscriptions() {
+        val previous = settings.routesConfig
+        refreshingSubscriptions = true
+        refreshResult = ""
+        renderSubscriptions()
+        worker.execute {
+            var restart = false
+            val message = try {
+                if (PassageService.active && PassageService.runningRoutesConfig != previous) throw IllegalStateException()
+                val result = Native.json(Native.refreshSubscriptions(Subscriptions.request(previous).toString().toByteArray(Charsets.UTF_8)))
+                if (result.has("error")) throw IllegalStateException()
+                val config = result.getJSONObject("config")
+                val changed = result.optBoolean("changed")
+                synchronized(Settings.configLock) {
+                    if (!settings.saveCandidate(previous, config)) throw IllegalStateException()
+                    if (!changed) PassageService.savedRefreshMetadata(previous, config.toString())
+                }
+                restart = changed
+                val errors = Subscriptions.rows(config).mapNotNull { Subscriptions.errorResource(it.optString("last_error")) }
+                if (errors.isNotEmpty()) getString(R.string.sub_failed, getString(errors.first()))
+                else getString(if (restart) R.string.sub_updated else R.string.sub_current)
+            } catch (_: Throwable) { getString(R.string.sub_save_failed) }
+            // Restart even if the activity was closed while fetching.
+            if (restart) restartIfRunning()
+            runOnUiThread {
+                if (isFinishing || isDestroyed) return@runOnUiThread
+                refreshingSubscriptions = false
+                refreshResult = message
+                subscriptionStatus = emptyList()
+                renderSavedRoutes(); showRoutes(); describeLink()
+            }
+        }
+    }
+
+    private fun removeSubscription(id: String) {
+        val previous = settings.routesConfig
+        worker.execute {
+            val ok = try {
+                val request = Subscriptions.request(previous).put("id", id)
+                val result = Native.json(Native.removeSubscription(request.toString().toByteArray(Charsets.UTF_8)))
+                !result.has("error") && settings.saveCandidate(previous, result.getJSONObject("config"))
+            } catch (_: Throwable) { false }
+            if (ok) restartIfRunning()
+            runOnUiThread {
+                if (isFinishing || isDestroyed) return@runOnUiThread
+                if (!ok) Toast.makeText(this, R.string.sub_save_failed, Toast.LENGTH_LONG).show()
+                subscriptionStatus = emptyList()
+                refreshResult = ""
+                renderSavedRoutes(); showRoutes(); describeLink()
+            }
         }
     }
 
@@ -449,7 +594,7 @@ class SettingsActivity : ThemedActivity() {
     /** Validates the saved link and says which zone it names; a bad one unfolds the fields. */
     private fun describeLink() {
         val link = settings.link
-        if (link.isEmpty()) {
+        if (link.isEmpty() && settings.savedRoutes.isEmpty() && settings.subscriptions.isEmpty()) {
             linkInfo.text = getString(R.string.link_empty)
             linkInfo.visibility = View.VISIBLE
             setLinkOpen(true)
@@ -466,6 +611,8 @@ class SettingsActivity : ThemedActivity() {
                     ok = true
                     val routes = cfg.optJSONArray("routes")
                     if (routes != null && routes.length() > 0) {
+                        getString(R.string.import_route_count, routes.length(), settings.savedRoutes.joinToString(", ") { "${it.priority} ${it.id} (${it.type}${it.subscription.takeIf { n -> n.isNotEmpty() }?.let { n -> " · $n" }.orEmpty()})" })
+                    } else if (Subscriptions.rows(cfg).isNotEmpty()) {
                         ""
                     } else {
                         val n = cfg.optJSONArray("resolvers")?.length() ?: 0
@@ -545,6 +692,7 @@ class SettingsActivity : ThemedActivity() {
     }
 
     private fun renderSavedRoutes() {
+        renderSubscriptions()
         val routes = if (editingRoutes) routeDraft ?: emptyList() else settings.savedRoutes
         if (routes.isEmpty() && !editingRoutes) {
             savedRoutesSection.visibility = View.GONE
@@ -576,7 +724,7 @@ class SettingsActivity : ThemedActivity() {
                 isChecked = r.on
                 isClickable = false
                 isFocusable = false
-                text = "${r.priority} ${r.id} (${r.type})"
+                text = "${r.priority} ${r.id} (${r.type}${r.subscription.takeIf { it.isNotEmpty() }?.let { " · $it" }.orEmpty()})"
                 textSize = 14f
             }
             row.addView(check)
@@ -593,7 +741,7 @@ class SettingsActivity : ThemedActivity() {
         row.addView(check)
 
         val label = TextView(this).apply {
-            text = "${r.id} (${r.type})"
+            text = "${r.id} (${r.type}${r.subscription.takeIf { it.isNotEmpty() }?.let { " · $it" }.orEmpty()})"
             textSize = 14f
             maxLines = 1
             ellipsize = TextUtils.TruncateAt.END
@@ -665,7 +813,7 @@ class SettingsActivity : ThemedActivity() {
             addView(input, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT))
         }
         AlertDialog.Builder(this)
-            .setTitle("${r.id} (${r.type})")
+            .setTitle("${r.id} (${r.type}${r.subscription.takeIf { it.isNotEmpty() }?.let { " · $it" }.orEmpty()})")
             .setView(frame)
             .setPositiveButton(R.string.save) { _, _ ->
                 val v = input.text.toString().trim().toIntOrNull()
