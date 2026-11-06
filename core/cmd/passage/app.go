@@ -51,20 +51,24 @@ type App struct {
 	os      platform
 	changed func() // the tray redraws
 
-	mu              sync.Mutex
-	settings        Settings
-	tun             *tunnel.Tunnel
-	lastErr         string
-	linkStamp       fileStamp
-	linkCfg         tunnel.Config
-	linkErr         string
-	results         []tunnel.ImportResult
-	netKey          string
-	checking        time.Time
-	log             *appLog
-	updater         desktopUpdate
-	updateTransport updateTransport
-	runningSince    time.Time
+	mu                     sync.Mutex
+	settings               Settings
+	tun                    *tunnel.Tunnel
+	lastErr                string
+	linkStamp              fileStamp
+	linkCfg                tunnel.Config
+	linkErr                string
+	results                []tunnel.ImportResult
+	netKey                 string
+	checking               time.Time
+	log                    *appLog
+	updater                desktopUpdate
+	updateTransport        updateTransport
+	runningSince           time.Time
+	subscriptionEpoch      uint64
+	subscriptionRefreshing bool
+	subscriptionResults    map[string]string
+	subscriptionNotice     string
 }
 
 func newApp(dir, version, iroh, lang string, os platform) *App {
@@ -97,21 +101,20 @@ func (a *App) saveSettings() {
 // loadLink reads link.txt; a bad line leaves the proxy without
 // a tunnel until the file is fixed.
 func (a *App) loadLink() {
+	a.subscriptionEpoch++
 	path := linkFile(a.dir)
 	a.linkStamp = stampOf(path)
 	a.linkCfg, a.results, a.linkErr = tunnel.Config{}, nil, ""
 	b, err := os.ReadFile(path)
 	if os.IsNotExist(err) {
-		return
+		err = nil
+		b = nil
 	}
 	if err == nil {
 		a.linkCfg, a.results, err = importLinks(string(b))
 	}
 	if err == nil {
-		restored, e := tunnel.RestoreSubscriptionState(a.linkCfg, a.path("subscriptions.json"))
-		if e == nil {
-			a.linkCfg = restored
-		} else {
+		if e := a.restoreSubscriptions(); e != nil {
 			a.event("subscription state not loaded")
 		}
 	}
@@ -217,17 +220,21 @@ func (a *App) tick() {
 	case strings.Join(sysdns.Resolvers(), ",") != a.netKey:
 		a.startLocked("restart on network change")
 	default:
+		if a.subscriptionRefreshing {
+			return
+		}
 		select {
 		case update := <-a.tun.SubscriptionUpdates():
-			a.linkCfg = update.Config
-			if err := tunnel.SaveSubscriptionState(a.path("subscriptions.json"), a.linkCfg); err != nil {
+			added, removed := routeChanges(a.linkCfg, update.Config)
+			if err := a.applySubscriptionsLocked(update.Config, update.Changed); err != nil {
 				a.event("subscription state not saved")
+				a.subscriptionNotice = err.Error()
+				return
 			}
-			a.settings.Edits = tunnel.MinimalEdits(a.linkCfg.Routes, a.settings.Edits)
-			a.saveSettings()
 			if update.Changed {
-				a.startLocked("subscription update")
+				a.subscriptionNotice = a.t.f("sub_routes_updated", added, removed)
 			}
+
 		default:
 			return
 		}
@@ -348,22 +355,24 @@ func (a *App) trayState() trayState {
 
 // view is the home screen's state.
 type view struct {
-	Update    updateView    `json:"update"`
-	Running   bool          `json:"running"`
-	Head      string        `json:"head"`
-	Line      string        `json:"line"`
-	Full      string        `json:"full"`
-	HasLink   bool          `json:"has_link"`
-	Mode      string        `json:"mode"`
-	Routes    []routeChoice `json:"routes"`
-	My        bool          `json:"my"`
-	Auth      bool          `json:"auth"`
-	Host      string        `json:"host"`
-	Port      int           `json:"port"`
-	User      string        `json:"user"`
-	Pass      string        `json:"pass"`
-	ProxyLink string        `json:"proxy_link"` // socks5://
-	TgLink    string        `json:"tg_link"`    // tg://socks
+	Subscriptions      []subscriptionRow `json:"subscriptions"`
+	SubscriptionNotice string            `json:"subscription_notice"`
+	Update             updateView        `json:"update"`
+	Running            bool              `json:"running"`
+	Head               string            `json:"head"`
+	Line               string            `json:"line"`
+	Full               string            `json:"full"`
+	HasLink            bool              `json:"has_link"`
+	Mode               string            `json:"mode"`
+	Routes             []routeChoice     `json:"routes"`
+	My                 bool              `json:"my"`
+	Auth               bool              `json:"auth"`
+	Host               string            `json:"host"`
+	Port               int               `json:"port"`
+	User               string            `json:"user"`
+	Pass               string            `json:"pass"`
+	ProxyLink          string            `json:"proxy_link"` // socks5://
+	TgLink             string            `json:"tg_link"`    // tg://socks
 }
 
 func (a *App) view() view {
@@ -400,6 +409,8 @@ func (a *App) view() view {
 	if events := a.log.text(32); events != "" {
 		full += "\n" + a.t.f("app_events") + "\n" + events
 	}
+	v.Subscriptions = a.subscriptionRowsLocked()
+	v.SubscriptionNotice = a.subscriptionNotice
 	v.Update = a.updateViewLocked()
 	v.Full = full
 	return v
@@ -418,10 +429,11 @@ type linkView struct {
 
 // savedRoute is one installed route as the editor shows it.
 type savedRoute struct {
-	ID       string `json:"id"`
-	Type     string `json:"type"`
-	Priority int    `json:"priority"`
-	On       bool   `json:"on"`
+	Subscription string `json:"subscription,omitempty"`
+	ID           string `json:"id"`
+	Type         string `json:"type"`
+	Priority     int    `json:"priority"`
+	On           bool   `json:"on"`
 }
 
 func (a *App) linkView(withText bool) linkView {
@@ -519,6 +531,13 @@ func (a *App) importPreview(text string) (string, error) {
 
 // saveLink adds the pasted links to link.txt; empty text removes the file.
 func (a *App) saveLink(text string) error {
+	incoming := text
+	a.mu.Lock()
+	checkErr := a.checkRouteLinks(text)
+	a.mu.Unlock()
+	if checkErr != nil {
+		return checkErr
+	}
 	replaced := strings.TrimSpace(text) == ""
 	if !replaced {
 		combined, r, err := a.combineLink(text)
@@ -531,6 +550,25 @@ func (a *App) saveLink(text string) error {
 	a.mu.Lock()
 	defer a.changedAfter()
 	defer a.mu.Unlock()
+	pending := a.linkCfg
+	for _, line := range strings.Split(incoming, "\n") {
+		line = strings.TrimSpace(strings.TrimPrefix(line, "\ufeff"))
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		r, err := tunnel.ImportLink(pending, line, true)
+		if err != nil {
+			return err
+		}
+		pending = r.Config
+	}
+	if strings.TrimSpace(incoming) == "" {
+		pending = tunnel.Config{}
+	}
+	persistSubscriptions := len(a.linkCfg.Subscriptions) > 0
+	if _, err := os.Stat(a.path("subscriptions.json")); err == nil {
+		persistSubscriptions = true
+	}
 	path := a.path(linkName)
 	// Saved here, it replaces a link.txt.txt for good.
 	if err := os.Remove(path + ".txt"); err != nil && !os.IsNotExist(err) {
@@ -547,6 +585,11 @@ func (a *App) saveLink(text string) error {
 	}
 	if err != nil {
 		return err
+	}
+	if persistSubscriptions {
+		if err := tunnel.SaveSubscriptionState(a.path("subscriptions.json"), pending); err != nil {
+			return errors.New(a.t.f("sub_save_failed"))
+		}
 	}
 	if replaced && a.settings.Edits != nil {
 		a.settings.Edits = nil
@@ -579,6 +622,7 @@ func (a *App) saveRouteEdits(routes []savedRoute) error {
 	a.settings.Edits = edits
 	a.saveSettings()
 	a.linkCfg.RouteEdits = edits
+	a.subscriptionEpoch++
 	if a.settings.Mode != tunnel.ModeAuto && !a.available(a.settings.Mode) {
 		a.settings.Mode = tunnel.ModeAuto
 		a.saveSettings()
@@ -715,7 +759,24 @@ func (a *App) call(method string, arg json.RawMessage) (any, error) {
 	case "link":
 		return a.linkView(flag()), nil
 	case "importPreview":
-		return a.importPreview(str())
+		return a.previewImport(str())
+	case "importLink":
+		var in struct {
+			Link      string `json:"link"`
+			Replace   bool   `json:"replace"`
+			Subscribe bool   `json:"subscribe"`
+		}
+		if err := json.Unmarshal(arg, &in); err != nil {
+			return nil, err
+		}
+		if in.Subscribe {
+			return nil, a.subscribe(in.Link, in.Replace)
+		}
+		return nil, a.saveLink(in.Link)
+	case "refreshSubscriptions":
+		return nil, a.refreshSubscriptions(str())
+	case "removeSubscription":
+		return nil, a.removeSubscription(str())
 	case "saveRoutes":
 		var routes []savedRoute
 		if err := json.Unmarshal(arg, &routes); err != nil {

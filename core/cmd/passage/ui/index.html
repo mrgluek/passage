@@ -83,6 +83,7 @@ a { color: var(--accent); cursor: pointer; text-decoration: underline; }
   <button class="icon" id="startStop"><svg viewBox="0 0 24 24"><path id="startStopPath"/></svg></button>
   <button class="icon" id="settingsBtn"><svg viewBox="0 0 24 24"><path d="M19.14 12.94c.04-.3.06-.61.06-.94 0-.32-.02-.64-.07-.94l2.03-1.58a.49.49 0 0 0 .12-.61l-1.92-3.32a.488.488 0 0 0-.59-.22l-2.39.96c-.5-.38-1.03-.7-1.62-.94l-.36-2.54a.484.484 0 0 0-.48-.41h-3.84c-.24 0-.43.17-.47.41l-.36 2.54c-.59.24-1.13.57-1.62.94l-2.39-.96c-.22-.08-.47 0-.59.22L2.74 8.87c-.12.21-.08.47.12.61l2.03 1.58c-.05.3-.09.63-.09.94s.02.64.07.94l-2.03 1.58a.49.49 0 0 0-.12.61l1.92 3.32c.12.22.37.29.59.22l2.39-.96c.5.38 1.03.7 1.62.94l.36 2.54c.05.24.24.41.48.41h3.84c.24 0 .44-.17.47-.41l.36-2.54c.59-.24 1.13-.56 1.62-.94l2.39.96c.22.08.47 0 .59-.22l1.92-3.32c.12-.22.07-.47-.12-.61l-2.01-1.58zM12 15.6c-1.98 0-3.6-1.62-3.6-3.6s1.62-3.6 3.6-3.6 3.6 1.62 3.6 3.6-1.62 3.6-3.6 3.6z"/></svg></button>
 </header>
+<p id="subscriptionNotice" class="hint hidden" style="margin:10px 18px" aria-live="polite"></p>
 
 <main id="home">
   <button id="updateNotice" class="primary hidden"></button>
@@ -117,6 +118,9 @@ a { color: var(--accent); cursor: pointer; text-decoration: underline; }
   <button id="editRoutes" class="hidden" data-t="edit_routes"></button>
   <div id="editBar" class="hidden"><button class="primary" id="saveRoutes" data-t="save"></button> <button id="cancelRoutes" data-t="cancel"></button></div>
   <p class="hint hidden" id="routesHint" data-t="routes_edit_hint"></p>
+
+  <h2 data-t="subscriptions"></h2>
+  <div id="subscriptions"></div>
 
   <h2 data-t="link_label"></h2>
   <p class="hint" id="linkInfo"></p>
@@ -291,10 +295,18 @@ function segments(box, v) {
   box.appendChild(row);
 }
 
-let last = null, shownRoutes = "", shownValues = "";
+let last = null, shownRoutes = "", shownValues = "", shownSubscriptions = "";
 function render(v) {
   v.routes = v.routes || [];
   last = v;
+  $("subscriptionNotice").textContent = v.subscription_notice || "";
+  $("subscriptionNotice").classList.toggle("hidden", !v.subscription_notice);
+  const subKey = JSON.stringify(v.subscriptions);
+  if (subKey !== shownSubscriptions) {
+    shownSubscriptions = subKey;
+    renderSubscriptions(v.subscriptions || []);
+    if (!$("settings").classList.contains("hidden")) showLink(false);
+  }
   const u = v.update;
   $("updateNotice").classList.toggle("hidden", !u.enabled || !["available", "downloading", "ready", "installing"].includes(u.state));
   $("updateNotice").textContent = t("update_" + u.state, u.version);
@@ -348,11 +360,30 @@ function render(v) {
   }
   $("status").textContent = v.full;
 }
+function renderSubscriptions(rows) {
+  const box = $("subscriptions");
+  box.textContent = "";
+  for (const sub of rows) {
+    const row = document.createElement("div");
+    const title = document.createElement("p"); title.textContent = sub.name;
+    const detail = document.createElement("p"); detail.className = "hint"; detail.textContent = sub.detail;
+    const result = document.createElement("p"); result.className = "hint"; result.setAttribute("aria-live", "polite"); result.textContent = sub.busy ? t("sub_refreshing") : sub.result;
+    const refreshButton = document.createElement("button"); refreshButton.textContent = t("sub_refresh"); refreshButton.disabled = sub.busy;
+    refreshButton.onclick = () => call("refreshSubscriptions", sub.id).then(refresh, fail);
+    const remove = document.createElement("button"); remove.textContent = t("sub_remove");
+    remove.onclick = async () => {
+      if (await modal(t("sub_remove"), t("sub_remove_confirm", sub.name), t("sub_remove"), t("cancel"))) {
+        call("removeSubscription", sub.id).then(() => { showLink(false); refresh(); }, fail);
+      }
+    };
+    row.append(title, detail, result, refreshButton, remove); box.append(row);
+  }
+}
 function refresh() { return call("view").then(render, fail); }
 
 let savedList = [], draft = null, editing = false;
 // routeText is "priority id (type)", as in the route menu.
-const routeText = r => r.priority + " " + r.id + (r.id === r.type ? "" : " (" + r.type + ")");
+const routeText = r => r.priority + " " + r.id + (r.id === r.type ? "" : " (" + r.type + ")") + (r.subscription ? " · " + r.subscription : "");
 function renderRoutes() {
   const box = $("savedRoutes");
   const list = editing ? draft : savedList;
@@ -367,7 +398,7 @@ function renderRoutes() {
     const on = document.createElement("input");
     on.type = "checkbox"; on.checked = r.on;
     on.onchange = () => { r.on = on.checked; renderRoutes(); };
-    name.textContent = r.id + (r.id === r.type ? "" : " (" + r.type + ")");
+    name.textContent = routeText({...r, priority: ""}).trim();
     const step = d => () => { r.priority = Math.max(0, Math.min(65535, r.priority + d)); renderRoutes(); };
     const minus = document.createElement("button"); minus.textContent = "−"; minus.onclick = step(-5);
     const plus = document.createElement("button"); plus.textContent = "+"; plus.onclick = step(5);
@@ -457,8 +488,10 @@ async function importLink(text) {
   if (!text.trim()) return;
   try {
     const preview = await call("importPreview", text);
-    if (!await modal(t("import_title"), preview, t("save"), t("cancel"))) return;
-    await call("saveLink", text);
+    const subscribe = preview.mode === "subscribe";
+    if (!await modal(t(subscribe ? "subscribe" : "import_title"), preview.text, t(subscribe ? "subscribe" : "save"), t("cancel"))) return;
+    if (subscribe) await call("importLink", {link: text, subscribe: true, replace: preview.collision});
+    else await call("saveLink", text);
     toast(t("saved"));
     $("linkText").value = "";
     showLink(false);

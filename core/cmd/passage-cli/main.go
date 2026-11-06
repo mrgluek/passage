@@ -85,6 +85,17 @@ func main() {
 		cfg.StateFile = filepath.Join(cfg.PrivateDir, "router-state.json")
 	}
 	statePath := filepath.Join(cfg.PrivateDir, "subscriptions.json")
+	if len(cfg.Subscriptions) == 0 {
+		if raw, e := os.ReadFile(statePath); e == nil {
+			var stored tunnel.Config
+			if json.Unmarshal(raw, &stored) == nil {
+				cfg.Subscriptions = stored.Subscriptions
+				for i := range cfg.Subscriptions {
+					cfg.Subscriptions[i].RouteIDs = nil
+				}
+			}
+		}
+	}
 	if restored, e := tunnel.RestoreSubscriptionState(cfg, statePath); e == nil {
 		cfg = restored
 	} else {
@@ -113,6 +124,12 @@ func main() {
 	if cfg, err = cfg.Normalize(); err != nil {
 		fmt.Fprintln(os.Stderr, "passage-cli:", err)
 		os.Exit(2)
+	}
+	if len(cfg.Subscriptions) > 0 {
+		if err := tunnel.SaveSubscriptionState(statePath, cfg); err != nil {
+			fmt.Fprintln(os.Stderr, "passage-cli: subscription state not saved")
+			os.Exit(1)
+		}
 	}
 	t, err := tunnel.Start(cfg)
 	if err != nil {
