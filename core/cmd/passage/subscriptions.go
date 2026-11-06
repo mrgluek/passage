@@ -140,6 +140,7 @@ func refreshResult(t tr, before, after tunnel.Subscription) string {
 }
 
 type subscriptionRow struct {
+	Closed bool   `json:"closed"`
 	ID     string `json:"id"`
 	Name   string `json:"name"`
 	Detail string `json:"detail"`
@@ -168,7 +169,11 @@ func (a *App) subscriptionRowsLocked() []subscriptionRow {
 		if status != "" {
 			detail += " · " + status
 		}
-		rows = append(rows, subscriptionRow{sub.ID, sub.Name, detail, a.subscriptionResults[sub.ID], a.subscriptionRefreshing})
+		result, busy := a.subscriptionResults[sub.ID], a.subscriptionRefreshing
+		if sub.Closed {
+			detail, result, busy = a.t.f("sub_closed"), "", false
+		}
+		rows = append(rows, subscriptionRow{sub.Closed, sub.ID, sub.Name, detail, result, busy})
 	}
 	return rows
 }

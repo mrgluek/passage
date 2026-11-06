@@ -93,3 +93,55 @@ func TestSubscriptionRuntimePublishesPrivateConfig(t *testing.T) {
 		t.Fatal("no update")
 	}
 }
+
+func TestClosedSubscriptionRuntime(t *testing.T) {
+	sub, key, bundle := subFixture(t)
+	sub.RouteIDs, sub.Revision = []string{"one"}, 1
+	raw, err := links.SealClosedSubFile(bundle.Sub, sub.ReadKey, 2, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var requests atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { requests.Add(1); w.Write(raw) }))
+	defer server.Close()
+	subscriptionTestHTTP = true
+	t.Cleanup(func() { subscriptionTestHTTP = false })
+	sub.Sources = []string{server.URL}
+	cfg := Config{Subscriptions: []Subscription{sub}, Routes: []links.Route{subRoute("one")}, RouteEdits: map[string]RouteEdit{"one": {Off: true}}}
+	tun, err := Start(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	out := tun.RefreshSubscriptions(context.Background())
+	status := tun.Status(0)
+	tun.Close()
+	if !out.Changed || !status.ConfigChanged || !status.Subscriptions[0].Closed || len(out.Config.Routes) != 0 || len(out.Config.RouteEdits) != 0 || out.Config.Subscriptions[0].LastTry == 0 {
+		t.Fatal("closed runtime", out, status)
+	}
+	path := t.TempDir() + "/subscriptions.json"
+	if err := SaveSubscriptionState(path, out.Config); err != nil {
+		t.Fatal(err)
+	}
+	restored, err := RestoreSubscriptionState(cfg, path)
+	if err != nil || !restored.Subscriptions[0].Closed || len(restored.Routes) != 0 || len(restored.RouteEdits) != 0 {
+		t.Fatal("closed persistence", restored, err)
+	}
+	restarted, err := Start(restored)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer restarted.Close()
+	again := restarted.RefreshSubscriptions(context.Background())
+	if again.Changed || requests.Load() != 1 {
+		t.Fatal("closed restart fetched")
+	}
+	// An all-closed schedule exits without waiting for its first timer.
+	finished := make(chan struct{})
+	restarted.wg.Add(1)
+	go func() { restarted.subscriptionLoop(); close(finished) }()
+	select {
+	case <-finished:
+	case <-time.After(time.Second):
+		t.Fatal("closed schedule is active")
+	}
+}

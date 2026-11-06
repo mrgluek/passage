@@ -38,7 +38,10 @@ object Subscriptions {
         else -> R.string.sub_error_network
     }
 
+    fun isClosed(sub: JSONObject): Boolean = sub.optBoolean("closed")
+
     fun detail(context: Context, sub: JSONObject, now: Long = System.currentTimeMillis() / 1000): String {
+        if (isClosed(sub)) return context.getString(R.string.sub_closed)
         val count = if (sub.has("routes")) sub.optInt("routes") else sub.optJSONArray("route_ids")?.length() ?: 0
         val heading = context.getString(R.string.sub_detail, sub.optLong("revision"), count)
         val error = errorResource(sub.optString("last_error"))

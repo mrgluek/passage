@@ -199,4 +199,5 @@
     <string name="sub_error_rollback">Получена устаревшая версия</string>
     <string name="sub_error_collision">Некоторые имена маршрутов уже заняты</string>
     <string name="sub_error_required">Обновите Passage для загрузки маршрутов</string>
+    <string name="sub_closed">Закрыта владельцем</string>
 </resources>

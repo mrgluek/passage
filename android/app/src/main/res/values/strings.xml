@@ -199,4 +199,5 @@
     <string name="sub_error_rollback">An older revision was rejected</string>
     <string name="sub_error_collision">Some route IDs are already in use</string>
     <string name="sub_error_required">Update Passage to load these routes</string>
+    <string name="sub_closed">Closed by its owner</string>
 </resources>

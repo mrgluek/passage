@@ -195,3 +195,66 @@ func TestSubscriptionFetchRequiredFeature(t *testing.T) {
 		t.Fatal("required feature accepted")
 	}
 }
+
+func TestClosedSubscriptionLifecycle(t *testing.T) {
+	s, key, b := subFixture(t)
+	s.Revision, s.RouteIDs, s.LastError = 1, []string{"one"}, "network"
+	other := s
+	other.ID = "02020202020202020202020202020202"
+	other.RouteIDs = []string{"other"}
+	cfg := Config{Subscriptions: []Subscription{s, other}, Routes: []links.Route{subRoute("one"), subRoute("manual"), subRoute("other")}, RouteEdits: map[string]RouteEdit{"one": {Off: true}, "manual": {Off: true}, "other": {Off: true}}}
+	b.Revision, b.Closed, b.Routes = 2, true, nil
+	blob, err := links.SealSubFile(b, b.Sub, s.ReadKey, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var requests atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/"+other.ID+".bin" {
+			w.WriteHeader(http.StatusNotModified)
+			return
+		}
+		requests.Add(1)
+		w.Write(blob)
+	}))
+	defer server.Close()
+	subscriptionTestHTTP = true
+	t.Cleanup(func() { subscriptionTestHTTP = false })
+	cfg.Subscriptions[0].Sources = []string{server.URL}
+	cfg.Subscriptions[1].Sources = []string{server.URL}
+	var ref SubscriptionRefresher
+	out := ref.Refresh(context.Background(), cfg, nil)
+	closed := out.Config.Subscriptions[0]
+	if !out.Changed || !closed.Closed || closed.Revision != 2 || closed.LastOK == 0 || closed.LastError != "" || len(closed.RouteIDs) != 0 {
+		t.Fatal("closed metadata", out)
+	}
+	if len(out.Config.Routes) != 2 || out.Config.Routes[0].ID == "one" || len(out.Config.RouteEdits) != 2 || out.Config.RouteEdits["one"].Off {
+		t.Fatal("ownership", out.Config)
+	}
+	if len(cfg.Routes) != 3 || !cfg.RouteEdits["one"].Off || cfg.Subscriptions[0].Closed {
+		t.Fatal("mutated input")
+	}
+	again := ref.Refresh(context.Background(), out.Config, nil)
+	if again.Changed || requests.Load() != 1 || again.Config.Subscriptions[0].LastTry != closed.LastTry {
+		t.Fatal("fetched closed subscription")
+	}
+	b.Closed, b.Routes, b.Revision = false, []links.Route{subRoute("one")}, 1
+	if _, err := ApplySubFile(out.Config, closed, b); !errors.Is(err, links.ErrRollback) {
+		t.Fatal("stale open", err)
+	}
+	b.Revision = 3
+	if _, err := ApplySubFile(out.Config, closed, b); err == nil || err.Error() != "closed" {
+		t.Fatal("reopened", err)
+	}
+	if _, err := SubscribeLink(out.Config, subInvite(t, s, key, nil), false); err == nil || err.Error() != "closed" {
+		t.Fatal("re-imported", err)
+	}
+	rows := subscriptionStatuses(out.Config)
+	if !rows[0].Closed {
+		t.Fatal("public status")
+	}
+	removed, err := RemoveSubscription(out.Config, s.ID)
+	if err != nil || len(removed.Subscriptions) != 1 || len(removed.Routes) != 2 {
+		t.Fatal("remove", err)
+	}
+}

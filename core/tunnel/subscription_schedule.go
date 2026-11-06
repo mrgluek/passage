@@ -115,12 +115,20 @@ func (t *Tunnel) subscriptionLoop() {
 	defer t.wg.Done()
 	var schedule subscriptionSchedule
 	t.subs.mu.Lock()
+	active := false
 	for _, sub := range t.subs.cfg.Subscriptions {
+		if sub.Closed {
+			continue
+		}
+		active = true
 		if tried := time.Unix(sub.LastTry, 0); sub.LastTry > 0 && tried.After(schedule.lastUrgent) {
 			schedule.lastUrgent = tried
 		}
 	}
 	t.subs.mu.Unlock()
+	if !active {
+		return
+	}
 	timer := time.NewTimer(schedule.first(subscriptionJitter))
 	defer timer.Stop()
 	for {
@@ -139,10 +147,18 @@ func (t *Tunnel) subscriptionLoop() {
 		result := t.RefreshSubscriptions(t.ctx)
 		schedule.lastUrgent = time.Now()
 		ok := true
+		active = false
 		for _, sub := range result.Config.Subscriptions {
+			if sub.Closed {
+				continue
+			}
+			active = true
 			if sub.LastError != "" && sub.LastError != "unchanged" && sub.LastError != "collision" {
 				ok = false
 			}
+		}
+		if !active {
+			return
 		}
 		timer.Reset(schedule.next(ok, subscriptionJitter))
 	}

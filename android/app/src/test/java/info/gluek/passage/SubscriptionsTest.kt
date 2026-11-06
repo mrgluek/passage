@@ -5,6 +5,12 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class SubscriptionsTest {
+    @Test fun closedRowUsesPublicMetadata() {
+        assertTrue(Subscriptions.isClosed(JSONObject("""{"closed":true,"last_error":"network"}""")))
+        assertFalse(Subscriptions.isClosed(JSONObject()))
+        assertFalse(Subscriptions.isClosed(JSONObject("""{"closed":false}""")))
+    }
+
     @Test fun routeChangesCountIdsRatherThanTypesOrPriorities() {
         val before = JSONObject("""{"routes":[{"id":"a","type":"wss","priority":10},{"id":"b","type":"wss"}]}""")
         val after = JSONObject("""{"routes":[{"id":"b","type":"wss","priority":20},{"id":"c","type":"wss"}]}""")

@@ -275,3 +275,13 @@ func TestDesktopRemoveSubscriptionRestartsTunnel(t *testing.T) {
 		t.Fatal("tunnel was not restarted")
 	}
 }
+
+func TestClosedSubscriptionRow(t *testing.T) {
+	for _, lang := range []string{"en", "ru"} {
+		a := &App{t: tr(table(lang)), linkCfg: tunnel.Config{Subscriptions: []tunnel.Subscription{{ID: "example", Name: "Example", Closed: true, Revision: 2, LastError: "network", LastOK: 1}}}, subscriptionRefreshing: true, subscriptionResults: map[string]string{"example": "old result"}}
+		rows := a.subscriptionRowsLocked()
+		if len(rows) != 1 || !rows[0].Closed || rows[0].Detail != a.t.f("sub_closed") || rows[0].Busy || rows[0].Result != "" {
+			t.Fatal(rows)
+		}
+	}
+}

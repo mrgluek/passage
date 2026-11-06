@@ -11,6 +11,7 @@ var texts = map[string]map[string]string{
 	"en": {
 		"sub_one":             "Paste one subscription link at a time and confirm Subscribe.",
 		"subscriptions":       "Subscriptions",
+		"sub_closed":          "Closed by its owner",
 		"subscribe":           "Subscribe",
 		"sub_addresses":       "%[1]d addresses",
 		"sub_seed":            "Includes a first route list",
@@ -208,6 +209,7 @@ var texts = map[string]map[string]string{
 	"ru": {
 		"sub_one":             "Вставьте одну ссылку подписки и нажмите «Подписаться».",
 		"subscriptions":       "Подписки",
+		"sub_closed":          "Закрыта владельцем",
 		"subscribe":           "Подписаться",
 		"sub_addresses":       "Адресов: %[1]d",
 		"sub_seed":            "Есть начальный список маршрутов",

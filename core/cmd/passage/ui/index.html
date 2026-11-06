@@ -369,6 +369,7 @@ function renderSubscriptions(rows) {
     const detail = document.createElement("p"); detail.className = "hint"; detail.textContent = sub.detail;
     const result = document.createElement("p"); result.className = "hint"; result.setAttribute("aria-live", "polite"); result.textContent = sub.busy ? t("sub_refreshing") : sub.result;
     const refreshButton = document.createElement("button"); refreshButton.textContent = t("sub_refresh"); refreshButton.disabled = sub.busy;
+    refreshButton.hidden = sub.closed;
     refreshButton.onclick = () => call("refreshSubscriptions", sub.id).then(refresh, fail);
     const remove = document.createElement("button"); remove.textContent = t("sub_remove");
     remove.onclick = async () => {

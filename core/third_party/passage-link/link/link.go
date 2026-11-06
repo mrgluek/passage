@@ -59,6 +59,7 @@ type Route struct {
 	Params   map[string]any `json:"params" cbor:"params"`
 }
 type Bundle struct {
+	Closed      bool     `json:"closed,omitempty" cbor:"closed,omitempty"`
 	Revision    uint64   `json:"revision,omitempty" cbor:"revision,omitempty"`
 	Sub         []byte   `json:"sub,omitempty" cbor:"sub,omitempty"`
 	V           uint64   `json:"v" cbor:"v"`
@@ -439,7 +440,10 @@ func (b Bundle) Validate() ([]string, error) {
 	} else if b.Revision != 0 {
 		return nil, errors.New("revision requires subscription id")
 	}
-	if b.V != 2 || b.Kind != "routes" || b.Mode != "merge" && b.Mode != "replace" || len(b.Name) > 128 || len(b.Routes) < 1 || len(b.Routes) > limit {
+	if b.Closed && (b.Sub == nil || b.Mode != "replace" || len(b.Routes) != 0) {
+		return nil, errors.New("invalid closed subscription")
+	}
+	if b.V != 2 || b.Kind != "routes" || b.Mode != "merge" && b.Mode != "replace" || len(b.Name) > 128 || !b.Closed && len(b.Routes) < 1 || len(b.Routes) > limit {
 		return nil, errors.New("invalid route collection")
 	}
 	if b.ReviewAfter != 0 && b.ReviewAfter < b.IssuedAt {
@@ -471,7 +475,7 @@ func (b Bundle) Validate() ([]string, error) {
 			unsupported = append(unsupported, r.ID)
 		}
 	}
-	if usable == 0 {
+	if usable == 0 && !b.Closed {
 		return unsupported, errors.New("no supported routes: update Passage")
 	}
 	return unsupported, nil

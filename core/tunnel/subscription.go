@@ -9,6 +9,7 @@ import (
 	"maps"
 	"slices"
 	"strings"
+	"time"
 
 	links "github.com/mrgluek/passage-link/link"
 )
@@ -18,6 +19,7 @@ var subscriptionTestHTTP bool
 
 // Subscription holds private subscription state; only SubscriptionStatus is public.
 type Subscription struct {
+	Closed     bool     `json:"closed,omitempty"`
 	ID         string   `json:"id"`
 	Name       string   `json:"name"`
 	Signer     []byte   `json:"signer"`
@@ -33,6 +35,7 @@ type Subscription struct {
 }
 
 type SubscriptionStatus struct {
+	Closed    bool   `json:"closed,omitempty"`
 	ID        string `json:"id"`
 	Name      string `json:"name"`
 	Revision  uint64 `json:"revision"`
@@ -94,11 +97,27 @@ func ApplySubFile(cfg Config, sub Subscription, bundle links.Bundle) (Config, er
 	if err := links.CheckRevision(cfg.Subscriptions[index].Revision, bundle.Revision); err != nil {
 		return cfg, err
 	}
+	if cfg.Subscriptions[index].Closed {
+		return cfg, errors.New("closed")
+	}
 	if bundle.Mode != "replace" {
 		return cfg, errors.New("signature")
 	}
 	if _, err := bundle.Validate(); err != nil {
 		return cfg, err
+	}
+	if bundle.Closed {
+		next, err := RemoveSubscription(cfg, sub.ID)
+		if err != nil {
+			return cfg, err
+		}
+		lastTry := sub.LastTry
+		sub = cfg.Subscriptions[index]
+		sub.LastTry = lastTry
+		sub.Closed, sub.Revision, sub.RouteIDs = true, bundle.Revision, nil
+		sub.LastError, sub.LastOK = "", time.Now().Unix()
+		next.Subscriptions = slices.Insert(next.Subscriptions, index, sub)
+		return next.Normalize()
 	}
 	sub.RouteIDs = slices.Clone(cfg.Subscriptions[index].RouteIDs)
 	if len(cfg.Routes) == 0 && cfg.Zone != "" {
@@ -172,6 +191,9 @@ func SubscribeLink(cfg Config, text string, replaceSigner bool) (ImportResult, e
 	cfg.Subscriptions = slices.Clone(cfg.Subscriptions)
 	if at >= 0 {
 		old := cfg.Subscriptions[at]
+		if old.Closed {
+			return out, errors.New("closed")
+		}
 		if !bytes.Equal(old.Signer, sub.Signer) {
 			out.Collision = true
 			if !replaceSigner {
@@ -215,7 +237,7 @@ func SubscribeLink(cfg Config, text string, replaceSigner bool) (ImportResult, e
 func subscriptionStatuses(cfg Config) []SubscriptionStatus {
 	out := make([]SubscriptionStatus, 0, len(cfg.Subscriptions))
 	for _, s := range cfg.Subscriptions {
-		out = append(out, SubscriptionStatus{s.ID[:min(8, len(s.ID))], s.Name, s.Revision, len(s.RouteIDs), s.LastOK, s.LastTry, s.LastError})
+		out = append(out, SubscriptionStatus{s.Closed, s.ID[:min(8, len(s.ID))], s.Name, s.Revision, len(s.RouteIDs), s.LastOK, s.LastTry, s.LastError})
 	}
 	return out
 }

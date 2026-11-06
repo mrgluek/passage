@@ -180,6 +180,12 @@ func subInputs(id, key []byte) error {
 	}
 	return nil
 }
+
+// SealClosedSubFile signs and encrypts a final subscription revision.
+func SealClosedSubFile(id, readKey []byte, revision uint64, signer crypto.Signer) ([]byte, error) {
+	return SealSubFile(Bundle{V: 2, Kind: "routes", Mode: "replace", Sub: id, Revision: revision, Closed: true, Routes: []Route{}}, id, readKey, signer)
+}
+
 func SealSubFile(b Bundle, id, readKey []byte, signer crypto.Signer) ([]byte, error) {
 	return sealSubFile(b, id, readKey, signer, rand.Reader)
 }

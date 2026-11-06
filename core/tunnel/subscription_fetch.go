@@ -40,6 +40,9 @@ func (r *SubscriptionRefresher) Refresh(ctx context.Context, cfg Config, dialers
 	cfg.Subscriptions = append([]Subscription(nil), cfg.Subscriptions...)
 	out := SubscriptionRefreshResult{Config: cfg}
 	for index, sub := range cfg.Subscriptions {
+		if sub.Closed {
+			continue
+		}
 		if ctx.Err() != nil {
 			break
 		}

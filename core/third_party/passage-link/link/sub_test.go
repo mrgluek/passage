@@ -335,3 +335,75 @@ func TestLargeSeededInvite(t *testing.T) {
 		t.Fatal("hard decode cap exceeded")
 	}
 }
+
+func TestClosedSubGoldenVector(t *testing.T) {
+	b, id, read, key := subFixture()
+	b.Closed, b.Routes = true, []Route{}
+	nonce := bytes.Repeat([]byte{4}, 24)
+	blob, err := sealSubFile(b, id, read, key, bytes.NewReader(nonce))
+	if err != nil {
+		t.Fatal(err)
+	}
+	i, _ := inviteFixture()
+	i.Seed = blob
+	invite, err := EncodeInvite(i, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	signed, err := Encode(b, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	vector := map[string]string{"seed_hex": hex.EncodeToString(key.Seed()), "public_key_hex": hex.EncodeToString(key.Public().(ed25519.PublicKey)), "id_hex": hex.EncodeToString(id), "read_key_hex": hex.EncodeToString(read), "nonce_hex": hex.EncodeToString(nonce), "signed_bundle_hex": hex.EncodeToString(signed), "file_hex": hex.EncodeToString(blob), "invite_hex": hex.EncodeToString(invite)}
+	encoded, _ := json.MarshalIndent(vector, "", "  ")
+	encoded = append(encoded, '\n')
+	path := "testdata/sub-v1-closed.json"
+	if os.Getenv("UPDATE_SUB_VECTOR") == "1" {
+		if err = os.WriteFile(path, encoded, 0644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	want, err := os.ReadFile(path)
+	if err != nil || !bytes.Equal(want, encoded) {
+		t.Fatal("golden vector changed", err)
+	}
+	if _, err = OpenSubFile(blob, id, read, key.Public().(ed25519.PublicKey)); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestClosedSub(t *testing.T) {
+	b, id, read, key := subFixture()
+	blob, err := SealClosedSubFile(id, read, 2, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	opened, err := OpenSubFile(blob, id, read, key.Public().(ed25519.PublicKey))
+	if err != nil || !opened.Bundle.Closed || opened.Bundle.Revision != 2 || len(opened.Bundle.Routes) != 0 || len(blob) != 1024+SubFileOverhead {
+		t.Fatal(opened, err)
+	}
+	b.Closed = true
+	if _, err := b.Validate(); err == nil {
+		t.Fatal("closed routes accepted")
+	}
+	b.Routes = nil
+	b.Sub = nil
+	b.Revision = 0
+	if _, err := b.Validate(); err == nil {
+		t.Fatal("closed without sub accepted")
+	}
+	b.Closed = false
+	if _, err := b.Validate(); err == nil {
+		t.Fatal("empty open bundle accepted")
+	}
+	b.Sub = id
+	b.Revision = 2
+	if _, err := b.Validate(); err == nil {
+		t.Fatal("empty open subscription accepted")
+	}
+	b.Closed = true
+	b.Mode = "merge"
+	if _, err := b.Validate(); err == nil {
+		t.Fatal("closed merge accepted")
+	}
+}

@@ -489,17 +489,17 @@ class SettingsActivity : ThemedActivity() {
         subscriptionsSection.addView(Ui.heading(this, getString(R.string.subscriptions)))
         for (sub in rows) {
             val id = sub.getString("id")
-            val status = subscriptionStatus.firstOrNull { it.optString("id") == id.take(8) } ?: sub
+            val status = if (Subscriptions.isClosed(sub)) sub else subscriptionStatus.firstOrNull { it.optString("id") == id.take(8) } ?: sub
             subscriptionsSection.addView(TextView(this).apply {
                 text = sub.optString("name")
                 textSize = 16f
             })
             subscriptionsSection.addView(Ui.hint(this, Subscriptions.detail(this, status)))
-            if (refreshingSubscriptions || refreshResult.isNotEmpty()) {
+            if (!Subscriptions.isClosed(status) && (refreshingSubscriptions || refreshResult.isNotEmpty())) {
                 subscriptionsSection.addView(Ui.hint(this, if (refreshingSubscriptions) getString(R.string.sub_refreshing) else refreshResult))
             }
             val buttons = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
-            buttons.addView(Button(this).apply {
+            if (!Subscriptions.isClosed(status)) buttons.addView(Button(this).apply {
                 text = getString(R.string.sub_refresh)
                 isEnabled = !refreshingSubscriptions && !editingRoutes
                 setOnClickListener { refreshSubscriptions() }
