@@ -59,6 +59,11 @@ func main() {
 		*link = strings.TrimSpace(string(b))
 	}
 	var cfg tunnel.Config // no link: direct and smart routes only
+	statePath := filepath.Join(privateDir(), "subscriptions.json")
+	cfg, stateExists, stateErr := loadSubscriptions(statePath)
+	if stateErr != nil {
+		fmt.Fprintln(os.Stderr, "passage-cli: subscription state not loaded")
+	}
 	var err error
 	if *link != "" {
 		result, importErr := tunnel.ImportLink(cfg, *link, false)
@@ -84,23 +89,7 @@ func main() {
 	if os.MkdirAll(cfg.PrivateDir, 0o700) == nil {
 		cfg.StateFile = filepath.Join(cfg.PrivateDir, "router-state.json")
 	}
-	statePath := filepath.Join(cfg.PrivateDir, "subscriptions.json")
-	if len(cfg.Subscriptions) == 0 {
-		if raw, e := os.ReadFile(statePath); e == nil {
-			var stored tunnel.Config
-			if json.Unmarshal(raw, &stored) == nil {
-				cfg.Subscriptions = stored.Subscriptions
-				for i := range cfg.Subscriptions {
-					cfg.Subscriptions[i].RouteIDs = nil
-				}
-			}
-		}
-	}
-	if restored, e := tunnel.RestoreSubscriptionState(cfg, statePath); e == nil {
-		cfg = restored
-	} else {
-		fmt.Fprintln(os.Stderr, "passage-cli: subscription state not loaded")
-	}
+
 	if *remove != "" {
 		cfg, err = tunnel.RemoveSubscription(cfg, *remove)
 		if err == nil {
@@ -125,7 +114,7 @@ func main() {
 		fmt.Fprintln(os.Stderr, "passage-cli:", err)
 		os.Exit(2)
 	}
-	if len(cfg.Subscriptions) > 0 {
+	if len(cfg.Subscriptions) > 0 || stateExists {
 		if err := tunnel.SaveSubscriptionState(statePath, cfg); err != nil {
 			fmt.Fprintln(os.Stderr, "passage-cli: subscription state not saved")
 			os.Exit(1)
@@ -238,4 +227,23 @@ func privateDir() string {
 		base = os.TempDir()
 	}
 	return filepath.Join(base, "passage")
+}
+
+func loadSubscriptions(path string) (tunnel.Config, bool, error) {
+	var cfg tunnel.Config
+	raw, err := os.ReadFile(path)
+	if os.IsNotExist(err) {
+		return cfg, false, nil
+	}
+	if err != nil {
+		return cfg, true, err
+	}
+	if err = json.Unmarshal(raw, &cfg); err != nil {
+		return tunnel.Config{}, true, err
+	}
+	normalized, err := cfg.Normalize()
+	if err != nil {
+		return tunnel.Config{}, true, err
+	}
+	return normalized, true, nil
 }
