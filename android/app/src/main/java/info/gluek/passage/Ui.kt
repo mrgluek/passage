@@ -148,8 +148,8 @@ object Ui {
             if (i == menuIndex) {
                 PopupMenu(c, bar.getChildAt(i)).apply {
                     routes.forEachIndexed { index, route ->
-                        val label = if (route.id == route.type) "${route.priority} ${route.id}"
-                            else "${route.priority} ${route.id} (${route.type})"
+                        val label = if (route.id == route.type && route.subscription.isEmpty()) "${route.priority} ${route.id}"
+                            else "${route.priority} ${route.id} (${route.type}${route.subscription.takeIf { it.isNotEmpty() }?.let { " · $it" }.orEmpty()})"
                         menu.add(0, index, index, label).apply {
                             isCheckable = true
                             isChecked = route.mode == mode
@@ -166,7 +166,7 @@ object Ui {
             compoundDrawablePadding = dp(c, 2)
             compoundDrawableTintList = ColorStateList.valueOf(if (fixed == null) accent(c) else c.getColor(R.color.on_accent))
             contentDescription = if (fixed == null) c.getString(R.string.route_menu)
-                else "${fixed.priority} ${fixed.id} (${fixed.type})"
+                else "${fixed.priority} ${fixed.id} (${fixed.type}${fixed.subscription.takeIf { it.isNotEmpty() }?.let { " · $it" }.orEmpty()})"
         }
         return bar
     }

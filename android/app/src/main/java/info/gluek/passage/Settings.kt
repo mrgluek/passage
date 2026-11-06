@@ -21,12 +21,12 @@ class Settings(context: Context) {
         private set(v) { prefs.edit().putString("routes_config", v).apply() }
 
     /** Save routes and reset a removed selection to Auto. */
-    fun saveRoutes(link: String, config: String) {
+    fun saveRoutes(link: String, config: String) = synchronized(configLock) {
         prefs.edit().putString("link", link).putString("routes_config", config).apply()
         prefs.edit().putString("mode", mode).apply()
     }
 
-    data class Route(val id: String, val type: String, val priority: Int) {
+    data class Route(val id: String, val type: String, val priority: Int, val subscription: String = "") {
         val mode: String get() = if (type == "my") "my" else "route:$id"
     }
 
@@ -36,7 +36,23 @@ class Settings(context: Context) {
         val originalPriority: Int,
         var priority: Int,
         var on: Boolean,
+        val subscription: String = "",
     )
+
+    val subscriptions: List<JSONObject>
+        get() = try { Subscriptions.rows(JSONObject(routesConfig)) } catch (_: Exception) { emptyList() }
+
+    /** Compare and save together so an older refresh cannot overwrite a route edit. */
+    fun saveCandidate(previous: String, config: JSONObject): Boolean = synchronized(configLock) {
+        if (routesConfig != previous) return@synchronized false
+        if (!prefs.edit().putString("routes_config", config.toString()).commit()) return@synchronized false
+        mode = mode
+        true
+    }
+
+    var routesNotice: String
+        get() = prefs.getString("routes_notice", "") ?: ""
+        set(v) = prefs.edit().putString("routes_notice", v).apply()
 
     /** Old type selections migrate to the first matching installed route. */
     var mode: String
@@ -84,7 +100,7 @@ class Settings(context: Context) {
                         val id = r.getString("id")
                         val edit = edits?.optJSONObject(id)
                         val p = if (edit != null && edit.has("priority")) edit.optInt("priority") else r.optInt("priority")
-                        Route(id, r.getString("type"), p)
+                        Route(id, r.getString("type"), p, Subscriptions.owner(json, id))
                     }
                     .filter { it.type in ROUTE_KINDS && it.type != "my" }
                     .sortedWith(compareBy({ it.priority }, { it.id }))
@@ -110,7 +126,7 @@ class Settings(context: Context) {
                         val edit = edits?.optJSONObject(id)
                         val p = if (edit != null && edit.has("priority")) edit.optInt("priority") else origPriority
                         val on = !(edit != null && edit.optBoolean("off"))
-                        SavedRoute(id, type, origPriority, p, on)
+                        SavedRoute(id, type, origPriority, p, on, Subscriptions.owner(json, id))
                     }
                     .sortedWith(compareBy<SavedRoute> { !it.on }.thenBy { it.priority }.thenBy { it.id })
             } catch (_: Exception) {
@@ -119,12 +135,12 @@ class Settings(context: Context) {
         }
 
     /** Saves local route edits (priority, on/off) and resets an inactive route choice to Auto. */
-    fun saveRouteEdits(edits: List<SavedRoute>) {
+    fun saveRouteEdits(edits: List<SavedRoute>) = synchronized(configLock) {
         val config = routesConfig
-        if (config.isEmpty()) return
+        if (config.isEmpty()) return@synchronized
         try {
             val json = JSONObject(config)
-            val routes = json.optJSONArray("routes") ?: return
+            val routes = json.optJSONArray("routes") ?: return@synchronized
             val linkRoutes = (0 until routes.length()).map { routes.getJSONObject(it) }
                 .associate { it.getString("id") to it.optInt("priority") }
             val editsObj = JSONObject()
@@ -234,6 +250,7 @@ class Settings(context: Context) {
     }
 
     companion object {
+        val configLock = Any()
         val THEMES = listOf("system", "light", "dark")
         const val HOST = "127.0.0.1"
         /** Route types that can be chosen, as in the Go core's RouteKinds. */

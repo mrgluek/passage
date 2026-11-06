@@ -155,7 +155,7 @@ object Diagnostics {
 
     fun redact(text: String): String = text
         .replace(Regex("[A-Za-z][A-Za-z0-9+.-]*://\\S+"), "[link]")
-        .replace(Regex("(?i)(\"?(?:key|pass(?:word)?|user(?:name)?|ticket|zone|link)\"?\\s*[:=]\\s*)(?:\"[^\"]*\"|[^\\s,}]+)"), "$1[redacted]")
+        .replace(Regex("(?i)(\"?(?:read_key|signer|key|pass(?:word)?|user(?:name)?|ticket|zone|link)\"?\\s*[:=]\\s*)(?:\"[^\"]*\"|[^\\s,}]+)"), "$1[redacted]")
 
     private fun exitReason(reason: Int): String = when (reason) {
         ApplicationExitInfo.REASON_EXIT_SELF -> "exit self"
