@@ -90,18 +90,40 @@ func Java_info_gluek_passage_Native_parseLink(env *C.JNIEnv, cls C.jclass, link 
 //export Java_info_gluek_passage_Native_importLink
 func Java_info_gluek_passage_Native_importLink(env *C.JNIEnv, cls C.jclass, request C.jbyteArray) C.jbyteArray {
 	var in struct {
-		Existing tunnel.Config `json:"existing"`
-		Link     string        `json:"link"`
-		Replace  bool          `json:"replace"`
+		Existing  tunnel.Config `json:"existing"`
+		Link      string        `json:"link"`
+		Replace   bool          `json:"replace"`
+		Subscribe bool          `json:"subscribe"`
 	}
 	if err := json.Unmarshal([]byte(goString(env, request)), &in); err != nil {
 		return fail(env, errors.New("invalid import request"))
 	}
 	out, err := tunnel.ImportLink(in.Existing, in.Link, in.Replace)
+	if err == nil && in.Subscribe && out.Mode == "subscribe" {
+		out, err = tunnel.SubscribeLink(in.Existing, in.Link, in.Replace)
+	}
 	if err != nil {
 		return fail(env, err)
 	}
 	return result(env, out)
+}
+
+//export Java_info_gluek_passage_Native_refreshSubscriptions
+func Java_info_gluek_passage_Native_refreshSubscriptions(env *C.JNIEnv, cls C.jclass, request C.jbyteArray) C.jbyteArray {
+	var in struct {
+		Existing tunnel.Config `json:"existing"`
+	}
+	if err := json.Unmarshal([]byte(goString(env, request)), &in); err != nil {
+		return fail(env, errors.New("invalid refresh request"))
+	}
+	mu.Lock()
+	t := cur
+	mu.Unlock()
+	if t != nil {
+		return result(env, t.RefreshSubscriptions(context.Background()))
+	}
+	var ref tunnel.SubscriptionRefresher
+	return result(env, ref.Refresh(context.Background(), in.Existing, nil))
 }
 
 // start (re)starts the proxy from a config JSON and returns {"addr": "…"}.

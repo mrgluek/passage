@@ -107,6 +107,14 @@ func (a *App) loadLink() {
 	if err == nil {
 		a.linkCfg, a.results, err = importLinks(string(b))
 	}
+	if err == nil {
+		restored, e := tunnel.RestoreSubscriptionState(a.linkCfg, a.path("subscriptions.json"))
+		if e == nil {
+			a.linkCfg = restored
+		} else {
+			a.event("subscription state not loaded")
+		}
+	}
 	a.linkCfg.RouteEdits = tunnel.MinimalEdits(a.linkCfg.Routes, a.settings.Edits)
 	if err != nil {
 		a.linkErr = err.Error()
@@ -115,7 +123,7 @@ func (a *App) loadLink() {
 }
 
 func (a *App) hasLink() bool {
-	return len(a.linkCfg.Routes) > 0 || a.linkCfg.Zone != ""
+	return len(a.linkCfg.Routes) > 0 || a.linkCfg.Zone != "" || len(a.linkCfg.Subscriptions) > 0
 }
 
 // routes is the installed routes that can be chosen.
@@ -209,7 +217,20 @@ func (a *App) tick() {
 	case strings.Join(sysdns.Resolvers(), ",") != a.netKey:
 		a.startLocked("restart on network change")
 	default:
-		return
+		select {
+		case update := <-a.tun.SubscriptionUpdates():
+			a.linkCfg = update.Config
+			if err := tunnel.SaveSubscriptionState(a.path("subscriptions.json"), a.linkCfg); err != nil {
+				a.event("subscription state not saved")
+			}
+			a.settings.Edits = tunnel.MinimalEdits(a.linkCfg.Routes, a.settings.Edits)
+			a.saveSettings()
+			if update.Changed {
+				a.startLocked("subscription update")
+			}
+		default:
+			return
+		}
 	}
 	go a.changed()
 }

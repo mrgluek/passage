@@ -24,6 +24,9 @@ func importLinks(text string) (tunnel.Config, []tunnel.ImportResult, error) {
 			continue
 		}
 		r, err := tunnel.ImportLink(cfg, line, true)
+		if err == nil && r.Mode == "subscribe" {
+			r, err = tunnel.SubscribeLink(cfg, line, true)
+		}
 		if err != nil {
 			return tunnel.Config{}, nil, lineError{i + 1, err}
 		}

@@ -45,6 +45,7 @@ func main() {
 	every := flag.Duration("status", time.Minute, "print a status line this often (0 = never)")
 	paths := flag.Bool("paths", false, "also print one line per resolver path with each status")
 	iroh := flag.String("iroh", "", "iroh helper binary (default: passage-iroh next to passage-cli)")
+	refresh := flag.Bool("subscribe-refresh", false, "refresh subscriptions now")
 	test := flag.Bool("test", false, "run the network test once, print it as JSON and exit")
 	flag.Parse()
 
@@ -60,6 +61,9 @@ func main() {
 	var err error
 	if *link != "" {
 		result, importErr := tunnel.ImportLink(cfg, *link, false)
+		if importErr == nil && result.Mode == "subscribe" {
+			result, importErr = tunnel.SubscribeLink(cfg, *link, false)
+		}
 		err = importErr
 		cfg = result.Config
 		if err != nil {
@@ -78,6 +82,12 @@ func main() {
 	// What the router learns per network, kept across runs.
 	if os.MkdirAll(cfg.PrivateDir, 0o700) == nil {
 		cfg.StateFile = filepath.Join(cfg.PrivateDir, "router-state.json")
+	}
+	statePath := filepath.Join(cfg.PrivateDir, "subscriptions.json")
+	if restored, e := tunnel.RestoreSubscriptionState(cfg, statePath); e == nil {
+		cfg = restored
+	} else {
+		fmt.Fprintln(os.Stderr, "passage-cli: subscription state not loaded")
 	}
 	for _, r := range cfg.Routes {
 		if r.Type == "iroh" && cfg.IrohBinary == "" {
@@ -114,6 +124,9 @@ func main() {
 		return
 	}
 
+	if *refresh {
+		t.RefreshSubscriptions(context.Background())
+	}
 	sig := make(chan os.Signal, 1)
 	signal.Notify(sig, os.Interrupt, syscall.SIGTERM)
 	var tick <-chan time.Time
@@ -128,6 +141,20 @@ func main() {
 		case <-sig:
 			t.Close()
 			return
+		case update := <-t.SubscriptionUpdates():
+			if err := tunnel.SaveSubscriptionState(statePath, update.Config); err != nil {
+				fmt.Fprintln(os.Stderr, "passage-cli: subscription state not saved")
+			}
+			if update.Changed {
+				cfg = update.Config
+				cfg.Listen = t.Addr()
+				t.Close()
+				t, err = tunnel.Start(cfg)
+				if err != nil {
+					fmt.Fprintln(os.Stderr, "passage-cli: subscription restart failed")
+					return
+				}
+			}
 		case <-tick:
 			s := t.Status(50)
 			for _, e := range s.Events {
