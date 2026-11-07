@@ -10,6 +10,7 @@ import (
 	"slices"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	links "github.com/mrgluek/passage-link/link"
 )
@@ -177,6 +178,11 @@ func ApplySubFile(cfg Config, sub Subscription, bundle links.Bundle) (Config, er
 		sub.RouteIDs = append(sub.RouteIDs, r.ID)
 	}
 	sub.Revision = bundle.Revision
+	// The signed file carries the current name, so the owner can rename a
+	// subscription after it was installed.
+	if bundle.Name != "" && utf8.ValidString(bundle.Name) {
+		sub.Name = bundle.Name
+	}
 	cfg.Routes = links.Sorted(routes)
 	cfg.RouteEdits = MinimalEdits(cfg.Routes, cfg.RouteEdits)
 	cfg.Subscriptions[index] = sub
