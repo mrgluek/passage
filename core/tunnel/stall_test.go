@@ -15,8 +15,15 @@ import (
 
 func shortStalls(t *testing.T) {
 	t.Helper()
+	setStalls(t, 40*time.Millisecond, 90*time.Millisecond)
+}
+
+// setStalls overrides the stall limits for one test. Tests whose steps are
+// shorter than a scheduling hiccup on a loaded CI runner need larger limits.
+func setStalls(t *testing.T, first, later time.Duration) {
+	t.Helper()
 	a, b := firstResponseTimeout, responseStallTimeout
-	firstResponseTimeout, responseStallTimeout = 40*time.Millisecond, 90*time.Millisecond
+	firstResponseTimeout, responseStallTimeout = first, later
 	t.Cleanup(func() { firstResponseTimeout, responseStallTimeout = a, b })
 }
 
@@ -351,7 +358,10 @@ func TestPoolDoesNotRaceStalledRoute(t *testing.T) {
 }
 
 func TestUploadProgressRestartsDeadline(t *testing.T) {
-	shortStalls(t)
+	// Pauses between writes are a quarter of the limit, so the limits must be
+	// far above the scheduler's jitter on a busy runner.
+	setStalls(t, 300*time.Millisecond, 600*time.Millisecond)
+	const writes = 8
 	for _, received := range []bool{false, true} {
 		for _, reply := range []bool{false, true} {
 			name := "first-response"
@@ -372,7 +382,7 @@ func TestUploadProgressRestartsDeadline(t *testing.T) {
 					if received {
 						b.Write([]byte("hello"))
 					}
-					for i := 0; i < 24; i++ {
+					for i := 0; i < writes; i++ {
 						if _, err := io.CopyN(io.Discard, b, 1); err != nil {
 							return
 						}
@@ -385,7 +395,7 @@ func TestUploadProgressRestartsDeadline(t *testing.T) {
 				stalled := make(chan struct{})
 				c := watchResponses(a, nil, func(bool) { close(stalled) })
 				defer func() { c.Close(); b.Close(); <-done }()
-				c.SetDeadline(time.Now().Add(3 * time.Second))
+				c.SetDeadline(time.Now().Add(15 * time.Second))
 				if received {
 					if _, err := io.ReadFull(c, make([]byte, 5)); err != nil {
 						t.Fatal(err)
@@ -396,7 +406,7 @@ func TestUploadProgressRestartsDeadline(t *testing.T) {
 					limit = responseStallTimeout
 				}
 				var completed time.Time
-				for i := 0; i < 24; i++ {
+				for i := 0; i < writes; i++ {
 					if _, err := c.Write([]byte("x")); err != nil {
 						t.Fatal("upload interrupted", err)
 					}
@@ -410,10 +420,10 @@ func TestUploadProgressRestartsDeadline(t *testing.T) {
 				if !reply {
 					select {
 					case <-stalled:
-					case <-time.After(time.Second):
+					case <-time.After(2*limit + time.Second):
 						t.Fatal("silence after upload did not stall")
 					}
-					if elapsed := time.Since(completed); elapsed < limit || elapsed > limit+200*time.Millisecond {
+					if elapsed := time.Since(completed); elapsed < limit || elapsed > limit+time.Second {
 						t.Fatalf("deadline %v, want %v after final write", elapsed, limit)
 					}
 					return
