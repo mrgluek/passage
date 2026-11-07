@@ -82,6 +82,22 @@ func RestoreSubscriptionState(cfg Config, path string) (Config, error) {
 			for _, id := range sub.RouteIDs {
 				own[id] = true
 			}
+			// A subscription signed by the trusted author takes over manual routes of
+			// the same id, as a refresh does. A route owned by another subscription
+			// is never taken over.
+			keys, _ := authorKeys()
+			trusted := len(keys) > 0 && bytes.Equal(saved.Signer, keys[0])
+			otherOwned := map[string]bool{}
+			for k, other := range cfg.Subscriptions {
+				if k != j {
+					for _, id := range other.RouteIDs {
+						otherOwned[id] = true
+					}
+				}
+			}
+			if saved.LastError == "collision" {
+				saved.LastError = ""
+			}
 			routes := make([]links.Route, 0, len(cfg.Routes))
 			blocked := map[string]bool{}
 			for _, r := range cfg.Routes {
@@ -97,8 +113,11 @@ func RestoreSubscriptionState(cfg Config, path string) (Config, error) {
 					continue
 				}
 				if blocked[r.ID] {
-					saved.LastError = "collision"
-					continue
+					if !trusted || otherOwned[r.ID] {
+						saved.LastError = "collision"
+						continue
+					}
+					routes = slices.DeleteFunc(routes, func(x links.Route) bool { return x.ID == r.ID })
 				}
 				routes = append(routes, r)
 				saved.RouteIDs = append(saved.RouteIDs, r.ID)
