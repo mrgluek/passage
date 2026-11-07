@@ -36,14 +36,15 @@
   </section>
 
   <section id="connect" hidden>
-    <h2><span class="en">Your connection link</span><span class="ru">Ваша ссылка для подключения</span></h2>
-    <p class="en">If Passage is installed, open the link in it. If not, install Passage below, then open this link again.</p>
-    <p class="ru">Если Passage уже установлен, откройте ссылку в нём. Если нет, установите Passage ниже и откройте эту ссылку ещё раз.</p>
+    <h2 id="connect-link"><span class="en">You were sent a connection link</span><span class="ru">Вам прислали ссылку для подключения</span></h2>
+    <h2 id="connect-sub" hidden><span class="en">You were sent a subscription link</span><span class="ru">Вам прислали ссылку на подписку</span></h2>
+    <p><span class="en">This is a personal link: forwarding it shares your access. Links shared publicly may be blocked by their author.</span><span class="ru">Это личная ссылка: пересылая её, вы передаёте свой доступ. Публично распространяемые ссылки могут быть заблокированы автором.</span></p>
+    <p class="en">If Passage is already installed, press “Open in Passage” and the link opens in the app. If not, install Passage using the links below first, then press “Open in Passage” again, or copy the full address of this page into the app's Settings by hand.</p>
+    <p class="ru">Если Passage уже установлен, нажмите «Открыть в Passage», и ссылка сама откроется в программе. Если ещё нет, сначала установите Passage по ссылкам ниже, а затем нажмите «Открыть в Passage» ещё раз или скопируйте полный адрес этой страницы в его настройки вручную.</p>
     <p id="link-v2" hidden><span class="en">Requires Passage <b class="ver">0.3.0</b> or newer. Review the routes in the app before adding them.</span><span class="ru">Нужен Passage <b class="ver">0.3.0</b> или новее. Перед добавлением проверьте маршруты в приложении.</span></p>
     <div class="buttons">
       <a class="button primary" id="open-link" href="#"><span class="en">Open in Passage</span><span class="ru">Открыть в Passage</span></a>
     </div>
-    <p><span class="en">This is a personal link: forwarding it shares your access.</span><span class="ru">Это личная ссылка: пересылая её, вы передаёте свой доступ.</span></p>
     <p class="muted"><span class="en">Everything after # in the address stays in your browser: it is never sent to this site.</span><span class="ru">Всё, что в адресе после #, остаётся в браузере и на этот сайт не отправляется.</span></p>
   </section>
 
@@ -137,6 +138,8 @@ open /Applications/Passage.app</code></pre>
     <h2><span class="en">Connection links</span><span class="ru">Ссылки подключения</span></h2>
     <p class="en">Since 0.3.0, one link can include several routes in priority order. A later link can add routes or replace the saved set: Passage shows the action and asks for confirmation. Earlier links still work.</p>
     <p class="ru">Начиная с 0.3.0, одна ссылка может содержать несколько маршрутов с приоритетами. Следующая ссылка может добавить маршруты или заменить сохранённый набор: Passage покажет действие и запросит подтверждение. Старые ссылки продолжают работать.</p>
+    <p class="en">Since 0.7.0, a link can be a subscription: besides routes (or instead of them) it carries an address from which Passage keeps the routes up to date by itself.</p>
+    <p class="ru">Начиная с 0.7.0, ссылка может быть подпиской: кроме маршрутов (или вместо них) она содержит адрес, по которому Passage сам обновляет маршруты.</p>
   </section>
 
   <section id="verify">
@@ -202,9 +205,10 @@ C3:C9:73:50:37:FF:A5:00:6D:D9:88:AB:29:D6:11:D6:A4:41:31:E5:3F:D8:1D:FA:CF:06:49
       }
       return item(0);
     }
-    // The newest requirement found in a v2 link; 0.3.0 when it cannot be read.
-    function minVersion(f) {
-      var need = "0.3.0";
+    // The newest requirement found in a v2 link (0.3.0 when it cannot be read)
+    // and whether it is a subscription.
+    function inspectLink(f) {
+      var need = "0.3.0", sub = false;
       function up(v) { if (v && newer(v, need)) need = v; }
       try {
         var bin = atob(f.slice(3).replace(/-/g, "+").replace(/_/g, "/"));
@@ -212,11 +216,12 @@ C3:C9:73:50:37:FF:A5:00:6D:D9:88:AB:29:D6:11:D6:A4:41:31:E5:3F:D8:1D:FA:CF:06:49
         for (var i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
         var top = cbor(bytes);
         var body = top && top.tag === 18 ? cbor(top.value[2]) : top;
+        sub = body.kind === "sub";
         up(KINDS[body.kind]);
         (body.required || []).forEach(function (r) { up(FEATURES[r]); });
         (body.routes || []).forEach(function (r) { up(TYPES[r.type]); });
       } catch (e) {}
-      return need;
+      return { need: need, sub: sub };
     }
     function showLink() {
       var f = location.hash.slice(1);
@@ -229,10 +234,10 @@ C3:C9:73:50:37:FF:A5:00:6D:D9:88:AB:29:D6:11:D6:A4:41:31:E5:3F:D8:1D:FA:CF:06:49
       else link.removeAttribute("href");
       document.getElementById("connect").hidden = !v1 && !v2;
       document.getElementById("link-v2").hidden = !v2;
-      if (v2) {
-        var need = minVersion(f);
-        document.querySelectorAll("#link-v2 .ver").forEach(function (e) { e.textContent = need; });
-      }
+      var info = v2 ? inspectLink(f) : { need: "0.3.0", sub: false };
+      document.querySelectorAll("#link-v2 .ver").forEach(function (e) { e.textContent = info.need; });
+      document.getElementById("connect-link").hidden = info.sub;
+      document.getElementById("connect-sub").hidden = !info.sub;
       document.getElementById("invalid-link").hidden = !connection || v1 || v2;
     }
     showLink();
