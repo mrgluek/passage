@@ -45,6 +45,11 @@
     <div class="buttons">
       <a class="button primary" id="open-link" href="#"><span class="en">Open in Passage</span><span class="ru">Открыть в Passage</span></a>
     </div>
+    <p><span class="en">Opened the link on another device? <button type="button" class="linkbtn qr-toggle">Scan the QR code</button> with your phone to add it.</span><span class="ru">Открыли ссылку на другом устройстве? <button type="button" class="linkbtn qr-toggle">Отсканируйте QR-код</button> телефоном для добавления.</span></p>
+    <div id="qr" hidden>
+      <div id="qr-code"></div>
+      <p id="qr-note" hidden><span class="en">This link is too long for a QR code. Send it as text instead.</span><span class="ru">Ссылка слишком длинная для QR-кода. Отправьте её текстом.</span></p>
+    </div>
     <p class="muted"><span class="en">Everything after # in the address stays in your browser: it is never sent to this site.</span><span class="ru">Всё, что в адресе после #, остаётся в браузере и на этот сайт не отправляется.</span></p>
   </section>
 
@@ -223,7 +228,41 @@ C3:C9:73:50:37:FF:A5:00:6D:D9:88:AB:29:D6:11:D6:A4:41:31:E5:3F:D8:1D:FA:CF:06:49
       } catch (e) {}
       return { need: need, sub: sub };
     }
+    // The QR code holds the whole address of this page, fragment included. It
+    // is drawn here, in the browser, by a script served from this site.
+    function drawQr() {
+      var code = document.getElementById("qr-code"), note = document.getElementById("qr-note");
+      function render() {
+        var svg = "";
+        // Level M scans better; L fits a longer link.
+        ["M", "L"].some(function (level) {
+          try {
+            var q = window.qrcode(0, level);
+            q.addData(location.href);
+            q.make();
+            svg = q.createSvgTag({ cellSize: 4, scalable: true });
+            return true;
+          } catch (e) { return false; }
+        });
+        code.innerHTML = svg;
+        code.hidden = !svg;
+        note.hidden = !!svg;
+      }
+      if (window.qrcode) return render();
+      var s = document.createElement("script");
+      s.src = "qrcode.js";
+      s.onload = render;
+      s.onerror = function () { code.hidden = true; note.hidden = false; };
+      document.head.appendChild(s);
+    }
+    document.querySelectorAll(".qr-toggle").forEach(function (b) {
+      b.addEventListener("click", function () {
+        var box = document.getElementById("qr");
+        if (box.hidden) { drawQr(); box.hidden = false; } else box.hidden = true;
+      });
+    });
     function showLink() {
+      document.getElementById("qr").hidden = true;
       var f = location.hash.slice(1);
       var v2 = /^v2\.[A-Za-z0-9_-]+$/.test(f) && f.length + "passage://add#".length <= 16384;
       var v1 = !/^v2\./.test(f) && /(^|&)zone=[^&]+/.test(f);
