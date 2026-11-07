@@ -1,10 +1,12 @@
 package tunnel
 
 import (
-	"crypto/ed25519"
+	"bytes"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"slices"
 	"strings"
 
 	links "github.com/mrgluek/passage-link/link"
@@ -14,12 +16,13 @@ import (
 var AuthorKey string
 
 type ImportResult struct {
-	Config    Config   `json:"config"`
-	Signature string   `json:"signature"`
-	Mode      string   `json:"mode"`
-	Count     int      `json:"count"`
-	IDs       []string `json:"route_ids"`
-	Collision bool     `json:"collision"`
+	Config       Config                   `json:"config"`
+	Signature    string                   `json:"signature"`
+	Mode         string                   `json:"mode"`
+	Count        int                      `json:"count"`
+	IDs          []string                 `json:"route_ids"`
+	Collision    bool                     `json:"collision"`
+	Subscription *SubscriptionDescription `json:"subscription,omitempty"`
 }
 
 func ImportLink(existing Config, text string, replaceIDs bool) (ImportResult, error) {
@@ -41,17 +44,26 @@ func ImportLink(existing Config, text string, replaceIDs bool) (ImportResult, er
 		result.IDs = []string{"legacy-dns"}
 		return result, nil
 	}
-	var trusted []ed25519.PublicKey
-	if AuthorKey != "" {
-		pub, err := base64.RawURLEncoding.DecodeString(AuthorKey)
-		if err != nil || len(pub) != 32 {
-			return result, errors.New("invalid build author key")
+	trusted, err := authorKeys()
+	if err != nil {
+		return result, err
+	}
+	if invite, e := links.DecodeInvite([]byte(text), trusted); e == nil {
+		result.Config, result.Signature, result.Mode = existing, invite.Signature, "subscribe"
+		result.Subscription = &SubscriptionDescription{invite.Invite.Name, len(invite.Invite.Sources), invite.Invite.Seed != nil}
+		for _, sub := range existing.Subscriptions {
+			if sub.ID == hex.EncodeToString(invite.Invite.ID) && !bytes.Equal(sub.Signer, invite.Invite.Signer) {
+				result.Collision = true
+			}
 		}
-		trusted = append(trusted, ed25519.PublicKey(pub))
+		return result, nil
 	}
 	decoded, err := links.ParseURI(text, trusted)
 	if err != nil {
 		return result, err
+	}
+	if decoded.Bundle.Sub != nil {
+		return result, errors.New("subscription bundle requires an invite")
 	}
 	for _, r := range decoded.Bundle.Routes {
 		result.IDs = append(result.IDs, r.ID)
@@ -83,6 +95,16 @@ func ImportLink(existing Config, text string, replaceIDs bool) (ImportResult, er
 	result.Config.Zone = ""
 	result.Config.Key = ""
 	result.Config.Routes = installed
+	result.Config.Subscriptions = slices.Clone(existing.Subscriptions)
+	for j, sub := range result.Config.Subscriptions {
+		var kept []string
+		for _, id := range sub.RouteIDs {
+			if decoded.Bundle.Mode != "replace" && !slices.Contains(result.IDs, id) {
+				kept = append(kept, id)
+			}
+		}
+		result.Config.Subscriptions[j].RouteIDs = kept
+	}
 	if decoded.Bundle.Mode == "replace" {
 		result.Config.RouteEdits = nil
 	} else {

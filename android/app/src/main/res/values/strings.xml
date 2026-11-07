@@ -5,7 +5,7 @@
     <string name="edit_routes">Edit routes</string>
     <string name="routes_edit_hint">Turn a route off or change its priority. Edits stay on this device.</string>
     <string name="link_label">Link</string>
-    <string name="link_hint" translatable="false">https://passage.gluek.info/link#…</string>
+    <string name="link_hint">Paste a Passage link to add or replace routes</string>
     <string name="link_empty">Paste the link you received.</string>
     <string name="link_ok_zone">Link OK: zone %1$s</string>
     <string name="server_ipv6_on">Server IPv6: enabled</string>
@@ -73,7 +73,7 @@
     <string name="no_link">No link yet: Passage works directly and with tuning. A link adds a tunnel for networks where nothing else gets through; add it in settings.</string>
     <string name="open_settings">Open settings</string>
     <string name="connect_label">Connect an app</string>
-    <string name="connect_help">Add the proxy to the app\'s proxy settings (Delta Chat, ArcaneChat: Settings → Advanced → Proxy → Add proxy). The buttons on the right copy the proxy link or open it in an app that adds proxies from links. Tap a value to copy just that.</string>
+    <string name="connect_help">Add the proxy to the app\'s proxy settings (Delta Chat, ArcaneChat: Settings > Advanced > Proxy > Add proxy). The buttons on the right copy the proxy link or open it in an app that adds proxies from links. Tap a value to copy just that.</string>
     <string name="copy_proxy_link">Copy proxy link</string>
     <string name="proxy_link_copied">Proxy link copied</string>
     <string name="status_label">Status</string>
@@ -168,4 +168,49 @@
     <string name="theme_system">System</string>
     <string name="theme_light">Light</string>
     <string name="theme_dark">Dark</string>
+    <string name="sub_one">Paste one subscription link at a time and confirm Subscribe.</string>
+    <string name="subscriptions">Subscriptions</string>
+    <string name="subscribe">Subscribe</string>
+    <plurals name="sub_addresses">
+        <item quantity="one">%1$d address</item>
+        <item quantity="other">%1$d addresses</item>
+    </plurals>
+    <string name="sub_seed">Includes a first route list</string>
+    <string name="sub_no_seed">Routes will be loaded from the address in the link</string>
+    <string name="sub_takeover">Routes with the same names will be kept up to date by this subscription.</string>
+    <string name="sub_trusted">Signed by the app’s author</string>
+    <string name="sub_unknown">Unknown signer</string>
+    <string name="sub_collision">This subscription has a different signer. Subscribe only if you trust the new signer.</string>
+    <string name="sub_save_failed">Could not save subscriptions. Try again.</string>
+    <plurals name="sub_detail">
+        <item quantity="one">revision %1$d · %2$d route</item>
+        <item quantity="other">revision %1$d · %2$d routes</item>
+    </plurals>
+    <string name="sub_just_now">updated just now</string>
+    <string name="sub_minutes">updated %1$d min ago</string>
+    <string name="sub_hours">updated %1$d h ago</string>
+    <plurals name="sub_days">
+        <item quantity="one">updated %1$d day ago</item>
+        <item quantity="other">updated %1$d days ago</item>
+    </plurals>
+    <string name="sub_refresh">Refresh now</string>
+    <string name="sub_refreshing">Refreshing…</string>
+    <string name="sub_remove">Remove</string>
+    <string name="sub_remove_confirm">Remove %1$s and its routes?</string>
+    <string name="sub_updated">Updated</string>
+    <string name="sub_current">Already up to date</string>
+    <string name="sub_failed">Failed: %1$s</string>
+    <string name="sub_routes_timed">Routes updated: +%1$d, -%2$d · %3$s</string>
+    <string name="sub_routes_updated">Routes updated: +%1$d, -%2$d</string>
+    <string name="sub_error_network">Could not connect</string>
+    <string name="sub_error_http">The address returned an error</string>
+    <string name="sub_error_size">The route list is too large</string>
+    <string name="sub_error_decrypt">Could not read the route list</string>
+    <string name="sub_error_signature">The signature could not be verified</string>
+    <string name="sub_error_rollback">An older revision was rejected</string>
+    <string name="sub_error_collision">Some route IDs are already in use</string>
+    <string name="sub_error_required">Update Passage to load these routes</string>
+    <string name="sub_closed">Closed by its owner</string>
+    <string name="saved_routes_empty">No routes yet. Paste a link below to add routes.</string>
+    <string name="subscriptions_empty">No subscriptions. A subscription link keeps your routes up to date by itself: paste it below, and Passage loads the current routes and refreshes them in the background.</string>
 </resources>

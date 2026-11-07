@@ -14,6 +14,8 @@ object Native {
 
     @JvmStatic external fun parseLink(link: ByteArray): ByteArray
     @JvmStatic external fun importLink(request: ByteArray): ByteArray
+    @JvmStatic external fun refreshSubscriptions(request: ByteArray): ByteArray
+    @JvmStatic external fun removeSubscription(request: ByteArray): ByteArray
     @JvmStatic external fun start(config: ByteArray): ByteArray
     @JvmStatic external fun stop()
     @JvmStatic external fun status(events: Int): ByteArray

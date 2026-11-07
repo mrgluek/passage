@@ -37,7 +37,7 @@ func main() {
 	linkFile := flag.String("link-file", "", "read the Passage link from this file")
 	systemDNS := flag.Bool("system-dns", true, "add this machine's DNS servers (resolv.conf) as first resolver paths")
 	operator := flag.String("operator", "", "SIM operator MCC+MNC (e.g. 25001) to add its known resolvers")
-	mode := flag.String("mode", tunnel.ModeAuto, "auto, always, off, route:<id>, or a route type (my, http, wss, iroh, soar)")
+	mode := flag.String("mode", tunnel.ModeAuto, "auto, always, off, route:<id>, or a route type (my, http, wss, turn, iroh, soar)")
 	my := flag.String("my", "", "your own SOCKS5 proxy as a route: [user:pass@]host:port, a socks5:// URL or a t.me/socks link")
 	listen := flag.String("listen", "127.0.0.1:18000", "SOCKS5 listen address")
 	user := flag.String("user", "", "SOCKS5 username (empty = no auth)")
@@ -45,6 +45,8 @@ func main() {
 	every := flag.Duration("status", time.Minute, "print a status line this often (0 = never)")
 	paths := flag.Bool("paths", false, "also print one line per resolver path with each status")
 	iroh := flag.String("iroh", "", "iroh helper binary (default: passage-iroh next to passage-cli)")
+	remove := flag.String("subscribe-remove", "", "remove a subscription by ID and exit")
+	refresh := flag.Bool("subscribe-refresh", false, "refresh subscriptions now")
 	test := flag.Bool("test", false, "run the network test once, print it as JSON and exit")
 	flag.Parse()
 
@@ -57,9 +59,17 @@ func main() {
 		*link = strings.TrimSpace(string(b))
 	}
 	var cfg tunnel.Config // no link: direct and smart routes only
+	statePath := filepath.Join(privateDir(), "subscriptions.json")
+	cfg, stateExists, stateErr := loadSubscriptions(statePath)
+	if stateErr != nil {
+		fmt.Fprintln(os.Stderr, "passage-cli: subscription state not loaded")
+	}
 	var err error
 	if *link != "" {
 		result, importErr := tunnel.ImportLink(cfg, *link, false)
+		if importErr == nil && result.Mode == "subscribe" {
+			result, importErr = tunnel.SubscribeLink(cfg, *link, false)
+		}
 		err = importErr
 		cfg = result.Config
 		if err != nil {
@@ -79,6 +89,18 @@ func main() {
 	if os.MkdirAll(cfg.PrivateDir, 0o700) == nil {
 		cfg.StateFile = filepath.Join(cfg.PrivateDir, "router-state.json")
 	}
+
+	if *remove != "" {
+		cfg, err = tunnel.RemoveSubscription(cfg, *remove)
+		if err == nil {
+			err = tunnel.SaveSubscriptionState(statePath, cfg)
+		}
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "passage-cli:", err)
+			os.Exit(2)
+		}
+		return
+	}
 	for _, r := range cfg.Routes {
 		if r.Type == "iroh" && cfg.IrohBinary == "" {
 			fmt.Fprintln(os.Stderr, "passage-cli: no passage-iroh helper found, iroh routes will fail")
@@ -91,6 +113,12 @@ func main() {
 	if cfg, err = cfg.Normalize(); err != nil {
 		fmt.Fprintln(os.Stderr, "passage-cli:", err)
 		os.Exit(2)
+	}
+	if len(cfg.Subscriptions) > 0 || stateExists {
+		if err := tunnel.SaveSubscriptionState(statePath, cfg); err != nil {
+			fmt.Fprintln(os.Stderr, "passage-cli: subscription state not saved")
+			os.Exit(1)
+		}
 	}
 	t, err := tunnel.Start(cfg)
 	if err != nil {
@@ -114,6 +142,9 @@ func main() {
 		return
 	}
 
+	if *refresh {
+		t.RefreshSubscriptions(context.Background())
+	}
 	sig := make(chan os.Signal, 1)
 	signal.Notify(sig, os.Interrupt, syscall.SIGTERM)
 	var tick <-chan time.Time
@@ -128,6 +159,20 @@ func main() {
 		case <-sig:
 			t.Close()
 			return
+		case update := <-t.SubscriptionUpdates():
+			if err := tunnel.SaveSubscriptionState(statePath, update.Config); err != nil {
+				fmt.Fprintln(os.Stderr, "passage-cli: subscription state not saved")
+			}
+			if update.Changed {
+				cfg = update.Config
+				cfg.Listen = t.Addr()
+				t.Close()
+				t, err = tunnel.Start(cfg)
+				if err != nil {
+					fmt.Fprintln(os.Stderr, "passage-cli: subscription restart failed")
+					return
+				}
+			}
 		case <-tick:
 			s := t.Status(50)
 			for _, e := range s.Events {
@@ -182,4 +227,23 @@ func privateDir() string {
 		base = os.TempDir()
 	}
 	return filepath.Join(base, "passage")
+}
+
+func loadSubscriptions(path string) (tunnel.Config, bool, error) {
+	var cfg tunnel.Config
+	raw, err := os.ReadFile(path)
+	if os.IsNotExist(err) {
+		return cfg, false, nil
+	}
+	if err != nil {
+		return cfg, true, err
+	}
+	if err = json.Unmarshal(raw, &cfg); err != nil {
+		return tunnel.Config{}, true, err
+	}
+	normalized, err := cfg.Normalize()
+	if err != nil {
+		return tunnel.Config{}, true, err
+	}
+	return normalized, true, nil
 }

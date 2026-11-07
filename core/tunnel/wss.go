@@ -65,6 +65,8 @@ var (
 
 // WSSClient opens TCP streams through a WebSocket exit, several per session.
 type WSSClient struct {
+	turnMode    bool
+	turnParams  links.TURNParams
 	httpMode    bool
 	httpSilence time.Duration
 	params      links.WSSParams
@@ -212,6 +214,9 @@ func (c *WSSClient) reserve(ctx context.Context) (*wssSession, *wssStream, error
 	}
 }
 func (c *WSSClient) dialSession(ctx context.Context) (*wssSession, error) {
+	if c.turnMode {
+		return c.dialTURNSession(ctx)
+	}
 	if c.httpMode {
 		return c.dialHTTPSession(ctx)
 	}

@@ -12,10 +12,14 @@ cat "$work/testdata/mac-smoke.m" >> "$work/mac_darwin.m"
 "${PYTHON:-python3}" - "$work" <<'PY'
 from pathlib import Path
 import sys
+import json
+import subprocess
 
 work = Path(sys.argv[1])
 html = work / "ui/index.html"
 script = (work / "testdata/mac-smoke.js").read_text()
+invite = subprocess.check_output(["go", "run", "./cmd/passage/testdata/mac-smoke-link.go", "invite"], cwd=work.parent, text=True)
+script = script.replace("const subscriptionInvite = null;", "const subscriptionInvite = " + json.dumps(invite) + ";")
 html.write_text(html.read_text().replace("</body>", "<script>" + script + "</script></body>"))
 for mode in ("menu", "system"):
     (work / mode).mkdir()

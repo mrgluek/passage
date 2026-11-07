@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.7.0
+
+- A link can now refresh itself. A subscription link carries an address from
+  which Passage loads the current list of routes, so routes can change without
+  a new link. Your own edits (a route switched off, a changed priority) stay.
+  Settings shows each subscription, with Refresh now and Remove, on Android,
+  Windows and macOS. The owner can also close a subscription.
+- Adds a new connection type for links (TURN).
+- Passage notices a route that accepts a connection but never answers, uses
+  another route, and tries the silent one last for a while.
+- Fixes garbled arrows in the connect help on Android.
+
 ## 0.6.4
 
 - Faster and steadier HTTP connection type: it reuses its connections.

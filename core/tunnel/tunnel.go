@@ -137,14 +137,11 @@ const (
 	canaryStagger = 2 * time.Second
 )
 
-// firstResponseTimeout: a connection that has sent bytes and got none back
-// for this long triggers a probe (it stays open). A var for tests.
-var firstResponseTimeout = 5 * time.Second
-
 type dialFunc func(ctx context.Context, network, addr string) (net.Conn, error)
 
 // Tunnel is a running local proxy.
 type Tunnel struct {
+	subs      *subscriptionRuntime
 	cfg       Config
 	resolvers []string // the paths handed to soar (IPv6 dropped without a route)
 	ln        net.Listener
@@ -189,6 +186,7 @@ type Tunnel struct {
 	lastCanary  string    // the canary that answered last; tried first next time
 	strategy    *strategy // the smart route's working strategy, if any
 	stats       [numRoutes]routeStats
+	stalls      map[string]map[Route]*stallState
 	// Bytes per route, counted as they flow: IMAP IDLE connections live for
 	// hours, so totals taken at close would show nothing for them.
 	upBytes   [numRoutes]atomic.Int64
@@ -205,13 +203,17 @@ type tracked struct {
 }
 
 type routeStats struct {
-	Conns int64 `json:"conns"`
-	Fails int64 `json:"fails"`
-	Up    int64 `json:"up"`
-	Down  int64 `json:"down"`
+	Conns  int64  `json:"conns"`
+	Fails  int64  `json:"fails"`
+	Stalls int64  `json:"stalls"`
+	State  string `json:"state,omitempty"`
+	Reason string `json:"reason,omitempty"`
+	Up     int64  `json:"up"`
+	Down   int64  `json:"down"`
 }
 
 type probeResult struct {
+	Stalled   bool `json:"stalled,omitempty"`
 	Relays    int  `json:"relays"`
 	RelayOK   int  `json:"relay_ok"`
 	NetworkOK bool `json:"network_ok"` // a target or canary answered directly
@@ -239,6 +241,7 @@ func Start(cfg Config) (*Tunnel, error) {
 	if err != nil {
 		return nil, err
 	}
+	rawConfig := cfg
 	cfg.Routes = Edited(cfg.Routes, cfg.RouteEdits)
 	mode := cfg.Mode
 	if routeMode(mode) {
@@ -246,6 +249,7 @@ func Start(cfg Config) (*Tunnel, error) {
 	}
 	t := &Tunnel{
 		cfg:    cfg,
+		subs:   &subscriptionRuntime{cfg: rawConfig, updates: make(chan SubscriptionRefreshResult, 1), urgent: make(chan struct{}, 1)},
 		log:    newEventLog(500),
 		kick:   make(chan struct{}, 1),
 		mode:   mode,
@@ -350,9 +354,19 @@ func Start(cfg Config) (*Tunnel, error) {
 	if skippedPrivate > 0 {
 		t.log.add("skipped %d private-address resolvers this network did not hand out", skippedPrivate)
 	}
+	if pool, ok := t.client.(*routePool); ok {
+		pool.log = t.log
+		if len(rawConfig.Subscriptions) > 0 {
+			pool.onFailure = t.requestSubscriptionRefresh
+		}
+	}
 	t.wg.Add(2)
 	go t.serve()
 	go t.monitor()
+	if len(rawConfig.Subscriptions) > 0 {
+		t.wg.Add(1)
+		go t.subscriptionLoop()
+	}
 	return t, nil
 }
 
@@ -682,7 +696,11 @@ func (t *Tunnel) setRouteLocked(g *group, r Route, reason string) {
 	g.routeSince = time.Now()
 	g.tunnelFails = 0
 	t.routeGen.Add(1)
-	t.log.add("%s route %s -> %s (%s)", g.name, old, r, reason)
+	name := g.name
+	if reason == "stalled" {
+		name = g.kind.String()
+	}
+	t.log.add("%s route %s -> %s (%s)", name, old, r, reason)
 	for c := range t.conns {
 		if c.group == g && c.route != r {
 			// Close only wakes the pipes; their cleanup takes t.mu after we release it.
@@ -789,14 +807,17 @@ func (t *Tunnel) handle(c net.Conn) {
 
 	start := time.Now()
 	var up, down atomic.Int64
-	if route != RouteTunnel {
-		stall := time.AfterFunc(firstResponseTimeout, func() {
-			if up.Load() > 0 && down.Load() == 0 {
-				t.kickProbe()
-			}
-		})
-		defer stall.Stop()
-	}
+	raw := remote
+	key := networkKey(t.cfg)
+	remote = watchResponses(raw, func() {
+		poolFeedback(raw, false)
+		t.connectionFeedback(g, route, key, false)
+	}, func(first bool) {
+		poolFeedback(raw, true, first)
+		t.connectionFeedback(g, route, key, true, first)
+		c.Close()
+	})
+	defer remote.Close()
 	var wg sync.WaitGroup
 	wg.Add(2)
 	go func() { defer wg.Done(); pipe(remote, c, &up, &t.upBytes[route]) }()
@@ -875,6 +896,14 @@ func (t *Tunnel) dial(g *group, addr string) (net.Conn, Route, error) {
 	}
 	t.mu.Lock()
 	route, mode := g.route, t.mode
+	if mode == ModeAuto && route != RouteTunnel && t.routeStalledLocked(route) {
+		for n := RouteDirect; n < numRoutes; n++ {
+			if usable(n) && !t.routeStalledLocked(n) {
+				route = n
+				break
+			}
+		}
+	}
 	if ipv6 && !usable(route) {
 		if mode != ModeAuto {
 			t.mu.Unlock()
@@ -888,7 +917,9 @@ func (t *Tunnel) dial(g *group, addr string) (net.Conn, Route, error) {
 		}
 	}
 	t.mu.Unlock()
+	tried := map[Route]bool{}
 	for r := route; ; {
+		tried[r] = true
 		t.mu.Lock()
 		w := t.ways[r]
 		if !usable(r) {
@@ -896,9 +927,17 @@ func (t *Tunnel) dial(g *group, addr string) (net.Conn, Route, error) {
 		}
 		next := r
 		for n := r + 1; n < numRoutes; n++ {
-			if usable(n) {
+			if !tried[n] && usable(n) && !t.routeStalledLocked(n) {
 				next = n
 				break
+			}
+		}
+		if next == r && mode == ModeAuto {
+			for n := RouteDirect; n < numRoutes; n++ {
+				if !tried[n] && usable(n) && t.routeStalledLocked(n) {
+					next = n
+					break
+				}
 			}
 		}
 		t.mu.Unlock()
@@ -916,6 +955,7 @@ func (t *Tunnel) dial(g *group, addr string) (net.Conn, Route, error) {
 			return c, r, nil
 		}
 		if next == r {
+			t.requestSubscriptionRefresh()
 			return nil, r, err
 		}
 		t.kickProbe()
@@ -1326,6 +1366,13 @@ func (t *Tunnel) applyProbe(g *group, res probeResult) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	gs := g
+	if t.routeStalledLocked(RouteDirect) {
+		res.RelayOK = 0
+		res.NetworkOK = true
+	}
+	if t.routeStalledLocked(RouteSmart) {
+		res.SmartOK = false
+	}
 	gs.lastProbe = time.Now()
 	gs.lastResult = res
 	healthy := gs.tunnelFails == 0 && (t.client == nil || t.client.Established())
@@ -1375,6 +1422,15 @@ func (t *Tunnel) applyProbe(g *group, res probeResult) {
 //   - everything failing means "offline": change nothing.
 func decide(route Route, res probeResult, failStreak, okStreak int, tunnelHealthy bool) (Route, int, int, string) {
 	switch {
+	case res.Stalled:
+		failStreak++
+		if route == RouteSmart || route == RouteDirect && failStreak >= blockedAfter {
+			route = RouteTunnel
+			if res.SmartOK {
+				route = RouteSmart
+			}
+		}
+		return route, failStreak, 0, "blocked"
 	case res.Relays == 0:
 		return route, failStreak, okStreak, "unknown"
 	case res.RelayOK > 0:
@@ -1552,25 +1608,27 @@ func dialResolver(ctx context.Context, network, addr string) (net.Conn, error) {
 
 // Status is the diagnostics snapshot shown in the app and sent in reports.
 type Status struct {
-	RouteCount int                   `json:"route_count"`
-	Zone       string                `json:"zone"`
-	TunnelIPv6 bool                  `json:"tunnel_ipv6"`
-	Mode       string                `json:"mode"`
-	Route      string                `json:"route"`
-	Via        string                `json:"via,omitempty"`      // route type under "tunnel": iroh, soar
-	Strategy   string                `json:"strategy,omitempty"` // the smart route's, when it works
-	Routes     []string              `json:"routes"`             // set-up routes, in fallback order
-	RouteSince time.Time             `json:"route_since"`
-	State      string                `json:"state"`
-	Resolvers  int                   `json:"resolvers"`
-	Network    []string              `json:"network_resolvers"`
-	Operator   string                `json:"operator"`
-	Relays     []string              `json:"relays"`
-	LastProbe  time.Time             `json:"last_probe"`
-	LastResult probeResult           `json:"last_result"`
-	Active     map[string]int        `json:"active"`
-	Stats      map[string]routeStats `json:"stats"`
-	Soar       string                `json:"soar"`
+	Subscriptions []SubscriptionStatus  `json:"subscriptions,omitempty"`
+	ConfigChanged bool                  `json:"config_changed,omitempty"`
+	RouteCount    int                   `json:"route_count"`
+	Zone          string                `json:"zone"`
+	TunnelIPv6    bool                  `json:"tunnel_ipv6"`
+	Mode          string                `json:"mode"`
+	Route         string                `json:"route"`
+	Via           string                `json:"via,omitempty"`      // route type under "tunnel": iroh, soar
+	Strategy      string                `json:"strategy,omitempty"` // the smart route's, when it works
+	Routes        []string              `json:"routes"`             // set-up routes, in fallback order
+	RouteSince    time.Time             `json:"route_since"`
+	State         string                `json:"state"`
+	Resolvers     int                   `json:"resolvers"`
+	Network       []string              `json:"network_resolvers"`
+	Operator      string                `json:"operator"`
+	Relays        []string              `json:"relays"`
+	LastProbe     time.Time             `json:"last_probe"`
+	LastResult    probeResult           `json:"last_result"`
+	Active        map[string]int        `json:"active"`
+	Stats         map[string]routeStats `json:"stats"`
+	Soar          string                `json:"soar"`
 	// Tunnels has one row per configured tunnel route, in priority order.
 	Tunnels []RouteState `json:"tunnels"`
 	// Session is whether the soar session with the server is up; Paths is
@@ -1614,7 +1672,16 @@ func (t *Tunnel) Status(n int) Status {
 	if mail == t.other && t.telegram.seen {
 		mail = t.telegram
 	}
+	var subscriptions []SubscriptionStatus
+	changed := false
+	if t.subs != nil {
+		t.subs.mu.Lock()
+		subscriptions = subscriptionStatuses(t.subs.cfg)
+		changed = t.subs.changed.Load()
+		t.subs.mu.Unlock()
+	}
 	s := Status{
+		Subscriptions: subscriptions, ConfigChanged: changed,
 		Zone:           t.cfg.Zone,
 		RouteCount:     len(t.cfg.Routes),
 		TunnelIPv6:     t.cfg.HasTunnel() && t.cfg.TunnelIPv6,
@@ -1663,7 +1730,6 @@ func (t *Tunnel) Status(n int) Status {
 	for c := range t.conns {
 		s.Active[c.route.String()]++
 	}
-	s.Events = t.log.last(n)
 	s.Tunnels = []RouteState{}
 	if p, ok := t.client.(*routePool); ok {
 		s.Tunnels = p.states()
@@ -1683,12 +1749,16 @@ func (t *Tunnel) Status(n int) Status {
 			}
 		}
 	}
+	s.Events = t.log.last(n)
 	return s
 }
 
 func (t *Tunnel) routeStatsLocked(r Route) routeStats {
 	s := t.stats[r]
 	s.Up, s.Down = t.upBytes[r].Load(), t.downBytes[r].Load()
+	if t.routeStalledLocked(r) {
+		s.State, s.Reason = routeFailed, "stalled"
+	}
 	return s
 }
 
@@ -1740,3 +1810,41 @@ func (h *logHandler) WithAttrs(as []slog.Attr) slog.Handler {
 }
 
 func (h *logHandler) WithGroup(string) slog.Handler { return h }
+
+func (t *Tunnel) routeStalledLocked(r Route) bool {
+	h := t.stalls[networkKey(t.cfg)][r]
+	return h.blocked(t.timeNow(), t.log, r.String())
+}
+func (t *Tunnel) connectionFeedback(g *group, r Route, key string, stalled bool, first ...bool) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if t.stalls == nil {
+		t.stalls = map[string]map[Route]*stallState{}
+	}
+	if t.stalls[key] == nil {
+		t.stalls[key] = map[Route]*stallState{}
+	}
+	h := t.stalls[key][r]
+	if h == nil {
+		h = &stallState{}
+		t.stalls[key][r] = h
+	}
+	if !stalled {
+		h.recovered(t.log, r.String())
+		return
+	}
+	t.stats[r].Fails++
+	t.stats[r].Stalls++
+	// Individual tunnel routes carry their own cooldown.
+	if r != RouteTunnel {
+		h.record(t.timeNow(), t.log, r.String(), len(first) == 0 || first[0])
+	}
+	if key == networkKey(t.cfg) && g.route == r && r != RouteTunnel {
+		next, fail, ok, state := decide(r, probeResult{Stalled: true, SmartOK: t.usableLocked(g, RouteSmart) && !t.routeStalledLocked(RouteSmart)}, g.failStreak, g.okStreak, true)
+		g.failStreak, g.okStreak, g.state = fail, ok, state
+		if t.mode == ModeAuto && t.usableLocked(g, next) {
+			t.setRouteLocked(g, next, "stalled")
+		}
+	}
+	t.kickProbe()
+}

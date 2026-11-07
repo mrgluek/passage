@@ -225,7 +225,13 @@ func TestAppCalls(t *testing.T) {
 
 func TestStrings(t *testing.T) {
 	for key := range texts["ru"] {
-		if _, ok := texts["en"][key]; !ok {
+		englishKey := key
+		for _, form := range []string{"_few", "_many"} {
+			if strings.HasSuffix(key, form) {
+				englishKey = strings.TrimSuffix(key, form) + "_other"
+			}
+		}
+		if _, ok := texts["en"][englishKey]; !ok {
 			t.Errorf("ru has %q, en does not", key)
 		}
 	}
@@ -363,5 +369,29 @@ func TestSaveRouteEdits(t *testing.T) {
 	}
 	if got := savedRoutes(b.linkCfg); len(got) != 1 || !got[0].On || got[0].Priority != 20 || len(b.settings.Edits) != 0 {
 		t.Fatalf("replace kept edits: %+v %+v", got, b.settings.Edits)
+	}
+}
+
+func TestSettingsEmptySections(t *testing.T) {
+	for _, lang := range []string{"en", "ru"} {
+		t.Run(lang, func(t *testing.T) {
+			a := newApp(t.TempDir(), "test", "", lang, &fakePlatform{})
+			if got := a.linkView(false); len(got.Routes) != 0 || got.RoutesEmpty != a.t.f("saved_routes_empty") {
+				t.Fatalf("empty routes: %+v", got)
+			}
+			if got := a.view(); len(got.Subscriptions) != 0 || got.SubscriptionsEmpty != a.t.f("subscriptions_empty") {
+				t.Fatalf("empty subscriptions: %+v", got)
+			}
+			a.linkCfg.Routes = []links.Route{{ID: "example", Type: "wss", Priority: 10}}
+			if got := a.linkView(false); len(got.Routes) != 1 || got.RoutesEmpty != "" {
+				t.Fatalf("saved route: %+v", got)
+			}
+			for _, closed := range []bool{false, true} {
+				a.linkCfg.Subscriptions = []tunnel.Subscription{{ID: "example", Name: "Example", Closed: closed}}
+				if got := a.view(); len(got.Subscriptions) != 1 || got.SubscriptionsEmpty != "" || got.Subscriptions[0].Closed != closed {
+					t.Fatalf("subscription closed=%v: %+v", closed, got)
+				}
+			}
+		})
 	}
 }

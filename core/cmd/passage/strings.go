@@ -9,6 +9,46 @@ import (
 // Go's (%[1]s); the window gets the table and formats them the same way.
 var texts = map[string]map[string]string{
 	"en": {
+		"saved_routes_empty":  "No routes yet. Paste a link below to add routes.",
+		"subscriptions_empty": "No subscriptions. A subscription link keeps your routes up to date by itself: paste it below, and Passage loads the current routes and refreshes them in the background.",
+		"sub_one":             "Paste one subscription link at a time and confirm Subscribe.",
+		"subscriptions":       "Subscriptions",
+		"sub_closed":          "Closed by its owner",
+		"subscribe":           "Subscribe",
+		"sub_addresses_one":   "%[1]d address",
+		"sub_addresses_other": "%[1]d addresses",
+		"sub_seed":            "Includes a first route list",
+		"sub_no_seed":         "Routes will be loaded from the address in the link",
+		"sub_trusted":         "Signed by the app’s author",
+		"sub_takeover":        "Routes with the same names will be kept up to date by this subscription.",
+		"sub_unknown":         "Unknown signer",
+		"sub_collision":       "This subscription has a different signer. Subscribe only if you trust the new signer.",
+		"sub_save_failed":     "Could not save subscriptions. Try again.",
+		"sub_detail_one":      "revision %[1]d · %[2]d route",
+		"sub_detail_other":    "revision %[1]d · %[2]d routes",
+		"sub_just_now":        "updated just now",
+		"sub_minutes":         "updated %[1]d min ago",
+		"sub_hours":           "updated %[1]d h ago",
+		"sub_days_one":        "updated %[1]d day ago",
+		"sub_days_other":      "updated %[1]d days ago",
+		"sub_refresh":         "Refresh now",
+		"sub_refreshing":      "Refreshing…",
+		"sub_remove":          "Remove",
+		"sub_remove_confirm":  "Remove %[1]s and its routes?",
+		"sub_updated":         "Updated",
+		"sub_current":         "Already up to date",
+		"sub_failed":          "Failed: %[1]s",
+		"sub_routes_updated":  "Routes updated: +%[1]d, -%[2]d",
+		"sub_routes_timed":    "Routes updated: +%[1]d, -%[2]d · %[3]s",
+		"sub_error_network":   "Could not connect",
+		"sub_error_http":      "The address returned an error",
+		"sub_error_size":      "The route list is too large",
+		"sub_error_decrypt":   "Could not read the route list",
+		"sub_error_signature": "The signature could not be verified",
+		"sub_error_rollback":  "An older revision was rejected",
+		"sub_error_collision": "Some route IDs are already in use",
+		"sub_error_required":  "Update Passage to load these routes",
+
 		"update_manual_bundle":           "Install Passage in Applications to update it. The download folder is open.",
 		"update_manual_writable":         "Passage cannot replace this app. Extract the download and move Passage to Applications. The download folder is open.",
 		"update_manual_archive_windows":  "Passage cannot update while running from inside a zip archive. Extract Passage before updating. The download folder is open.",
@@ -112,7 +152,7 @@ var texts = map[string]map[string]string{
 		"no_link":                "No link yet: Passage works directly and with tuning. A link adds a tunnel for networks where nothing else gets through; add it in settings.",
 		"open_settings":          "Open settings",
 		"connect_label":          "Connect an app",
-		"connect_help":           "Add the proxy to the app's proxy settings (Delta Chat, ArcaneChat: Settings → Advanced → Proxy → Add proxy). The buttons on the right copy it as a socks5:// link or as a tg://socks link, for apps that take only that one; the second also opens it in such an app. Click a value to copy just that.",
+		"connect_help":           "Add the proxy to the app's proxy settings (Delta Chat, ArcaneChat: Settings > Advanced > Proxy > Add proxy). The buttons on the right copy it as a socks5:// link or as a tg://socks link, for apps that take only that one; the second also opens it in such an app. Click a value to copy just that.",
 		"copy_proxy_link":        "Copy the socks5:// link",
 		"copy_tg_link":           "Copy the tg://socks link and open it",
 		"proxy_link_copied":      "Proxy link copied",
@@ -174,6 +214,57 @@ var texts = map[string]map[string]string{
 		"inside_archive":         "Passage is running from inside the zip archive, so it can't keep its settings and link.txt next to it.\n\nRight-click the archive, choose \"Extract All…\", and start passage.exe from the extracted folder.",
 	},
 	"ru": {
+		"saved_routes_empty":  "Маршрутов пока нет. Вставьте ссылку ниже, чтобы добавить маршруты.",
+		"subscriptions_empty": "Подписок нет. Ссылка-подписка сама обновляет маршруты: вставьте её ниже, и Passage загрузит актуальные маршруты и будет обновлять их в фоне.",
+		"link_hint":           "Вставьте ссылку Passage, чтобы добавить или заменить маршруты",
+		"app_name":            "Passage",
+		"status_relay":        "  %[1]s: %[2]s, %[3]s",
+		"tunnel_route":        "%[1]s: %[2]s",
+		"my_route_hint":       "127.0.0.1:9050",
+		"sub_one":             "Вставьте одну ссылку подписки и нажмите «Подписаться».",
+		"subscriptions":       "Подписки",
+		"sub_closed":          "Закрыта владельцем",
+		"subscribe":           "Подписаться",
+		"sub_addresses_one":   "%[1]d адрес",
+		"sub_addresses_few":   "%[1]d адреса",
+		"sub_addresses_many":  "%[1]d адресов",
+		"sub_addresses_other": "%[1]d адреса",
+		"sub_seed":            "Есть начальный список маршрутов",
+		"sub_no_seed":         "Маршруты будут загружены по адресу из ссылки",
+		"sub_trusted":         "Подписано автором приложения",
+		"sub_takeover":        "Маршруты с такими же именами будут обновляться подпиской.",
+		"sub_unknown":         "Неизвестный автор подписи",
+		"sub_collision":       "У этой подписки другая подпись. Продолжайте, только если доверяете новому автору.",
+		"sub_save_failed":     "Не удалось сохранить подписки. Попробуйте ещё раз.",
+		"sub_detail_one":      "Версия %[1]d · %[2]d маршрут",
+		"sub_detail_few":      "Версия %[1]d · %[2]d маршрута",
+		"sub_detail_many":     "Версия %[1]d · %[2]d маршрутов",
+		"sub_detail_other":    "Версия %[1]d · %[2]d маршрута",
+		"sub_just_now":        "обновлено только что",
+		"sub_minutes":         "обновлено %[1]d мин. назад",
+		"sub_hours":           "обновлено %[1]d ч. назад",
+		"sub_days_one":        "обновлено %[1]d дн. назад",
+		"sub_days_few":        "обновлено %[1]d дн. назад",
+		"sub_days_many":       "обновлено %[1]d дн. назад",
+		"sub_days_other":      "обновлено %[1]d дн. назад",
+		"sub_refresh":         "Обновить сейчас",
+		"sub_refreshing":      "Обновление…",
+		"sub_remove":          "Удалить",
+		"sub_remove_confirm":  "Удалить подписку «%[1]s» и её маршруты?",
+		"sub_updated":         "Обновлено",
+		"sub_current":         "Уже обновлено",
+		"sub_failed":          "Не удалось обновить: %[1]s",
+		"sub_routes_updated":  "Маршруты обновлены: +%[1]d, −%[2]d",
+		"sub_routes_timed":    "Маршруты обновлены: +%[1]d, −%[2]d · %[3]s",
+		"sub_error_network":   "Не удалось подключиться",
+		"sub_error_http":      "Ошибка по адресу подписки",
+		"sub_error_size":      "Список маршрутов слишком большой",
+		"sub_error_decrypt":   "Не удалось прочитать список маршрутов",
+		"sub_error_signature": "Не удалось проверить подпись",
+		"sub_error_rollback":  "Получена устаревшая версия",
+		"sub_error_collision": "Некоторые имена маршрутов уже заняты",
+		"sub_error_required":  "Обновите Passage для загрузки маршрутов",
+
 		"update_manual_bundle":           "Для обновления установите Passage в Программы. Папка загрузки открыта.",
 		"update_manual_writable":         "Passage не может заменить это приложение. Распакуйте загрузку и перенесите Passage в Программы. Папка загрузки открыта.",
 		"update_manual_archive_windows":  "Passage не может обновиться при запуске из zip-архива. Распакуйте Passage перед обновлением. Папка загрузки открыта.",
@@ -273,7 +364,7 @@ var texts = map[string]map[string]string{
 		"no_link":                "Ссылки пока нет: Passage работает напрямую и с подстройкой. Ссылка добавит туннель для сетей, где больше ничего не проходит; её можно добавить в настройках.",
 		"open_settings":          "Открыть настройки",
 		"connect_label":          "Подключить приложение",
-		"connect_help":           "Добавьте прокси в настройки прокси приложения (Delta Chat, ArcaneChat: Настройки → Дополнительно → Прокси → Добавить прокси). Кнопки справа копируют его как ссылку socks5:// или как ссылку tg://socks — для приложений, которые принимают только её; вторая ещё и открывает её в таком приложении. Нажмите на значение, чтобы скопировать только его.",
+		"connect_help":           "Добавьте прокси в настройки прокси приложения (Delta Chat, ArcaneChat: Настройки > Дополнительно > Прокси > Добавить прокси). Кнопки справа копируют его как ссылку socks5:// или как ссылку tg://socks — для приложений, которые принимают только её; вторая ещё и открывает её в таком приложении. Нажмите на значение, чтобы скопировать только его.",
 		"copy_proxy_link":        "Скопировать ссылку socks5://",
 		"copy_tg_link":           "Скопировать ссылку tg://socks и открыть её",
 		"proxy_link_copied":      "Ссылка на прокси скопирована",
@@ -366,4 +457,21 @@ func (t tr) f(key string, args ...any) string {
 		return s
 	}
 	return fmt.Sprintf(s, args...)
+}
+
+func (t tr) quantity(key string, count int64, args ...any) string {
+	form := "other"
+	if _, russian := t[key+"_few"]; russian {
+		switch {
+		case count%10 == 1 && count%100 != 11:
+			form = "one"
+		case count%10 >= 2 && count%10 <= 4 && (count%100 < 12 || count%100 > 14):
+			form = "few"
+		default:
+			form = "many"
+		}
+	} else if count == 1 {
+		form = "one"
+	}
+	return t.f(key+"_"+form, args...)
 }

@@ -67,8 +67,11 @@ static void smokeReopened(NSWindow *original, WKWebView *view, BOOL secondProces
 
 static void smokePoll(void) {
     if (++smokeAttempts > 100) {
-        fprintf(stderr, "SMOKE FAILED: timed out\n");
-        exit(2);
+        [passage.webview evaluateJavaScript:@"window.passageSmokeStage || 'before script'" completionHandler:^(id value, NSError *error) {
+            fprintf(stderr, "SMOKE FAILED: timed out at %s\n", [[value description] UTF8String]);
+            exit(2);
+        }];
+        return;
     }
     if (passage.webview) {
         [passage.webview evaluateJavaScript:@"window.passageSmokeResult || ''" completionHandler:^(id value, NSError *error) {

@@ -50,6 +50,14 @@ class PassageService : Service() {
         var lastError: String? = null
             private set
 
+        @Volatile
+        var runningRoutesConfig: String? = null
+            private set
+
+        fun savedRefreshMetadata(previous: String, current: String) {
+            if (runningRoutesConfig == previous) runningRoutesConfig = current
+        }
+
         fun start(context: Context, reason: String = "user start") {
             val i = Intent(context, PassageService::class.java).setAction(ACTION_START)
                 .putExtra("reason", reason)
@@ -83,6 +91,7 @@ class PassageService : Service() {
                 try {
                     checkNetwork(nudge = false)
                     val status = status()
+                    Diagnostics.routerEvents(status)
                     updateWakeLock(status)
                     updateNotification(status)
                     sampleBattery()
@@ -171,7 +180,7 @@ class PassageService : Service() {
     }
 
     /** The router's status, or null while it can't be read. */
-    private fun status(): JSONObject? = try { Native.status() } catch (_: Throwable) { null }
+    private fun status(): JSONObject? = try { Native.json(Native.status(500)) } catch (_: Throwable) { null }
 
     /**
      * The CPU stays awake while a Soar route carries connections: it polls
@@ -257,7 +266,10 @@ class PassageService : Service() {
         netCallback = null
         wakeLock?.let { if (it.isHeld) it.release() }
         wakeLock = null
-        bg { Native.stop() }
+        bg {
+            Diagnostics.routerEvents(status())
+            Native.stop()
+        }
     }
 
     /**
@@ -287,23 +299,29 @@ class PassageService : Service() {
         Diagnostics.event("router start: $why mode=${s.mode}")
         try {
             // Without a link the router runs direct and smart routes only.
-            val cfg = if (s.routesConfig.isNotEmpty()) JSONObject(s.routesConfig) else if (s.link.isEmpty()) JSONObject() else Native.parse(s.link)
+            val savedConfig = s.routesConfig
+            val cfg = if (savedConfig.isNotEmpty()) JSONObject(savedConfig) else if (s.link.isEmpty()) JSONObject() else Native.parse(s.link)
             cfg.optString("error").takeIf { it.isNotEmpty() }?.let { throw IllegalArgumentException("link: $it") }
             val net = NetInfo.snapshot(this)
             cfg.put("listen", s.listen)
             if (s.auth) {
                 cfg.put("user", s.user)
                 cfg.put("pass", s.pass)
+            } else {
+                cfg.remove("user")
+                cfg.remove("pass")
             }
             cfg.put("mode", s.mode)
-            if (s.myRoute.isNotEmpty()) cfg.put("my", s.myRoute)
+            if (s.myRoute.isNotEmpty()) cfg.put("my", s.myRoute) else cfg.remove("my")
             cfg.put("system_resolvers", JSONArray(net.dns))
             cfg.put("operator", net.operator)
             cfg.put("iroh_binary", java.io.File(applicationInfo.nativeLibraryDir, "libpassage_iroh.so").path)
             cfg.put("private_dir", java.io.File(filesDir, "iroh").path)
             cfg.put("state_file", java.io.File(filesDir, "router-state.json").path)
+            Diagnostics.routerEvents(status())
             val out = Native.json(Native.start(cfg.toString().toByteArray(Charsets.UTF_8)))
             out.optString("error").takeIf { it.isNotEmpty() }?.let { throw IllegalStateException(it) }
+            runningRoutesConfig = savedConfig
             lastNet = net.key
             lastError = null
             Diagnostics.event("router started")
@@ -321,7 +339,10 @@ class PassageService : Service() {
     private fun checkNetwork(nudge: Boolean) {
         if (!active) return
         val running = try {
-            Native.status().optBoolean("running")
+            val current = Native.json(Native.status(500))
+            Diagnostics.routerEvents(current)
+            if (current.optBoolean("config_changed") && !acceptSubscriptionUpdate()) return
+            current.optBoolean("running")
         } catch (e: Throwable) {
             Diagnostics.error("router status failed", e)
             false
@@ -335,6 +356,20 @@ class PassageService : Service() {
         } else if (nudge) {
             Native.networkChanged()
         }
+    }
+
+    /** Retrieve the private candidate before any restart discards it. */
+    private fun acceptSubscriptionUpdate(): Boolean {
+        val settings = Settings(this)
+        val previous = settings.routesConfig
+        if (runningRoutesConfig != previous) return false
+        val request = Subscriptions.request(previous)
+        val result = Native.json(Native.refreshSubscriptions(request.toString().toByteArray(Charsets.UTF_8)))
+        if (result.has("error")) return false
+        val config = result.getJSONObject("config")
+        if (!settings.saveSubscriptionRefresh(previous, config)) return false
+        startTunnel("subscription updated")
+        return true
     }
 
     private fun goForeground() {

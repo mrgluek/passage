@@ -69,6 +69,23 @@ func wssServer(p links.WSSParams, client *WSSClient) routeServer {
 	return sessionServer(urlServer(p.Endpoint), client, func() (*WSSClient, error) { return NewWSSClient(p) })
 }
 
+func turnServer(p links.TURNParams, client *WSSClient) routeServer {
+	s := routeServer{}
+	if u, err := links.TURNURL(p.Relay); err == nil && (u.Scheme == "turns" || u.Query().Get("transport") == "tcp") {
+		port := u.Port()
+		if port == "" {
+			port = "3478"
+			if u.Scheme == "turns" {
+				port = "443"
+			}
+		}
+		s.addr = net.JoinHostPort(cmp.Or(p.DialIP, u.Hostname()), port)
+		s.name = cmp.Or(p.SNI, u.Hostname())
+		s.tls = u.Scheme == "turns"
+	}
+	return sessionServer(s, client, func() (*WSSClient, error) { return NewTURNClient(p) })
+}
+
 func httpServer(p links.HTTPParams, client *WSSClient) routeServer {
 	s := urlServer(p.Endpoint)
 	if host, port, err := net.SplitHostPort(s.addr); err == nil && p.DialIP != "" {
@@ -219,6 +236,10 @@ func checkServer(ctx context.Context, server routeServer) []RouteStage {
 	}
 	host, port, err := net.SplitHostPort(server.addr)
 	if err != nil {
+		if server.addr == "" && server.app != nil {
+			step("app", checkAppTimeout, server.app)
+			return stages
+		}
 		return nil
 	}
 	ips := []net.IP{net.ParseIP(host)}

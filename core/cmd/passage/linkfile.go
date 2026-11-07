@@ -24,6 +24,9 @@ func importLinks(text string) (tunnel.Config, []tunnel.ImportResult, error) {
 			continue
 		}
 		r, err := tunnel.ImportLink(cfg, line, true)
+		if err == nil && r.Mode == "subscribe" {
+			r, err = tunnel.SubscribeLink(cfg, line, true)
+		}
 		if err != nil {
 			return tunnel.Config{}, nil, lineError{i + 1, err}
 		}
@@ -114,6 +117,12 @@ func installedRoutes(cfg tunnel.Config) []routeChoice {
 		if id == kind {
 			label = fmt.Sprintf("%d %s", priority, id)
 		}
+		for _, sub := range cfg.Subscriptions {
+			if slices.Contains(sub.RouteIDs, id) {
+				label += " · " + sub.Name
+				break
+			}
+		}
 		out = append(out, routeChoice{id, kind, priority, "route:" + id, label})
 	}
 	if len(cfg.Routes) == 0 && cfg.Zone != "" {
@@ -143,7 +152,14 @@ func savedRoutes(cfg tunnel.Config) []savedRoute {
 		if e.Priority != nil {
 			p = int(*e.Priority)
 		}
-		out = append(out, savedRoute{ID: r.ID, Type: r.Type, Priority: p, On: !e.Off})
+		owner := ""
+		for _, sub := range cfg.Subscriptions {
+			if slices.Contains(sub.RouteIDs, r.ID) {
+				owner = sub.Name
+				break
+			}
+		}
+		out = append(out, savedRoute{ID: r.ID, Type: r.Type, Priority: p, On: !e.Off, Subscription: owner})
 	}
 	slices.SortStableFunc(out, func(a, b savedRoute) int {
 		if a.On != b.On {

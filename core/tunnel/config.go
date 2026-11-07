@@ -33,7 +33,7 @@ func routeMode(mode string) bool {
 }
 
 // RouteKinds are the route types that can be chosen as the mode.
-var RouteKinds = []string{"my", "http", "wss", "iroh", "soar"}
+var RouteKinds = []string{"my", "http", "wss", "turn", "iroh", "soar"}
 
 // DefaultResolvers are public resolvers used in addition to the network's
 // and the link's. soar uses all of them and backs off the ones that don't
@@ -64,7 +64,8 @@ const maxResolvers = 64
 
 // Config combines server settings from the link with local app state.
 type Config struct {
-	Routes []links.Route `json:"routes,omitempty"`
+	Routes        []links.Route  `json:"routes,omitempty"`
+	Subscriptions []Subscription `json:"subscriptions,omitempty"`
 	// RouteEdits are local changes to Routes by ID (priority, switched off).
 	RouteEdits map[string]RouteEdit `json:"route_edits,omitempty"`
 	// UpdateSources comes from a link signed by the trusted author.
@@ -163,6 +164,23 @@ func ParseLink(link string) (Config, error) {
 
 // Normalize validates the config and fills defaults.
 func (c Config) Normalize() (Config, error) {
+	subIDs, owners := map[string]bool{}, map[string]bool{}
+	for _, sub := range c.Subscriptions {
+		if err := sub.validate(); err != nil {
+			return Config{}, err
+		}
+		if subIDs[sub.ID] || len(sub.RouteIDs) > links.MaxSubRoutes {
+			return Config{}, errors.New("invalid subscription ownership")
+		}
+		subIDs[sub.ID] = true
+		for _, id := range sub.RouteIDs {
+			if !links.ValidID(id) || owners[id] {
+				return Config{}, errors.New("invalid subscription ownership")
+			}
+			owners[id] = true
+		}
+	}
+
 	if len(c.Routes) > 0 {
 		if len(c.Routes) > 32 {
 			return Config{}, errors.New("too many installed routes")

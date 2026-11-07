@@ -40,6 +40,8 @@ const (
 )
 
 type routePool struct {
+	log         *eventLog
+	onFailure   func()
 	clients     []soarClient
 	ipv6        []bool
 	kinds       []string // route type per client, reported as the connection's via
@@ -48,13 +50,15 @@ type routePool struct {
 	established atomic.Bool
 	mu          sync.Mutex
 	failedUntil map[int]time.Time
+	network     string
+	stalls      map[string]map[int]*stallState
 	refused     map[string]time.Time // "route index|address" -> until
 	only        string               // a route type or route:<id>; empty tries all
 	now         func() time.Time     // for tests; nil = time.Now
 }
 
 func newRoutePool(cfg Config) (soarClient, error) {
-	p := &routePool{}
+	p := &routePool{network: networkKey(cfg)}
 	routes := links.Sorted(cfg.Routes)
 	if cfg.My != "" {
 		// Before link routes of the same priority.
@@ -93,6 +97,19 @@ func newRoutePool(cfg Config) (soarClient, error) {
 				resolvers, _ = withoutIPv6(resolvers)
 			}
 			client = newLazySoar(soar.Config{Zone: params.Zone, ServerKey: ed25519.PublicKey(params.Key), Resolvers: resolvers, TCP: "auto", SafeQName: cmp.Or(cfg.SafeQName, soarSafeQName), MaxPathWindow: soarPathWindow, DialTCP: dialResolver, StreamOnly: isDoT, Logger: slog.New(slog.NewTextHandler(io.Discard, nil))})
+		case "turn":
+			params, err := links.Params[links.TURNParams](r)
+			if err != nil {
+				p.Close()
+				return nil, err
+			}
+			c, err := NewTURNClient(params)
+			if err != nil {
+				p.Close()
+				return nil, err
+			}
+			client = c
+			server = turnServer(params, c)
 		case "http":
 			params, err := links.Params[links.HTTPParams](r)
 			if err != nil {
@@ -201,7 +218,7 @@ func (p *routePool) DialContext(ctx context.Context, network, address string) (n
 				drain()
 				p.mark(r.i, false)
 				p.established.Store(true)
-				conn := r.conn
+				conn := net.Conn(&poolConn{Conn: r.conn, pool: p, index: r.i, network: p.network})
 				if r.i < len(p.kinds) {
 					conn = viaConn{conn, p.kinds[r.i]}
 				}
@@ -217,12 +234,18 @@ func (p *routePool) DialContext(ctx context.Context, network, address string) (n
 			} else {
 				p.mark(r.i, true)
 			}
-			if started < len(order) {
+			p.mu.Lock()
+			cooling := started < len(order) && p.stalledLocked(p.network, order[started], p.clock())
+			p.mu.Unlock()
+			if started < len(order) && (!cooling || pending == 0) {
 				startNext()
 				stagger.Reset(routeStagger)
 			}
 		case <-stagger.C:
-			if started < len(order) {
+			p.mu.Lock()
+			cooling := started < len(order) && p.stalledLocked(p.network, order[started], p.clock())
+			p.mu.Unlock()
+			if started < len(order) && !cooling {
 				startNext()
 				stagger.Reset(routeStagger)
 			}
@@ -236,6 +259,9 @@ func (p *routePool) DialContext(ctx context.Context, network, address string) (n
 		return nil, errDestinationRefused
 	}
 	p.established.Store(false)
+	if p.onFailure != nil {
+		p.onFailure()
+	}
 	return nil, errors.New("all configured routes failed")
 }
 
@@ -282,18 +308,20 @@ func (p *routePool) order(ip net.IP) []int {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	now := p.clock()
-	var ready, cooling []int
+	var ready, cooling, stalled []int
 	for i := range p.clients {
 		if ip != nil && ip.To4() == nil && !p.ipv6[i] || !p.matches(i, p.only) {
 			continue
 		}
-		if now.Before(p.failedUntil[i]) {
+		if p.stalledLocked(p.network, i, now) {
+			stalled = append(stalled, i)
+		} else if now.Before(p.failedUntil[i]) {
 			cooling = append(cooling, i)
 		} else {
 			ready = append(ready, i)
 		}
 	}
-	return append(ready, cooling...)
+	return append(append(ready, cooling...), stalled...)
 }
 
 // matches is called with p.mu held.
@@ -344,9 +372,11 @@ const (
 
 // RouteState is one configured tunnel route in Status.
 type RouteState struct {
-	ID    string `json:"id"`
-	Type  string `json:"type"`
-	State string `json:"state"`
+	ID     string `json:"id"`
+	Type   string `json:"type"`
+	State  string `json:"state"`
+	Reason string `json:"reason,omitempty"`
+	Stalls int64  `json:"stalls"`
 }
 
 func (p *routePool) states() []RouteState {
@@ -357,10 +387,16 @@ func (p *routePool) states() []RouteState {
 	for i, c := range p.clients {
 		out[i].State = routeIdle
 		switch {
-		case now.Before(p.failedUntil[i]):
+		case now.Before(p.failedUntil[i]) || p.stalledLocked(p.network, i, now):
 			out[i].State = routeFailed
 		case c.Established():
 			out[i].State = routeUp
+		}
+		if h := p.stalls[p.network][i]; h != nil {
+			out[i].Stalls = h.Count
+			if now.Before(h.Until) {
+				out[i].Reason = "stalled"
+			}
 		}
 		if i < len(p.ids) {
 			out[i].ID, out[i].Type = p.ids[i], p.kinds[i]
@@ -502,4 +538,70 @@ func (c *irohClient) Close() error {
 		c.cleanup()
 	}
 	return nil
+}
+
+// poolConn keeps feedback attached to the route that won the dial race.
+type poolConn struct {
+	net.Conn
+	pool    *routePool
+	index   int
+	network string
+}
+
+func (c *poolConn) feedback(stalled bool, first ...bool) {
+	p := c.pool
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.stalls == nil {
+		p.stalls = map[string]map[int]*stallState{}
+	}
+	if p.stalls[c.network] == nil {
+		p.stalls[c.network] = map[int]*stallState{}
+	}
+	h := p.stalls[c.network][c.index]
+	if h == nil {
+		h = &stallState{}
+		p.stalls[c.network][c.index] = h
+	}
+	if stalled {
+		h.record(p.clock(), p.log, p.routeName(c.index), len(first) == 0 || first[0])
+		all := len(p.clients) > 0
+		for i := range p.clients {
+			if p.matches(i, p.only) && !p.stalledLocked(p.network, i, p.clock()) && !p.clock().Before(p.failedUntil[i]) {
+				all = false
+				break
+			}
+		}
+		if all && p.onFailure != nil {
+			p.onFailure()
+		}
+	} else {
+		h.recovered(p.log, p.routeName(c.index))
+		delete(p.failedUntil, c.index)
+	}
+}
+func (c *poolConn) CloseWrite() error {
+	if cw, ok := c.Conn.(interface{ CloseWrite() error }); ok {
+		return cw.CloseWrite()
+	}
+	return c.Conn.Close()
+}
+func (p *routePool) stalledLocked(network string, i int, now time.Time) bool {
+	h := p.stalls[network][i]
+	return h.blocked(now, p.log, p.routeName(i))
+}
+func poolFeedback(c net.Conn, stalled bool, first ...bool) {
+	if v, ok := c.(viaConn); ok {
+		c = v.Conn
+	}
+	if v, ok := c.(*poolConn); ok {
+		v.feedback(stalled, first...)
+	}
+}
+
+func (p *routePool) routeName(i int) string {
+	if i < len(p.ids) {
+		return p.ids[i]
+	}
+	return "tunnel"
 }

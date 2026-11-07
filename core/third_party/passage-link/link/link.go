@@ -18,6 +18,7 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"unicode"
 	"unicode/utf8"
 
 	"github.com/fxamacker/cbor/v2"
@@ -58,6 +59,9 @@ type Route struct {
 	Params   map[string]any `json:"params" cbor:"params"`
 }
 type Bundle struct {
+	Closed      bool     `json:"closed,omitempty" cbor:"closed,omitempty"`
+	Revision    uint64   `json:"revision,omitempty" cbor:"revision,omitempty"`
+	Sub         []byte   `json:"sub,omitempty" cbor:"sub,omitempty"`
 	V           uint64   `json:"v" cbor:"v"`
 	Kind        string   `json:"kind" cbor:"kind"`
 	Mode        string   `json:"mode" cbor:"mode"`
@@ -96,6 +100,56 @@ type HTTPParams struct {
 	Key      []byte `json:"key"`
 	DialIP   string `json:"dial_ip,omitempty"`
 	SNI      string `json:"sni,omitempty"`
+}
+
+type TURNParams struct {
+	Relay      string `json:"relay"`
+	Exit       string `json:"exit"`
+	Key        []byte `json:"key"`
+	Secret     string `json:"secret,omitempty"`
+	Username   string `json:"username,omitempty"`
+	Credential string `json:"credential,omitempty"`
+	DialIP     string `json:"dial_ip,omitempty"`
+	SNI        string `json:"sni,omitempty"`
+}
+
+// TURNURL accepts the hierarchical and opaque TURN URI forms.
+func TURNURL(raw string) (*url.URL, error) {
+	if len(raw) > 1024 || strings.ContainsAny(raw, "#\\") {
+		return nil, errors.New("invalid TURN relay")
+	}
+	for _, c := range raw {
+		if unicode.IsSpace(c) || unicode.IsControl(c) {
+			return nil, errors.New("invalid TURN relay")
+		}
+	}
+	scheme, rest, ok := strings.Cut(raw, ":")
+	if !ok || (scheme != "turn" && scheme != "turns") {
+		return nil, errors.New("invalid TURN scheme")
+	}
+	if !strings.HasPrefix(rest, "//") {
+		rest = "//" + rest
+	}
+	u, err := url.Parse(scheme + ":" + rest)
+	if err != nil {
+		return nil, err
+	}
+	host := u.Hostname()
+	if host == "" || u.User != nil || (u.Path != "" && u.Path != "/") || u.ForceQuery || (u.RawQuery != "" && u.RawQuery != "transport=udp" && u.RawQuery != "transport=tcp") || (scheme == "turns" && u.RawQuery == "transport=udp") {
+		return nil, errors.New("invalid TURN relay")
+	}
+	if net.ParseIP(host) == nil && !validZone(strings.ToLower(host)) {
+		return nil, errors.New("invalid TURN host")
+	}
+	if strings.HasSuffix(u.Host, ":") {
+		return nil, errors.New("invalid TURN port")
+	}
+	if u.Port() != "" {
+		if err := validateHostPort(u.Host, false); err != nil {
+			return nil, err
+		}
+	}
+	return u, nil
 }
 
 type IrohParams struct {
@@ -257,6 +311,26 @@ func ValidateRoute(r Route) (bool, error) {
 		return false, errors.New("invalid route fields")
 	}
 	switch r.Type + "/" + r.Wire {
+	case "turn/turn-v1":
+		p, err := Params[TURNParams](r)
+		if err != nil {
+			return true, err
+		}
+		if len(p.Key) != 32 || len(p.Secret) > 255 || len(p.Username) > 255 || len(p.Credential) > 255 || (p.Username == "") != (p.Credential == "") || (p.Secret != "" && p.Username != "") || (p.Secret == "" && p.Username == "") {
+			return true, errors.New("invalid TURN credentials")
+		}
+		if _, err := TURNURL(p.Relay); err != nil {
+			return true, err
+		}
+		if err := validateHostPort(p.Exit, true); err != nil {
+			return true, err
+		}
+		if p.DialIP != "" && net.ParseIP(p.DialIP) == nil {
+			return true, errors.New("invalid TURN dial IP")
+		}
+		if p.SNI != "" && (len(p.SNI) > 253 || net.ParseIP(p.SNI) != nil || !validZone(p.SNI)) {
+			return true, errors.New("invalid TURN SNI")
+		}
 	case "soar/soar-v1":
 		p, err := Params[SoarParams](r)
 		if err != nil {
@@ -354,11 +428,23 @@ func validZone(zone string) bool {
 	return true
 }
 func (b Bundle) Validate() ([]string, error) {
-	if b.V != 2 || b.Kind != "routes" || b.Mode != "merge" && b.Mode != "replace" || len(b.Name) > 128 || len(b.Routes) < 1 || len(b.Routes) > MaxRoutes {
-		return nil, errors.New("invalid route collection")
-	}
 	if len(b.Required) > 0 {
 		return nil, errors.New("unsupported required feature: update Passage")
+	}
+	limit := MaxRoutes
+	if b.Sub != nil {
+		if len(b.Sub) != 16 || b.Revision == 0 || b.Mode != "replace" {
+			return nil, errors.New("invalid subscription bundle")
+		}
+		limit = MaxSubRoutes
+	} else if b.Revision != 0 {
+		return nil, errors.New("revision requires subscription id")
+	}
+	if b.Closed && (b.Sub == nil || b.Mode != "replace" || len(b.Routes) != 0) {
+		return nil, errors.New("invalid closed subscription")
+	}
+	if b.V != 2 || b.Kind != "routes" || b.Mode != "merge" && b.Mode != "replace" || len(b.Name) > 128 || !b.Closed && len(b.Routes) < 1 || len(b.Routes) > limit {
+		return nil, errors.New("invalid route collection")
 	}
 	if b.ReviewAfter != 0 && b.ReviewAfter < b.IssuedAt {
 		return nil, errors.New("invalid review date")
@@ -389,7 +475,7 @@ func (b Bundle) Validate() ([]string, error) {
 			unsupported = append(unsupported, r.ID)
 		}
 	}
-	if usable == 0 {
+	if usable == 0 && !b.Closed {
 		return unsupported, errors.New("no supported routes: update Passage")
 	}
 	return unsupported, nil
@@ -424,14 +510,17 @@ func EncodeWithSigner(b Bundle, signer crypto.Signer) ([]byte, error) {
 	if signer == nil {
 		return body, nil
 	}
-	kid := sha256.Sum256(b.Signer)
+	return signBody(body, b.Signer, signer)
+}
+func signBody(body, public []byte, signer crypto.Signer) ([]byte, error) {
+	kid := sha256.Sum256(public)
 	protected, _ := enc.Marshal(map[int]any{1: int64(-19), 4: kid[:]})
 	toSign, _ := enc.Marshal([]any{"Signature1", protected, []byte("passage-link-v2"), body})
 	signature, err := signer.Sign(rand.Reader, toSign, crypto.Hash(0))
 	if err != nil {
 		return nil, errors.New("signer refused signature")
 	}
-	if !ed25519.Verify(ed25519.PublicKey(b.Signer), toSign, signature) {
+	if !ed25519.Verify(ed25519.PublicKey(public), toSign, signature) {
 		return nil, errors.New("signer returned an invalid signature")
 	}
 	raw, err := enc.Marshal(cbor.Tag{Number: 18, Content: []any{protected, map[string]any{}, body, signature}})
@@ -440,7 +529,20 @@ func EncodeWithSigner(b Bundle, signer crypto.Signer) ([]byte, error) {
 	}
 	return raw, err
 }
-func Decode(raw []byte, trusted []ed25519.PublicKey) (result Decoded, err error) {
+func Decode(raw []byte, trusted []ed25519.PublicKey) (Decoded, error) {
+	var b Bundle
+	result, err := decodeEnvelope(raw, trusted, &b)
+	if err != nil {
+		return Decoded{}, err
+	}
+	result.Bundle = b
+	result.Unsupported, err = b.Validate()
+	if err != nil {
+		return Decoded{}, err
+	}
+	return result, nil
+}
+func decodeEnvelope(raw []byte, trusted []ed25519.PublicKey, target any) (result Decoded, err error) {
 	defer func() {
 		if err != nil {
 			result = Decoded{}
@@ -472,10 +574,16 @@ func Decode(raw []byte, trusted []ed25519.PublicKey) (result Decoded, err error)
 		if headers[1] != int64(-19) {
 			return result, errors.New("unsupported signature algorithm")
 		}
-		if err := canonical(body, &result.Bundle); err != nil {
+		if err := canonical(body, target); err != nil {
 			return result, err
 		}
-		signer = result.Bundle.Signer
+		var fields struct {
+			Signer []byte `cbor:"signer"`
+		}
+		if err := dec.Unmarshal(body, &fields); err != nil {
+			return result, err
+		}
+		signer = fields.Signer
 		kid := sha256.Sum256(signer)
 		given, ok := headers[4].([]byte)
 		if !ok || !bytes.Equal(kid[:], given) || len(signer) != 32 || len(signature) != 64 {
@@ -494,19 +602,24 @@ func Decode(raw []byte, trusted []ed25519.PublicKey) (result Decoded, err error)
 			}
 		}
 	} else {
-		if err := canonical(raw, &result.Bundle); err != nil {
+		if err := canonical(raw, target); err != nil {
 			return result, err
 		}
-		if len(result.Bundle.Signer) != 0 {
+		var fields struct {
+			Signer []byte `cbor:"signer"`
+		}
+		if err := dec.Unmarshal(raw, &fields); err != nil {
+			return result, err
+		}
+		if len(fields.Signer) != 0 {
 			return result, errors.New("unsigned collection contains a signer")
 		}
 		result.Signature = "unsigned"
 	}
-	unsupported, err := result.Bundle.Validate()
-	result.Unsupported = unsupported
-	return result, err
+	return result, nil
 }
-func URI(raw []byte, webBase string) (string, error) {
+func URI(raw []byte, webBase string) (string, error) { return uri(raw, webBase, 16384) }
+func uri(raw []byte, webBase string, limit int) (string, error) {
 	prefix := "passage://add"
 	if webBase != "" {
 		u, err := url.Parse(webBase)
@@ -516,8 +629,8 @@ func URI(raw []byte, webBase string) (string, error) {
 		prefix = u.String()
 	}
 	s := prefix + "#v2." + base64.RawURLEncoding.EncodeToString(raw)
-	if len(s) > 16384 {
-		return "", errors.New("text link exceeds 16 KiB; export a file")
+	if len(s) > limit {
+		return "", fmt.Errorf("text link exceeds %d KiB; export a file", limit/1024)
 	}
 	return s, nil
 }

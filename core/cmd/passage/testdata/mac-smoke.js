@@ -1,6 +1,8 @@
 (async () => {
   try {
+    window.passageSmokeStage = "initializing";
     await initialized;
+    window.passageSmokeStage = "bridge";
     const info = await call("init");
     if (info.version !== "dev") throw Error("init response");
     const view = await call("view");
@@ -27,6 +29,7 @@
       }
       throw Error("URL import timed out");
     };
+    window.passageSmokeStage = "cold URL";
     await waitFor(() => !$("modal").classList.contains("hidden"));
     if ((await call("link", false)).has) throw Error("URL saved without confirmation");
     $("modalCancel").click();
@@ -38,9 +41,40 @@
     $("modalOk").click();
     await incomingImports;
     if (!(await call("link", false)).has) throw Error("URL was not imported");
+    window.passageSmokeStage = "subscription cancel";
+    const subscriptionInvite = null;
+    const canceled = importLink(subscriptionInvite);
+    await waitFor(() => !$("modal").classList.contains("hidden"));
+    if (!$("modalBody").textContent.includes(t("sub_unknown"))) throw Error("missing signer warning");
+    if ((await call("view")).subscriptions.length) throw Error("subscription saved before confirmation");
+    $("modalCancel").click(); await canceled;
+    if ((await call("view")).subscriptions.length) throw Error("subscription saved after cancel");
+    window.passageSmokeStage = "subscription accept";
+    const accepted = importLink(subscriptionInvite);
+    await waitFor(() => !$("modal").classList.contains("hidden"));
+    $("modalOk").click(); await accepted;
+    await refresh(); await showLink(false);
+    if ((await call("view")).subscriptions.length !== 1) throw Error("subscription not saved");
+    if (!$("savedRoutes").textContent.includes("Example subscription")) throw Error("missing subscription route marker");
+    window.passageSmokeStage = "subscription remove";
+    $("subscriptions").querySelectorAll("button")[1].click();
+    await waitFor(() => !$("modal").classList.contains("hidden"));
+    $("modalCancel").click();
+    window.passageSmokeStage = "remove canceled";
+    if ((await call("view")).subscriptions.length !== 1) throw Error("subscription removed after cancel");
+    $("subscriptions").querySelectorAll("button")[1].click();
+    await waitFor(() => !$("modal").classList.contains("hidden"));
+    $("modalOk").click();
+    window.passageSmokeStage = "remove accepted";
+    await waitFor(() => $("modal").classList.contains("hidden"));
+    for (let n = 0; n < 100 && (await call("view")).subscriptions.length; n++) await new Promise(resolve => setTimeout(resolve, 20));
+    if ((await call("view")).subscriptions.length) throw Error("subscription not removed");
+    window.passageSmokeStage = "clear links";
     await call("saveLink", "");
+    window.passageSmokeStage = "start";
     await call("start");
     if (!(await call("view")).running) throw Error("start response");
+    window.passageSmokeStage = "done";
     window.passageSmokeResult = "ok";
   } catch (e) { window.passageSmokeResult = String(e); }
 })();
