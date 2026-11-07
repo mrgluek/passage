@@ -232,7 +232,7 @@ class SettingsActivity : ThemedActivity() {
         col.addView(savedRoutesSection)
 
         savedRoutesHeading = Ui.heading(this, getString(R.string.saved_routes_label)).apply {
-            setPadding(0, 0, 0, paddingBottom)
+            setPadding(0, paddingTop, 0, paddingBottom)
         }
         savedRoutesSection.addView(savedRoutesHeading)
 
