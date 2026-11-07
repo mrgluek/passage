@@ -36,15 +36,21 @@
   </section>
 
   <section id="connect" hidden>
-    <h2><span class="en">Your connection link</span><span class="ru">Ваша ссылка для подключения</span></h2>
-    <p class="en">If Passage is installed, open the link in it. If not, install Passage below, then open this link again.</p>
-    <p class="ru">Если Passage уже установлен, откройте ссылку в нём. Если нет, установите Passage ниже и откройте эту ссылку ещё раз.</p>
-    <p id="link-v2" hidden><span class="en">Requires Passage 0.3.0 or newer. Review the routes in the app before adding them.</span><span class="ru">Нужен Passage 0.3.0 или новее. Перед добавлением проверьте маршруты в приложении.</span></p>
+    <h2 id="connect-link"><span class="en">You were sent a connection link</span><span class="ru">Вам прислали ссылку для подключения</span></h2>
+    <h2 id="connect-sub" hidden><span class="en">You were sent a subscription link</span><span class="ru">Вам прислали ссылку на подписку</span></h2>
+    <p><span class="en">This is a personal link: forwarding it shares your access. Links shared publicly may be blocked by their author.</span><span class="ru">Это личная ссылка: пересылая её, вы передаёте свой доступ. Публично распространяемые ссылки могут быть заблокированы автором.</span></p>
+    <p class="en">If Passage is already installed, press “Open in Passage” and the link opens in the app. If not, install Passage using the links below first, then press “Open in Passage” again, or copy the full address of this page into the app's Settings by hand.</p>
+    <p class="ru">Если Passage уже установлен, нажмите «Открыть в Passage», и ссылка сама откроется в программе. Если ещё нет, сначала установите Passage по ссылкам ниже, а затем нажмите «Открыть в Passage» ещё раз или скопируйте полный адрес этой страницы в его настройки вручную.</p>
+    <p id="link-v2" hidden><span class="en">Requires Passage <b class="ver">0.3.0</b> or newer. Review the routes in the app before adding them.</span><span class="ru">Нужен Passage <b class="ver">0.3.0</b> или новее. Перед добавлением проверьте маршруты в приложении.</span></p>
     <div class="buttons">
       <a class="button primary" id="open-link" href="#"><span class="en">Open in Passage</span><span class="ru">Открыть в Passage</span></a>
     </div>
-    <p><span class="en">This is a personal link: forwarding it shares your access.</span><span class="ru">Это личная ссылка: пересылая её, вы передаёте свой доступ.</span></p>
-    <p class="muted"><span class="en">Everything after # in the address stays in your browser: it is never sent to this site.</span><span class="ru">Всё, что в адресе после #, остаётся в браузере и на этот сайт не отправляется.</span></p>
+    <p><span class="en">Opened the link on another device? <button type="button" class="linkbtn qr-toggle">Scan the QR code</button> with your phone to add it.</span><span class="ru">Открыли ссылку на другом устройстве? <button type="button" class="linkbtn qr-toggle">Отсканируйте QR-код</button> телефоном для добавления.</span></p>
+    <div id="qr" hidden>
+      <div id="qr-code"></div>
+      <p id="qr-note" hidden><span class="en">This link is too long for a QR code. Send it as text instead.</span><span class="ru">Ссылка слишком длинная для QR-кода. Отправьте её текстом.</span></p>
+    </div>
+    <p class="muted"><span class="en">Your browser never sends the part of the address after #, neither to this site nor to your internet provider. The link is handled only on your device.</span><span class="ru">Часть адреса после # браузер никуда не отправляет: ни на этот сайт, ни вашему провайдеру. Ссылка обрабатывается только на вашем устройстве.</span></p>
   </section>
 
   <section id="invalid-link" hidden>
@@ -137,6 +143,8 @@ open /Applications/Passage.app</code></pre>
     <h2><span class="en">Connection links</span><span class="ru">Ссылки подключения</span></h2>
     <p class="en">Since 0.3.0, one link can include several routes in priority order. A later link can add routes or replace the saved set: Passage shows the action and asks for confirmation. Earlier links still work.</p>
     <p class="ru">Начиная с 0.3.0, одна ссылка может содержать несколько маршрутов с приоритетами. Следующая ссылка может добавить маршруты или заменить сохранённый набор: Passage покажет действие и запросит подтверждение. Старые ссылки продолжают работать.</p>
+    <p class="en">Since 0.7.0, a link can be a subscription: besides routes (or instead of them) it carries an address from which Passage keeps the routes up to date by itself.</p>
+    <p class="ru">Начиная с 0.7.0, ссылка может быть подпиской: кроме маршрутов (или вместо них) она содержит адрес, по которому Passage сам обновляет маршруты.</p>
   </section>
 
   <section id="verify">
@@ -152,7 +160,109 @@ C3:C9:73:50:37:FF:A5:00:6D:D9:88:AB:29:D6:11:D6:A4:41:31:E5:3F:D8:1D:FA:CF:06:49
 <script>
   // The fragment stays in the browser. Passage validates the imported link.
   (function () {
+    // First Passage version that understands each kind of link, link feature
+    // and route type. Add a row here with every new one.
+    var KINDS = { sub: "0.7.0" };
+    var FEATURES = { sub: "0.7.0" };
+    var TYPES = { soar: "0.3.0", iroh: "0.3.0", wss: "0.4.0", http: "0.6.0", turn: "0.7.0" };
+    function newer(a, b) {
+      var x = a.split("."), y = b.split(".");
+      for (var i = 0; i < 3; i++) {
+        var d = (+x[i] || 0) - (+y[i] || 0);
+        if (d) return d > 0;
+      }
+      return false;
+    }
+    // A minimal CBOR reader, enough to see the kind, the required features and
+    // the route types of a link. The link is public structure, not a secret.
+    function cbor(b) {
+      var i = 0;
+      function len(ai) {
+        if (ai < 24) return ai;
+        var n = ai === 24 ? 1 : ai === 25 ? 2 : ai === 26 ? 4 : 0;
+        if (!n) throw 0;
+        var v = 0;
+        for (var k = 0; k < n; k++) v = v * 256 + b[i++];
+        return v;
+      }
+      function item(depth) {
+        if (depth > 12 || i >= b.length) throw 0;
+        var ib = b[i++], mt = ib >> 5, v = len(ib & 31);
+        if (mt === 0) return v;
+        if (mt === 1) return -1 - v;
+        if (mt === 2 || mt === 3) {
+          if (i + v > b.length) throw 0;
+          var s = b.subarray(i, i + v);
+          i += v;
+          return mt === 2 ? s : new TextDecoder().decode(s);
+        }
+        if (mt === 4 || mt === 5) {
+          if (v > 1024) throw 0;
+          var out = mt === 4 ? [] : Object.create(null);
+          for (var k = 0; k < v; k++) {
+            if (mt === 4) out.push(item(depth + 1));
+            else { var key = item(depth + 1); out[key] = item(depth + 1); }
+          }
+          return out;
+        }
+        if (mt === 6) return { tag: v, value: item(depth + 1) };
+        return null;
+      }
+      return item(0);
+    }
+    // The newest requirement found in a v2 link (0.3.0 when it cannot be read)
+    // and whether it is a subscription.
+    function inspectLink(f) {
+      var need = "0.3.0", sub = false;
+      function up(v) { if (v && newer(v, need)) need = v; }
+      try {
+        var bin = atob(f.slice(3).replace(/-/g, "+").replace(/_/g, "/"));
+        var bytes = new Uint8Array(bin.length);
+        for (var i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+        var top = cbor(bytes);
+        var body = top && top.tag === 18 ? cbor(top.value[2]) : top;
+        sub = body.kind === "sub";
+        up(KINDS[body.kind]);
+        (body.required || []).forEach(function (r) { up(FEATURES[r]); });
+        (body.routes || []).forEach(function (r) { up(TYPES[r.type]); });
+      } catch (e) {}
+      return { need: need, sub: sub };
+    }
+    // The QR code holds the whole address of this page, fragment included. It
+    // is drawn here, in the browser, by a script served from this site.
+    function drawQr() {
+      var code = document.getElementById("qr-code"), note = document.getElementById("qr-note");
+      function render() {
+        var svg = "";
+        // Level M scans better; L fits a longer link.
+        ["M", "L"].some(function (level) {
+          try {
+            var q = window.qrcode(0, level);
+            q.addData(location.href);
+            q.make();
+            svg = q.createSvgTag({ cellSize: 4, scalable: true });
+            return true;
+          } catch (e) { return false; }
+        });
+        code.innerHTML = svg;
+        code.hidden = !svg;
+        note.hidden = !!svg;
+      }
+      if (window.qrcode) return render();
+      var s = document.createElement("script");
+      s.src = "qrcode.js";
+      s.onload = render;
+      s.onerror = function () { code.hidden = true; note.hidden = false; };
+      document.head.appendChild(s);
+    }
+    document.querySelectorAll(".qr-toggle").forEach(function (b) {
+      b.addEventListener("click", function () {
+        var box = document.getElementById("qr");
+        if (box.hidden) { drawQr(); box.hidden = false; } else box.hidden = true;
+      });
+    });
     function showLink() {
+      document.getElementById("qr").hidden = true;
       var f = location.hash.slice(1);
       var v2 = /^v2\.[A-Za-z0-9_-]+$/.test(f) && f.length + "passage://add#".length <= 16384;
       var v1 = !/^v2\./.test(f) && /(^|&)zone=[^&]+/.test(f);
@@ -163,6 +273,10 @@ C3:C9:73:50:37:FF:A5:00:6D:D9:88:AB:29:D6:11:D6:A4:41:31:E5:3F:D8:1D:FA:CF:06:49
       else link.removeAttribute("href");
       document.getElementById("connect").hidden = !v1 && !v2;
       document.getElementById("link-v2").hidden = !v2;
+      var info = v2 ? inspectLink(f) : { need: "0.3.0", sub: false };
+      document.querySelectorAll("#link-v2 .ver").forEach(function (e) { e.textContent = info.need; });
+      document.getElementById("connect-link").hidden = info.sub;
+      document.getElementById("connect-sub").hidden = !info.sub;
       document.getElementById("invalid-link").hidden = !connection || v1 || v2;
     }
     showLink();

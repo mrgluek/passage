@@ -167,3 +167,7 @@ pre code { padding: 0; background: none; }
 }
 
 main { padding-bottom: 32px; }
+
+.linkbtn { background: none; border: 0; padding: 0; font: inherit; color: var(--accent); text-decoration: underline; cursor: pointer; }
+#qr-code { display: inline-block; background: #ffffff; padding: 12px; border-radius: 8px; line-height: 0; }
+#qr-code svg { display: block; width: min(320px, 78vw); height: auto; }

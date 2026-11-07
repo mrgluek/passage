@@ -63,7 +63,7 @@ if [ -f "$apks/update.json" ]; then
   done
 fi
 du -sh "$out/fdroid/repo"
-cp "$root/site/style.css" "$root/site/icon.svg" "$out/"
+cp "$root/site/style.css" "$root/site/icon.svg" "$root/site/qrcode.js" "$out/"
 # App Links: lets Android open https://passage.gluek.info/link#… in the app.
 cp -R "$root/site/.well-known" "$out/"
 python3 - "$repo_url?fingerprint=$fingerprint" "$out/fdroid/qr.svg" <<'EOF'
