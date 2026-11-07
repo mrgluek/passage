@@ -532,7 +532,7 @@ class SettingsActivity : ThemedActivity() {
                 val config = result.getJSONObject("config")
                 val changed = result.optBoolean("changed")
                 synchronized(Settings.configLock) {
-                    if (!settings.saveCandidate(previous, config)) throw IllegalStateException()
+                    if (!settings.saveSubscriptionRefresh(previous, config)) throw IllegalStateException()
                     if (!changed) PassageService.savedRefreshMetadata(previous, config.toString())
                 }
                 restart = changed
@@ -558,7 +558,7 @@ class SettingsActivity : ThemedActivity() {
             val ok = try {
                 val request = Subscriptions.request(previous).put("id", id)
                 val result = Native.json(Native.removeSubscription(request.toString().toByteArray(Charsets.UTF_8)))
-                !result.has("error") && settings.saveCandidate(previous, result.getJSONObject("config"))
+                !result.has("error") && settings.saveSubscriptionRemoval(previous, result.getJSONObject("config"))
             } catch (_: Throwable) { false }
             if (ok) restartIfRunning()
             runOnUiThread {

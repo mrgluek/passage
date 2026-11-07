@@ -229,14 +229,10 @@ func (a *App) tick() {
 		}
 		select {
 		case update := <-a.tun.SubscriptionUpdates():
-			added, removed := routeChanges(a.linkCfg, update.Config)
-			if err := a.applySubscriptionsLocked(update.Config, update.Changed); err != nil {
+			if err := a.applySubscriptionRefreshLocked(update.Config, update.Changed); err != nil {
 				a.event("subscription state not saved")
 				a.subscriptionNotice = err.Error()
 				return
-			}
-			if update.Changed {
-				a.subscriptionNotice = a.t.f("sub_routes_updated", added, removed)
 			}
 
 		default:
@@ -420,7 +416,10 @@ func (a *App) view() view {
 		full += "\n" + a.t.f("app_events") + "\n" + events
 	}
 	v.Subscriptions = a.subscriptionRowsLocked()
-	v.SubscriptionNotice = a.subscriptionNotice
+	v.SubscriptionNotice = noticeText(a.t, a.settings.RoutesNotice)
+	if a.subscriptionNotice != "" {
+		v.SubscriptionNotice = a.subscriptionNotice
+	}
 	v.Update = a.updateViewLocked()
 	v.Full = full
 	return v
@@ -788,6 +787,14 @@ func (a *App) call(method string, arg json.RawMessage) (any, error) {
 			return nil, a.subscribe(in.Link, in.Replace)
 		}
 		return nil, a.saveLink(in.Link)
+	case "dismissSubscriptionNotice":
+		a.mu.Lock()
+		a.settings.RoutesNotice = ""
+		a.subscriptionNotice = ""
+		a.saveSettings()
+		a.mu.Unlock()
+		a.changed()
+		return nil, nil
 	case "refreshSubscriptions":
 		return nil, a.refreshSubscriptions(str())
 	case "removeSubscription":

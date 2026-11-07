@@ -4,6 +4,7 @@ import (
 	stdbytes "bytes"
 	"crypto/ed25519"
 	"encoding/base64"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -283,5 +284,83 @@ func TestClosedSubscriptionRow(t *testing.T) {
 		if len(rows) != 1 || !rows[0].Closed || rows[0].Detail != a.t.f("sub_closed") || rows[0].Busy || rows[0].Result != "" {
 			t.Fatal(rows)
 		}
+	}
+}
+
+func TestRoutesNoticeTimeAndLegacy(t *testing.T) {
+	before := tunnel.Config{Routes: []links.Route{{ID: "a"}, {ID: "b"}}}
+	after := tunnel.Config{Routes: []links.Route{{ID: "b", Priority: 20}, {ID: "c"}, {ID: "c"}}}
+	stamp := time.Date(2026, 11, 6, 7, 5, 0, 0, time.Local)
+	value := refreshNotice(before, after, stamp)
+	if want := "1,1," + fmt.Sprint(stamp.UnixMilli()); value != want {
+		t.Fatal(value, want)
+	}
+	for _, lang := range []string{"en", "ru"} {
+		tr := tr(table(lang))
+		if got := noticeText(tr, value); got != tr.f("sub_routes_timed", 1, 1, "07:05") {
+			t.Fatal(got)
+		}
+		if got := noticeText(tr, "1,2"); got != tr.f("sub_routes_updated", 1, 2) {
+			t.Fatal(got)
+		}
+		for _, bad := range []string{"", "1", "a,2", "-1,0", "1,2,bad", "1,2,0", "1,2,3,4"} {
+			if got := noticeText(tr, bad); got != "" {
+				t.Fatal(bad, got)
+			}
+		}
+	}
+}
+
+func TestClosingRefreshNoticePersistsAndDismisses(t *testing.T) {
+	_, key, _ := ed25519.GenerateKey(nil)
+	a := newSubscriptionTestApp(t, "en")
+	if err := a.subscribe(desktopInvite(t, key, true), false); err != nil {
+		t.Fatal(err)
+	}
+	sub := a.linkCfg.Subscriptions[0]
+	closed, err := tunnel.ApplySubFile(a.linkCfg, sub, links.Bundle{V: 2, Kind: "routes", Mode: "replace", Signer: key.Public().(ed25519.PublicKey), Sub: stdbytes.Repeat([]byte{1}, 16), Revision: 2, Closed: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = a.applySubscriptionRefreshLocked(closed, true); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasPrefix(a.settings.RoutesNotice, "0,1,") {
+		t.Fatal(a.settings.RoutesNotice)
+	}
+	if !strings.Contains(a.view().SubscriptionNotice, "Routes updated: +0, -1 · ") {
+		t.Fatal(a.view().SubscriptionNotice)
+	}
+	b := newApp(a.dir, "dev", "", "en", &fakePlatform{})
+	if b.view().SubscriptionNotice != a.view().SubscriptionNotice {
+		t.Fatal("notice lost on restart")
+	}
+	old := b.settings.RoutesNotice
+	metadata := b.linkCfg
+	metadata.Subscriptions = append([]tunnel.Subscription(nil), metadata.Subscriptions...)
+	metadata.Subscriptions[0].LastError = "unchanged"
+	if err = b.applySubscriptionRefreshLocked(metadata, false); err != nil {
+		t.Fatal(err)
+	}
+	if b.settings.RoutesNotice != old {
+		t.Fatal("metadata replaced notice")
+	}
+	if _, err = b.call("dismissSubscriptionNotice", nil); err != nil {
+		t.Fatal(err)
+	}
+	c := newApp(a.dir, "dev", "", "en", &fakePlatform{})
+	if c.view().SubscriptionNotice != "" {
+		t.Fatal("dismissal not persisted")
+	}
+	raw, err := os.ReadFile(a.path(logName))
+	if err != nil || strings.Count(string(raw), "routes updated: +0, -1") != 1 {
+		t.Fatal(string(raw), err)
+	}
+	c.settings.RoutesNotice = old
+	if err = c.removeSubscription(sub.ID); err != nil {
+		t.Fatal(err)
+	}
+	if c.settings.RoutesNotice != "" {
+		t.Fatal("removal kept stale notice")
 	}
 }

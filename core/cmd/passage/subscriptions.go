@@ -4,8 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -115,7 +117,13 @@ func (a *App) removeSubscription(id string) error {
 	if err != nil {
 		return err
 	}
-	return a.applySubscriptionsLocked(cfg, true)
+	if err := a.applySubscriptionsLocked(cfg, true); err != nil {
+		return err
+	}
+	a.settings.RoutesNotice = ""
+	a.subscriptionNotice = ""
+	a.saveSettings()
+	return nil
 }
 
 func subscriptionFailure(t tr, code string) string {
@@ -185,7 +193,9 @@ func routeChanges(before, after tunnel.Config) (added, removed int) {
 	}
 	for _, r := range after.Routes {
 		next[r.ID] = true
-		if !old[r.ID] {
+	}
+	for id := range next {
+		if !old[id] {
 			added++
 		}
 	}
@@ -230,7 +240,7 @@ func (a *App) refreshSubscriptions(id string) error {
 			default:
 			}
 		}
-		if err := a.applySubscriptionsLocked(out.Config, out.Changed); err != nil {
+		if err := a.applySubscriptionRefreshLocked(out.Config, out.Changed); err != nil {
 			a.subscriptionResults[id] = err.Error()
 			return
 		}
@@ -251,6 +261,53 @@ func (a *App) checkRouteLinks(text string) error {
 		if err == nil && r.Mode == "subscribe" {
 			return errors.New(a.t.f("sub_one"))
 		}
+	}
+	return nil
+}
+
+// refreshNotice leaves an earlier notice intact for metadata-only refreshes.
+func refreshNotice(before, after tunnel.Config, now time.Time) string {
+	added, removed := routeChanges(before, after)
+	if added == 0 && removed == 0 {
+		return ""
+	}
+	return fmt.Sprintf("%d,%d,%d", added, removed, now.UnixMilli())
+}
+
+func noticeText(t tr, value string) string {
+	parts := strings.Split(value, ",")
+	if len(parts) != 2 && len(parts) != 3 {
+		return ""
+	}
+	added, err := strconv.Atoi(parts[0])
+	if err != nil || added < 0 {
+		return ""
+	}
+	removed, err := strconv.Atoi(parts[1])
+	if err != nil || removed < 0 {
+		return ""
+	}
+	if len(parts) == 2 {
+		return t.f("sub_routes_updated", added, removed)
+	}
+	millis, err := strconv.ParseInt(parts[2], 10, 64)
+	if err != nil || millis <= 0 {
+		return ""
+	}
+	return t.f("sub_routes_timed", added, removed, time.UnixMilli(millis).Local().Format("15:04"))
+}
+
+func (a *App) applySubscriptionRefreshLocked(cfg tunnel.Config, restart bool) error {
+	notice := refreshNotice(a.linkCfg, cfg, time.Now())
+	if err := a.applySubscriptionsLocked(cfg, restart); err != nil {
+		return err
+	}
+	if notice != "" {
+		a.settings.RoutesNotice = notice
+		a.subscriptionNotice = ""
+		a.saveSettings()
+		counts := strings.Split(notice, ",")
+		a.event("routes updated: +%s, -%s", counts[0], counts[1])
 	}
 	return nil
 }

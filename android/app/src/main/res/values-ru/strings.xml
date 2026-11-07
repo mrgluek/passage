@@ -205,6 +205,7 @@
     <string name="sub_updated">Обновлено</string>
     <string name="sub_current">Уже обновлено</string>
     <string name="sub_failed">Не удалось обновить: %1$s</string>
+    <string name="sub_routes_timed">Маршруты обновлены: +%1$d, −%2$d · %3$s</string>
     <string name="sub_routes_updated">Маршруты обновлены: +%1$d, −%2$d</string>
     <string name="sub_error_network">Не удалось подключиться</string>
     <string name="sub_error_http">Ошибка по адресу подписки</string>

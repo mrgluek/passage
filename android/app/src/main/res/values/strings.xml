@@ -199,6 +199,7 @@
     <string name="sub_updated">Updated</string>
     <string name="sub_current">Already up to date</string>
     <string name="sub_failed">Failed: %1$s</string>
+    <string name="sub_routes_timed">Routes updated: +%1$d, -%2$d · %3$s</string>
     <string name="sub_routes_updated">Routes updated: +%1$d, -%2$d</string>
     <string name="sub_error_network">Could not connect</string>
     <string name="sub_error_http">The address returned an error</string>

@@ -19,6 +19,32 @@ class SubscriptionsTest {
         assertEquals(0 to 2, Subscriptions.delta(after, JSONObject()))
     }
 
+    @Test fun noticeEncodingAcceptsLegacyAndRejectsInvalidValues() {
+        val notice = Subscriptions.Notice(1, 3, 1234567890000L)
+        assertEquals("1,3,1234567890000", notice.encode())
+        assertEquals(notice, Subscriptions.decodeNotice(notice.encode()))
+        assertEquals(Subscriptions.Notice(1, 3), Subscriptions.decodeNotice("1,3"))
+        assertEquals("1,3", Subscriptions.Notice(1, 3).encode())
+        assertNull(Subscriptions.decodeNotice("1,3")!!.clock())
+        for (value in listOf("", "1", "-1,0", "a,1", "0,0,bad", "1,2,0", "1,2,3,4")) {
+            assertNull(value, Subscriptions.decodeNotice(value))
+        }
+        val zone = java.util.TimeZone.getDefault()
+        try {
+            java.util.TimeZone.setDefault(java.util.TimeZone.getTimeZone("GMT+03:00"))
+            assertEquals("03:00", Subscriptions.Notice(1, 0, 86400000L).clock())
+        } finally { java.util.TimeZone.setDefault(zone) }
+    }
+
+    @Test fun closingRefreshHasRemovalNoticeAndMetadataDoesNotReplaceIt() {
+        val before = JSONObject("""{"routes":[{"id":"a"},{"id":"b"},{"id":"c"}]}""")
+        val closed = JSONObject("""{"subscriptions":[{"closed":true}],"routes":[]}""")
+        assertEquals(Subscriptions.Notice(0, 3, 42L), Subscriptions.refreshNotice(before, closed, 42L))
+        val metadata = JSONObject(before.toString()).put("last_error", "unchanged")
+        assertNull(Subscriptions.refreshNotice(before, metadata, 43L))
+        assertNull(Subscriptions.refreshNotice(before, before, 43L))
+    }
+
     @Test fun ownershipUsesExactRouteIds() {
         val config = JSONObject("""{"subscriptions":[{"name":"Example","route_ids":["abc"]}]}""")
         assertEquals("Example", Subscriptions.owner(config, "abc"))

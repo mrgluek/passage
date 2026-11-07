@@ -26,6 +26,27 @@ object Subscriptions {
         return (new - old).size to (old - new).size
     }
 
+    data class Notice(val added: Int, val removed: Int, val time: Long? = null) {
+        fun encode(): String = "$added,$removed" + (time?.let { ",$it" } ?: "")
+        fun clock(): String? = time?.let {
+            java.text.SimpleDateFormat("HH:mm", java.util.Locale.ROOT).format(java.util.Date(it))
+        }
+    }
+
+    fun decodeNotice(value: String): Notice? {
+        val parts = value.split(',')
+        if (parts.size !in 2..3) return null
+        val added = parts[0].toIntOrNull()?.takeIf { it >= 0 } ?: return null
+        val removed = parts[1].toIntOrNull()?.takeIf { it >= 0 } ?: return null
+        val time = if (parts.size == 3) parts[2].toLongOrNull()?.takeIf { it > 0 } ?: return null else null
+        return Notice(added, removed, time)
+    }
+
+    fun refreshNotice(before: JSONObject, after: JSONObject, now: Long): Notice? {
+        val (added, removed) = delta(before, after)
+        return if (added == 0 && removed == 0) null else Notice(added, removed, now)
+    }
+
     fun errorResource(code: String): Int? = when (code) {
         "", "unchanged" -> null
         "http" -> R.string.sub_error_http

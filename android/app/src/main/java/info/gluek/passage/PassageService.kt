@@ -367,9 +367,7 @@ class PassageService : Service() {
         val result = Native.json(Native.refreshSubscriptions(request.toString().toByteArray(Charsets.UTF_8)))
         if (result.has("error")) return false
         val config = result.getJSONObject("config")
-        if (!settings.saveCandidate(previous, config)) return false
-        val (added, removed) = Subscriptions.delta(request.getJSONObject("existing"), config)
-        settings.routesNotice = "$added,$removed"
+        if (!settings.saveSubscriptionRefresh(previous, config)) return false
         startTunnel("subscription updated")
         return true
     }

@@ -50,6 +50,22 @@ class Settings(context: Context) {
         true
     }
 
+    fun saveSubscriptionRefresh(previous: String, config: JSONObject): Boolean = synchronized(configLock) {
+        val notice = Subscriptions.refreshNotice(Subscriptions.request(previous).getJSONObject("existing"), config, System.currentTimeMillis())
+        if (!saveCandidate(previous, config)) return@synchronized false
+        if (notice != null) {
+            routesNotice = notice.encode()
+            Diagnostics.event("routes updated: +${notice.added}, -${notice.removed}")
+        }
+        true
+    }
+
+    fun saveSubscriptionRemoval(previous: String, config: JSONObject): Boolean = synchronized(configLock) {
+        if (!saveCandidate(previous, config)) return@synchronized false
+        routesNotice = ""
+        true
+    }
+
     var routesNotice: String
         get() = prefs.getString("routes_notice", "") ?: ""
         set(v) = prefs.edit().putString("routes_notice", v).apply()

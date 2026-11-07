@@ -31,15 +31,16 @@ const (
 
 // Settings is what passage.ini keeps. The link is in link.txt.
 type Settings struct {
-	Port       int
-	User       string
-	Pass       string
-	Auth       bool
-	Mode       string
-	My         string
-	Running    bool
-	AutoUpdate bool
-	NextUpdate time.Time
+	Port         int
+	User         string
+	Pass         string
+	Auth         bool
+	Mode         string
+	My           string
+	Running      bool
+	AutoUpdate   bool
+	NextUpdate   time.Time
+	RoutesNotice string
 	// Edits are local changes to the link's routes, by route ID.
 	Edits map[string]tunnel.RouteEdit
 }
@@ -136,6 +137,8 @@ func loadSettings(path string) (Settings, bool, error) {
 			s.My = v
 		case "auto_update":
 			s.AutoUpdate = v != "false" && v != "0"
+		case "routes_notice":
+			s.RoutesNotice = v
 		case "next_update":
 			s.NextUpdate, _ = time.Parse(time.RFC3339, v)
 		case "running":
@@ -206,7 +209,8 @@ my_route=%s
 running=%t
 auto_update=%t
 next_update=%s
-`, s.Port, s.User, s.Pass, s.Auth, s.Mode, s.My, s.Running, s.AutoUpdate, s.NextUpdate.Format(time.RFC3339))
+routes_notice=%s
+`, s.Port, s.User, s.Pass, s.Auth, s.Mode, s.My, s.Running, s.AutoUpdate, s.NextUpdate.Format(time.RFC3339), s.RoutesNotice)
 	text += s.editLines()
 	return writeFile(path, []byte(text))
 }
