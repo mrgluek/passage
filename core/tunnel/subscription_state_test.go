@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 
 	links "github.com/mrgluek/passage-link/link"
@@ -23,8 +24,12 @@ func TestSubscriptionStatePersistsRevisionAndOwnership(t *testing.T) {
 		t.Fatal(err)
 	}
 	fi, err := os.Stat(path)
-	if err != nil || fi.Mode().Perm() != 0600 {
-		t.Fatal("state permissions", err)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Windows has no Unix permission bits.
+	if runtime.GOOS != "windows" && fi.Mode().Perm() != 0600 {
+		t.Fatalf("state permissions %v", fi.Mode().Perm())
 	}
 	restored, err := RestoreSubscriptionState(Config{Subscriptions: []Subscription{sub}}, path)
 	if err != nil || len(restored.Routes) != 1 || restored.Subscriptions[0].Revision != 1 || !restored.RouteEdits["one"].Off {
