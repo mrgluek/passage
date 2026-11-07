@@ -143,6 +143,7 @@
     <string name="route_my">Мой</string>
     <string name="my_route_label">Мой маршрут</string>
     <string name="my_route_hint">127.0.0.1:9050</string>
+    <string name="close">Закрыть</string>
     <string name="clear">Очистить</string>
     <string name="my_route_help">Адрес своего SOCKS5-прокси на этом телефоне, в вашей сети или в интернете: host:port, user:password@host:port или ссылка socks5:// или t.me/socks. Когда в режиме Авто нужен маршрут, он проверяется первым, затем маршруты из ссылки. Чтобы убрать его, очистите поле и сохраните.</string>
     <string name="my_route_invalid">Укажите host:port, например 127.0.0.1:9050</string>

@@ -86,7 +86,7 @@ object Ui {
         else -> kind
     }
 
-    private fun rounded(radius: Float, fill: Int, stroke: Int = 0, strokeWidth: Int = 0) = GradientDrawable().apply {
+    fun rounded(radius: Float, fill: Int, stroke: Int = 0, strokeWidth: Int = 0) = GradientDrawable().apply {
         cornerRadius = radius
         setColor(fill)
         if (strokeWidth > 0) setStroke(strokeWidth, stroke)
@@ -211,6 +211,16 @@ object Ui {
             }
             if (note != null) addView(hint(c, note).apply { setPadding(0, dp(c, 4), 0, dp(c, 4)) })
         }
+
+    /** A rounded notice with a close button on the right; [text] is updated by the caller, [close] is called by the button. */
+    fun bubble(c: Context, text: TextView, close: () -> Unit): LinearLayout = LinearLayout(c).apply {
+        orientation = LinearLayout.HORIZONTAL
+        gravity = Gravity.CENTER_VERTICAL
+        background = rounded(dp(c, 14).toFloat(), (accent(c) and 0x00FFFFFF) or (0x22 shl 24))
+        setPadding(dp(c, 14), dp(c, 4), dp(c, 4), dp(c, 4))
+        addView(text, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+        addView(iconButton(c, android.R.drawable.ic_menu_close_clear_cancel, c.getString(R.string.close)) { close() })
+    }
 
     /** A borderless icon button tinted with the accent color. */
     fun iconButton(c: Context, icon: Int, description: String, onClick: () -> Unit): ImageButton =

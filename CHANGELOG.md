@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.7.1
+
+- On the computer, a subscription from the author now also takes over a route
+  with the same name from an old link file at start, as it does on refresh.
+- A gap between the Refresh now and Remove buttons.
+- The "routes updated" notice is a bubble with a close button.
+- Settings order: Route, My route, Saved routes, Link, Subscriptions, then
+  the rest.
+
 ## 0.7.0
 
 - A link can now refresh itself. A subscription link carries an address from
