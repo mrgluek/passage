@@ -179,6 +179,7 @@
     </plurals>
     <string name="sub_seed">Есть начальный список маршрутов</string>
     <string name="sub_no_seed">Маршруты будут загружены по адресу из ссылки</string>
+    <string name="sub_takeover">Маршруты с такими же именами будут обновляться подпиской.</string>
     <string name="sub_trusted">Подписано автором приложения</string>
     <string name="sub_unknown">Неизвестный автор подписи</string>
     <string name="sub_collision">У этой подписки другая подпись. Продолжайте, только если доверяете новому автору.</string>

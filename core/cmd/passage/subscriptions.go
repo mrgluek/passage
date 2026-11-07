@@ -59,7 +59,7 @@ func (a *App) previewImport(text string) (invitePreview, error) {
 		d := r.Subscription
 		signer := a.t.f("sub_unknown")
 		if r.Signature == "trusted_author" {
-			signer = a.t.f("sub_trusted")
+			signer = a.t.f("sub_trusted") + "\n" + a.t.f("sub_takeover")
 		}
 		seed := a.t.f("sub_no_seed")
 		if d.HasSeed {

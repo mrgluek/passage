@@ -119,6 +119,11 @@ func ApplySubFile(cfg Config, sub Subscription, bundle links.Bundle) (Config, er
 		next.Subscriptions = slices.Insert(next.Subscriptions, index, sub)
 		return next.Normalize()
 	}
+	trusted, err := authorKeys()
+	if err != nil {
+		return cfg, err
+	}
+	trustedAuthor := len(trusted) > 0 && bytes.Equal(sub.Signer, trusted[0])
 	sub.RouteIDs = slices.Clone(cfg.Subscriptions[index].RouteIDs)
 	if len(cfg.Routes) == 0 && cfg.Zone != "" {
 		cfg.Routes = legacyRoutes(cfg)
@@ -131,17 +136,28 @@ func ApplySubFile(cfg Config, sub Subscription, bundle links.Bundle) (Config, er
 	for _, rid := range sub.RouteIDs {
 		owned[rid] = true
 	}
+	otherOwned := map[string]bool{}
 	for _, other := range cfg.Subscriptions {
 		if other.ID != sub.ID {
 			for _, rid := range other.RouteIDs {
+				otherOwned[rid] = true
 				delete(owned, rid)
+			}
+		}
+	}
+	takeover := map[string]bool{}
+	if trustedAuthor {
+		for _, r := range bundle.Routes {
+			supported, _ := links.ValidateRoute(r)
+			if supported && !otherOwned[r.ID] {
+				takeover[r.ID] = true
 			}
 		}
 	}
 	blocked := map[string]bool{}
 	var routes []links.Route
 	for _, r := range cfg.Routes {
-		if !owned[r.ID] {
+		if !owned[r.ID] && !takeover[r.ID] {
 			routes = append(routes, r)
 			blocked[r.ID] = true
 		}
@@ -164,11 +180,7 @@ func ApplySubFile(cfg Config, sub Subscription, bundle links.Bundle) (Config, er
 	cfg.Routes = links.Sorted(routes)
 	cfg.RouteEdits = MinimalEdits(cfg.Routes, cfg.RouteEdits)
 	cfg.Subscriptions[index] = sub
-	trusted, err := authorKeys()
-	if err != nil {
-		return cfg, err
-	}
-	if len(trusted) > 0 && bytes.Equal(sub.Signer, trusted[0]) && len(bundle.Updates) > 0 {
+	if trustedAuthor && len(bundle.Updates) > 0 {
 		cfg.UpdateSources = slices.Clone(bundle.Updates)
 	}
 	return cfg.Normalize()

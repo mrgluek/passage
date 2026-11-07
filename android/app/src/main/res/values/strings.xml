@@ -177,6 +177,7 @@
     </plurals>
     <string name="sub_seed">Includes a first route list</string>
     <string name="sub_no_seed">Routes will be loaded from the address in the link</string>
+    <string name="sub_takeover">Routes with the same names will be kept up to date by this subscription.</string>
     <string name="sub_trusted">Signed by the app’s author</string>
     <string name="sub_unknown">Unknown signer</string>
     <string name="sub_collision">This subscription has a different signer. Subscribe only if you trust the new signer.</string>

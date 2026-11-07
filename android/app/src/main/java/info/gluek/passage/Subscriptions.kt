@@ -5,6 +5,10 @@ import org.json.JSONObject
 
 /** Subscription display uses only public metadata. */
 object Subscriptions {
+    fun inviteSignerResources(signature: String): List<Int> =
+        if (signature == "trusted_author") listOf(R.string.sub_trusted, R.string.sub_takeover)
+        else listOf(R.string.sub_unknown)
+
     fun rows(config: JSONObject): List<JSONObject> {
         val rows = config.optJSONArray("subscriptions") ?: return emptyList()
         return (0 until rows.length()).map { rows.getJSONObject(it) }

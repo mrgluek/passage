@@ -151,3 +151,82 @@ func TestRemoveSubscription(t *testing.T) {
 		t.Fatal("missing ID accepted")
 	}
 }
+
+func TestSubscriptionManualRouteTakeover(t *testing.T) {
+	old := AuthorKey
+	t.Cleanup(func() { AuthorKey = old })
+	for _, tc := range []struct {
+		name                string
+		trusted, otherOwner bool
+	}{
+		{"trusted author", true, false},
+		{"unknown signer", false, false},
+		{"another subscription", true, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s, key, bundle := subFixture(t)
+			pub, _, _ := ed25519.GenerateKey(nil)
+			AuthorKey = base64.RawURLEncoding.EncodeToString(pub)
+			if tc.trusted {
+				AuthorKey = base64.RawURLEncoding.EncodeToString(s.Signer)
+			}
+			manual := subRoute("one")
+			manual.Params["endpoint"] = "wss://example.org/old"
+			priority := uint16(7)
+			cfg := Config{Subscriptions: []Subscription{s}, Routes: []links.Route{manual}, RouteEdits: map[string]RouteEdit{"one": {Off: true, Priority: &priority}}}
+			if tc.otherOwner {
+				other := s
+				other.ID = hex.EncodeToString(bytes.Repeat([]byte{4}, 16))
+				other.RouteIDs = []string{"one"}
+				cfg.Subscriptions = append(cfg.Subscriptions, other)
+			}
+			got, err := ApplySubFile(cfg, s, bundle)
+			if err != nil {
+				t.Fatal(err)
+			}
+			takeover := tc.trusted && !tc.otherOwner
+			wantRoute, wantError := manual, "collision"
+			var wantIDs []string
+			if takeover {
+				wantRoute, wantError, wantIDs = bundle.Routes[0], "", []string{"one"}
+			}
+			if !reflect.DeepEqual(got.Routes, []links.Route{wantRoute}) || !reflect.DeepEqual(got.Subscriptions[0].RouteIDs, wantIDs) || got.Subscriptions[0].LastError != wantError {
+				t.Fatalf("unexpected routes or ownership: %+v", got)
+			}
+			if !reflect.DeepEqual(got.RouteEdits, cfg.RouteEdits) || !reflect.DeepEqual(cfg.Routes, []links.Route{manual}) || len(cfg.Subscriptions[0].RouteIDs) != 0 {
+				t.Fatal("edits lost or input changed")
+			}
+			again, err := ApplySubFile(got, got.Subscriptions[0], bundle)
+			if !errors.Is(err, links.ErrNotNewer) || !reflect.DeepEqual(again, got) {
+				t.Fatal("repeated file changed config", err)
+			}
+			removed, err := RemoveSubscription(got, s.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if takeover {
+				if len(removed.Routes) != 0 || len(removed.RouteEdits) != 0 {
+					t.Fatal("taken-over route survived removal")
+				}
+				raw, err := links.Encode(links.Bundle{V: 2, Kind: "routes", Mode: "merge", Routes: []links.Route{manual}}, key)
+				if err != nil {
+					t.Fatal(err)
+				}
+				uri, err := links.URI(raw, "")
+				if err != nil {
+					t.Fatal(err)
+				}
+				imported, err := ImportLink(got, uri, true)
+				if err != nil || len(imported.Config.Subscriptions[0].RouteIDs) != 0 {
+					t.Fatal("plain import did not detach ownership", err)
+				}
+				detached, err := RemoveSubscription(imported.Config, s.ID)
+				if err != nil || !reflect.DeepEqual(detached.Routes, []links.Route{manual}) {
+					t.Fatal("plain import route removed with subscription", err)
+				}
+			} else if !reflect.DeepEqual(removed.Routes, []links.Route{manual}) || !reflect.DeepEqual(removed.RouteEdits, cfg.RouteEdits) {
+				t.Fatal("unowned route removed")
+			}
+		})
+	}
+}

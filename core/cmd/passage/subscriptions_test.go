@@ -364,3 +364,26 @@ func TestClosingRefreshNoticePersistsAndDismisses(t *testing.T) {
 		t.Fatal("removal kept stale notice")
 	}
 }
+
+func TestDesktopTrustedInviteTakeoverNotice(t *testing.T) {
+	pub, key, _ := ed25519.GenerateKey(nil)
+	invite := desktopInvite(t, key, false)
+	old := tunnel.AuthorKey
+	t.Cleanup(func() { tunnel.AuthorKey = old })
+	for _, tc := range []struct{ lang, notice string }{
+		{"en", "Routes with the same names will be kept up to date by this subscription."},
+		{"ru", "Маршруты с такими же именами будут обновляться подпиской."},
+	} {
+		for _, trusted := range []bool{false, true} {
+			tunnel.AuthorKey = ""
+			if trusted {
+				tunnel.AuthorKey = base64.RawURLEncoding.EncodeToString(pub)
+			}
+			a := newSubscriptionTestApp(t, tc.lang)
+			preview, err := a.previewImport(invite)
+			if err != nil || strings.Contains(preview.Text, tc.notice) != trusted {
+				t.Fatalf("%s trusted=%v: %+v %v", tc.lang, trusted, preview, err)
+			}
+		}
+	}
+}

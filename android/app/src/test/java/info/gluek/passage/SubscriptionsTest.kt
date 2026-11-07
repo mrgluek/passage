@@ -5,6 +5,13 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class SubscriptionsTest {
+    @Test fun inviteTakeoverNoticeIsOnlyForTrustedAuthor() {
+        assertEquals(listOf(R.string.sub_trusted, R.string.sub_takeover), Subscriptions.inviteSignerResources("trusted_author"))
+        for (signature in listOf("unknown_signer", "", "unsigned")) {
+            assertEquals(listOf(R.string.sub_unknown), Subscriptions.inviteSignerResources(signature))
+        }
+    }
+
     @Test fun closedRowUsesPublicMetadata() {
         assertTrue(Subscriptions.isClosed(JSONObject("""{"closed":true,"last_error":"network"}""")))
         assertFalse(Subscriptions.isClosed(JSONObject()))
