@@ -185,3 +185,13 @@ jobs:
     secrets: inherit
     with:
       tag: ${{ github.ref_name }}
+
+  virustotal:
+    needs: release
+    permissions:
+      contents: read
+    uses: ./.github/workflows/virustotal.yml
+    # The VT_API_KEY secret is a repository secret; without it the job does nothing.
+    secrets: inherit
+    with:
+      tag: ${{ github.ref_name }}

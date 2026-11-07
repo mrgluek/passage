@@ -1,0 +1,47 @@
+name: VirusTotal
+
+# Sends a release's apps to VirusTotal, so the antivirus engines see them, and
+# prints their verdicts in the job summary. release.yml calls it for each new
+# release; run it by hand for an older tag. It is informational and never
+# blocks a release. Without the VT_API_KEY repository secret it does nothing.
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Release tag; the latest release if empty.
+        type: string
+        default: ""
+  workflow_call:
+    inputs:
+      tag:
+        description: Release tag; the latest release if empty.
+        type: string
+        default: ""
+
+permissions:
+  contents: read
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    # A failure here must not turn a published release red.
+    continue-on-error: true
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Download the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ inputs.tag }}
+        run: |
+          tag=${TAG:-$(gh release view --json tagName -q .tagName)}
+          gh release download "$tag" --pattern 'passage-*.apk' --pattern 'passage-*-windows-amd64.zip' --pattern 'passage-*-darwin-*.zip' --dir dist
+          ls -l dist
+
+      - name: Send to VirusTotal
+        env:
+          VT_API_KEY: ${{ secrets.VT_API_KEY }}
+        run: scripts/virustotal.sh dist/*
