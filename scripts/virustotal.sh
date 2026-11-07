@@ -10,7 +10,6 @@ set -uo pipefail
 api=${VT_API:-https://www.virustotal.com/api/v3}
 gap=${VT_GAP:-16}
 wait_max=${VT_WAIT:-1500}
-summary=${GITHUB_STEP_SUMMARY:-/dev/stdout}
 max_size=33554432 # larger files need a different upload address
 
 if [[ -z ${VT_API_KEY:-} ]]; then
@@ -124,5 +123,5 @@ done
       echo '```'
     fi
   done
-} >>"$summary"
+} | tee -a "${GITHUB_STEP_SUMMARY:-/dev/null}"
 exit 0
