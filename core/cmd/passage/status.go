@@ -152,6 +152,8 @@ func routeLabel(t tr, kind string) string {
 		return "HTTP"
 	case "wss":
 		return "WSS"
+	case "turn":
+		return "TURN"
 	case "iroh":
 		return "Iroh"
 	case "soar":

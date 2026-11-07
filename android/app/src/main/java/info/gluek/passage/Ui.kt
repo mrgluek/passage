@@ -80,6 +80,7 @@ object Ui {
         "my" -> c.getString(R.string.route_my)
         "http" -> "HTTP"
         "wss" -> "WSS"
+        "turn" -> "TURN"
         "iroh" -> "Iroh"
         "soar" -> "Soar"
         else -> kind

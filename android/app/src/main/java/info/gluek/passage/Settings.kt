@@ -270,7 +270,7 @@ class Settings(context: Context) {
         val THEMES = listOf("system", "light", "dark")
         const val HOST = "127.0.0.1"
         /** Route types that can be chosen, as in the Go core's RouteKinds. */
-        val ROUTE_KINDS = listOf("my", "http", "wss", "iroh", "soar")
+        val ROUTE_KINDS = listOf("my", "http", "wss", "turn", "iroh", "soar")
         /** The Go core's myPriority. */
         private const val MY_PRIORITY = 10
 
