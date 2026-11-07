@@ -261,6 +261,7 @@ class SettingsActivity : ThemedActivity() {
             id = R.id.link_edit
             isSaveEnabled = false
             hint = getString(R.string.link_hint)
+            Ui.dimHint(this)
             inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_MULTI_LINE or
                 InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS or InputType.TYPE_TEXT_VARIATION_URI
             minLines = 2
@@ -285,6 +286,7 @@ class SettingsActivity : ThemedActivity() {
             id = R.id.my_route_edit
             isSaveEnabled = false
             hint = getString(R.string.my_route_hint)
+            Ui.dimHint(this)
             setText(settings.myRoute)
             isSingleLine = true
             inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS or InputType.TYPE_TEXT_VARIATION_URI

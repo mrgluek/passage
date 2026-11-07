@@ -43,6 +43,11 @@ object Ui {
         textSize = 13f
     }
 
+    /** Shows an input's placeholder dimmer than typed text, so it never reads as a value. */
+    fun dimHint(edit: android.widget.EditText) {
+        edit.setHintTextColor((edit.currentTextColor and 0x00FFFFFF) or (0x66 shl 24))
+    }
+
     /**
      * A scroll view that keeps its content off the system bars. From Android
      * 15 the window is edge to edge and the title bar overlays the content;

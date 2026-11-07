@@ -113,6 +113,13 @@ class MainActivity : ThemedActivity() {
     private fun buildUi(): View {
         val col = Ui.column(this)
 
+        // The notice sits on top, above the state, as on the desktop.
+        routesNotice = Ui.hint(this, "").apply {
+            visibility = View.GONE
+            setOnClickListener { settings.routesNotice = ""; visibility = View.GONE }
+        }
+        col.addView(routesNotice)
+
         stateView = TextView(this).apply {
             textSize = 18f
             setTypeface(typeface, Typeface.BOLD)
@@ -135,11 +142,6 @@ class MainActivity : ThemedActivity() {
             }
         }
         col.addView(updateNotice)
-        routesNotice = Ui.hint(this, "").apply {
-            visibility = View.GONE
-            setOnClickListener { settings.routesNotice = ""; visibility = View.GONE }
-        }
-        col.addView(routesNotice)
 
         noLinkBox = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         noLinkBox.addView(Ui.hint(this, getString(R.string.no_link)).apply {
