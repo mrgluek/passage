@@ -371,3 +371,27 @@ func TestSaveRouteEdits(t *testing.T) {
 		t.Fatalf("replace kept edits: %+v %+v", got, b.settings.Edits)
 	}
 }
+
+func TestSettingsEmptySections(t *testing.T) {
+	for _, lang := range []string{"en", "ru"} {
+		t.Run(lang, func(t *testing.T) {
+			a := newApp(t.TempDir(), "test", "", lang, &fakePlatform{})
+			if got := a.linkView(false); len(got.Routes) != 0 || got.RoutesEmpty != a.t.f("saved_routes_empty") {
+				t.Fatalf("empty routes: %+v", got)
+			}
+			if got := a.view(); len(got.Subscriptions) != 0 || got.SubscriptionsEmpty != a.t.f("subscriptions_empty") {
+				t.Fatalf("empty subscriptions: %+v", got)
+			}
+			a.linkCfg.Routes = []links.Route{{ID: "example", Type: "wss", Priority: 10}}
+			if got := a.linkView(false); len(got.Routes) != 1 || got.RoutesEmpty != "" {
+				t.Fatalf("saved route: %+v", got)
+			}
+			for _, closed := range []bool{false, true} {
+				a.linkCfg.Subscriptions = []tunnel.Subscription{{ID: "example", Name: "Example", Closed: closed}}
+				if got := a.view(); len(got.Subscriptions) != 1 || got.SubscriptionsEmpty != "" || got.Subscriptions[0].Closed != closed {
+					t.Fatalf("subscription closed=%v: %+v", closed, got)
+				}
+			}
+		})
+	}
+}

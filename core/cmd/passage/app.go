@@ -357,6 +357,7 @@ func (a *App) trayState() trayState {
 
 // view is the home screen's state.
 type view struct {
+	SubscriptionsEmpty string            `json:"subscriptions_empty"`
 	Subscriptions      []subscriptionRow `json:"subscriptions"`
 	SubscriptionNotice string            `json:"subscription_notice"`
 	Update             updateView        `json:"update"`
@@ -416,6 +417,9 @@ func (a *App) view() view {
 		full += "\n" + a.t.f("app_events") + "\n" + events
 	}
 	v.Subscriptions = a.subscriptionRowsLocked()
+	if len(v.Subscriptions) == 0 {
+		v.SubscriptionsEmpty = a.t.f("subscriptions_empty")
+	}
 	v.SubscriptionNotice = noticeText(a.t, a.settings.RoutesNotice)
 	if a.subscriptionNotice != "" {
 		v.SubscriptionNotice = a.subscriptionNotice
@@ -428,10 +432,11 @@ func (a *App) view() view {
 // linkView is the settings screen's link part. The text is sent only when
 // asked, so the key isn't on screen by default.
 type linkView struct {
-	Has   bool   `json:"has"`
-	Info  string `json:"info"`
-	Error string `json:"error"`
-	Text  string `json:"text,omitempty"`
+	RoutesEmpty string `json:"routes_empty"`
+	Has         bool   `json:"has"`
+	Info        string `json:"info"`
+	Error       string `json:"error"`
+	Text        string `json:"text,omitempty"`
 	// Routes are the link's routes with the local edits, for the editor.
 	Routes []savedRoute `json:"routes"`
 }
@@ -450,6 +455,9 @@ func (a *App) linkView(withText bool) linkView {
 	defer a.mu.Unlock()
 	v := linkView{Has: a.hasLink()}
 	v.Routes = savedRoutes(a.linkCfg)
+	if len(v.Routes) == 0 {
+		v.RoutesEmpty = a.t.f("saved_routes_empty")
+	}
 	switch {
 	case a.linkErr != "":
 		v.Error = a.t.f("link_invalid", a.linkErr)

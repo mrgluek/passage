@@ -9,6 +9,8 @@ import (
 // Go's (%[1]s); the window gets the table and formats them the same way.
 var texts = map[string]map[string]string{
 	"en": {
+		"saved_routes_empty":  "No routes yet. Paste a link below to add routes.",
+		"subscriptions_empty": "No subscriptions. A subscription link keeps your routes up to date by itself: paste it below, and Passage loads the current routes and refreshes them in the background.",
 		"sub_one":             "Paste one subscription link at a time and confirm Subscribe.",
 		"subscriptions":       "Subscriptions",
 		"sub_closed":          "Closed by its owner",
@@ -211,6 +213,13 @@ var texts = map[string]map[string]string{
 		"inside_archive":         "Passage is running from inside the zip archive, so it can't keep its settings and link.txt next to it.\n\nRight-click the archive, choose \"Extract All…\", and start passage.exe from the extracted folder.",
 	},
 	"ru": {
+		"saved_routes_empty":  "Маршрутов пока нет. Вставьте ссылку ниже, чтобы добавить маршруты.",
+		"subscriptions_empty": "Подписок нет. Ссылка-подписка сама обновляет маршруты: вставьте её ниже, и Passage загрузит актуальные маршруты и будет обновлять их в фоне.",
+		"link_hint":           "Вставьте ссылку Passage, чтобы добавить или заменить маршруты",
+		"app_name":            "Passage",
+		"status_relay":        "  %[1]s: %[2]s, %[3]s",
+		"tunnel_route":        "%[1]s: %[2]s",
+		"my_route_hint":       "127.0.0.1:9050",
 		"sub_one":             "Вставьте одну ссылку подписки и нажмите «Подписаться».",
 		"subscriptions":       "Подписки",
 		"sub_closed":          "Закрыта владельцем",

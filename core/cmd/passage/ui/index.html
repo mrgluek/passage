@@ -114,12 +114,14 @@ a { color: var(--accent); cursor: pointer; text-decoration: underline; }
 
 <main id="settings" class="hidden">
   <h2 data-t="saved_routes_label" style="margin-top:8px"></h2>
+  <p class="hint" id="savedRoutesEmpty"></p>
   <div id="savedRoutes"></div>
   <button id="editRoutes" class="hidden" data-t="edit_routes"></button>
   <div id="editBar" class="hidden"><button class="primary" id="saveRoutes" data-t="save"></button> <button id="cancelRoutes" data-t="cancel"></button></div>
   <p class="hint hidden" id="routesHint" data-t="routes_edit_hint"></p>
 
   <h2 data-t="subscriptions"></h2>
+  <p class="hint" id="subscriptionsEmpty"></p>
   <div id="subscriptions"></div>
 
   <h2 data-t="link_label"></h2>
@@ -298,6 +300,8 @@ function segments(box, v) {
 let last = null, shownRoutes = "", shownValues = "", shownSubscriptions = "";
 function render(v) {
   v.routes = v.routes || [];
+  $("subscriptionsEmpty").textContent = v.subscriptions_empty || "";
+  $("subscriptionsEmpty").hidden = !v.subscriptions_empty;
   last = v;
   $("subscriptionNotice").textContent = v.subscription_notice || "";
   $("subscriptionNotice").classList.toggle("hidden", !v.subscription_notice);
@@ -425,6 +429,8 @@ function showLink(open) {
   return call("link", open).then(l => {
     $("linkInfo").textContent = (l.routes || []).length ? "" : l.info || "";
     savedList = l.routes || [];
+    $("savedRoutesEmpty").textContent = l.routes_empty || "";
+    $("savedRoutesEmpty").hidden = !l.routes_empty;
     if (!editing) renderRoutes();
     $("linkError").textContent = l.error || "";
     // A saved link stays folded so its key is not on screen.

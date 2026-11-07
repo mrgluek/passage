@@ -5,7 +5,7 @@
     <string name="edit_routes">Edit routes</string>
     <string name="routes_edit_hint">Turn a route off or change its priority. Edits stay on this device.</string>
     <string name="link_label">Link</string>
-    <string name="link_hint" translatable="false">https://passage.gluek.info/link#…</string>
+    <string name="link_hint">Paste a Passage link to add or replace routes</string>
     <string name="link_empty">Paste the link you received.</string>
     <string name="link_ok_zone">Link OK: zone %1$s</string>
     <string name="server_ipv6_on">Server IPv6: enabled</string>
@@ -210,4 +210,6 @@
     <string name="sub_error_collision">Some route IDs are already in use</string>
     <string name="sub_error_required">Update Passage to load these routes</string>
     <string name="sub_closed">Closed by its owner</string>
+    <string name="saved_routes_empty">No routes yet. Paste a link below to add routes.</string>
+    <string name="subscriptions_empty">No subscriptions. A subscription link keeps your routes up to date by itself: paste it below, and Passage loads the current routes and refreshes them in the background.</string>
 </resources>

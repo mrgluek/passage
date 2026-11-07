@@ -484,9 +484,11 @@ class SettingsActivity : ThemedActivity() {
         if (!::subscriptionsSection.isInitialized) return
         val rows = settings.subscriptions
         subscriptionsSection.removeAllViews()
-        subscriptionsSection.visibility = if (rows.isEmpty()) View.GONE else View.VISIBLE
-        if (rows.isEmpty()) return
         subscriptionsSection.addView(Ui.heading(this, getString(R.string.subscriptions)))
+        if (rows.isEmpty()) {
+            subscriptionsSection.addView(Ui.hint(this, getString(R.string.subscriptions_empty)))
+            return
+        }
         for (sub in rows) {
             val id = sub.getString("id")
             val status = if (Subscriptions.isClosed(sub)) sub else subscriptionStatus.firstOrNull { it.optString("id") == id.take(8) } ?: sub
@@ -694,19 +696,17 @@ class SettingsActivity : ThemedActivity() {
     private fun renderSavedRoutes() {
         renderSubscriptions()
         val routes = if (editingRoutes) routeDraft ?: emptyList() else settings.savedRoutes
-        if (routes.isEmpty() && !editingRoutes) {
-            savedRoutesSection.visibility = View.GONE
-            linkHeading.setPadding(0, 0, 0, linkHeading.paddingBottom)
-            return
-        }
         savedRoutesSection.visibility = View.VISIBLE
         linkHeading.setPadding(0, Ui.dp(this, 20), 0, linkHeading.paddingBottom)
 
-        editRoutesButton.visibility = if (editingRoutes) View.GONE else View.VISIBLE
+        editRoutesButton.visibility = if (editingRoutes || routes.isEmpty()) View.GONE else View.VISIBLE
         editRoutesBar.visibility = if (editingRoutes) View.VISIBLE else View.GONE
         routesEditHint.visibility = if (editingRoutes) View.VISIBLE else View.GONE
 
         savedRoutesList.removeAllViews()
+        if (routes.isEmpty()) {
+            savedRoutesList.addView(Ui.hint(this, getString(R.string.saved_routes_empty)))
+        }
         for (r in routes) {
             savedRoutesList.addView(buildRouteRow(r, editingRoutes))
         }
