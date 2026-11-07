@@ -181,6 +181,51 @@ class SettingsActivity : ThemedActivity() {
     private fun buildUi(): View {
         val col = Ui.column(this)
 
+        col.addView(Ui.heading(this, getString(R.string.route_label)))
+        routeBox = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        col.addView(routeBox)
+        col.addView(Ui.hint(this, getString(R.string.route_hint)).apply {
+            setPadding(0, Ui.dp(this@SettingsActivity, 6), 0, 0)
+        })
+
+        col.addView(Ui.heading(this, getString(R.string.my_route_label)))
+        myEdit = EditText(this).apply {
+            id = R.id.my_route_edit
+            isSaveEnabled = false
+            hint = getString(R.string.my_route_hint)
+            Ui.dimHint(this)
+            setText(settings.myRoute)
+            isSingleLine = true
+            inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS or InputType.TYPE_TEXT_VARIATION_URI
+            textSize = 14f
+        }
+        val myClear = ImageButton(this).apply {
+            setImageResource(android.R.drawable.ic_menu_close_clear_cancel)
+            background = null
+            imageTintList = android.content.res.ColorStateList.valueOf(Ui.accent(this@SettingsActivity))
+            contentDescription = getString(R.string.clear)
+            setOnClickListener { myEdit.text.clear(); myEdit.requestFocus() }
+        }
+        myClear.visibility = if (myEdit.text.isEmpty()) View.INVISIBLE else View.VISIBLE
+        myEdit.addTextChangedListener(object : TextWatcher {
+            override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
+            override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {}
+            override fun afterTextChanged(s: Editable?) {
+                myClear.visibility = if (s.isNullOrEmpty()) View.INVISIBLE else View.VISIBLE
+            }
+        })
+        col.addView(LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            addView(myEdit, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+            addView(myClear)
+        })
+        col.addView(Button(this).apply {
+            text = getString(R.string.save)
+            setOnClickListener { saveMyRoute(myEdit) }
+        })
+        col.addView(Ui.hint(this, getString(R.string.my_route_help)))
+
         savedRoutesSection = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
         }
@@ -242,9 +287,6 @@ class SettingsActivity : ThemedActivity() {
         }
         savedRoutesSection.addView(routesEditHint)
 
-        subscriptionsSection = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
-        col.addView(subscriptionsSection)
-
         linkHeading = Ui.heading(this, getString(R.string.link_label))
         col.addView(linkHeading)
         linkInfo = Ui.hint(this, "")
@@ -274,50 +316,9 @@ class SettingsActivity : ThemedActivity() {
             setOnClickListener { onSave() }
         })
 
-        col.addView(Ui.heading(this, getString(R.string.route_label)))
-        routeBox = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
-        col.addView(routeBox)
-        col.addView(Ui.hint(this, getString(R.string.route_hint)).apply {
-            setPadding(0, Ui.dp(this@SettingsActivity, 6), 0, 0)
-        })
 
-        col.addView(Ui.heading(this, getString(R.string.my_route_label)))
-        myEdit = EditText(this).apply {
-            id = R.id.my_route_edit
-            isSaveEnabled = false
-            hint = getString(R.string.my_route_hint)
-            Ui.dimHint(this)
-            setText(settings.myRoute)
-            isSingleLine = true
-            inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS or InputType.TYPE_TEXT_VARIATION_URI
-            textSize = 14f
-        }
-        val myClear = ImageButton(this).apply {
-            setImageResource(android.R.drawable.ic_menu_close_clear_cancel)
-            background = null
-            imageTintList = android.content.res.ColorStateList.valueOf(Ui.accent(this@SettingsActivity))
-            contentDescription = getString(R.string.clear)
-            setOnClickListener { myEdit.text.clear(); myEdit.requestFocus() }
-        }
-        myClear.visibility = if (myEdit.text.isEmpty()) View.INVISIBLE else View.VISIBLE
-        myEdit.addTextChangedListener(object : TextWatcher {
-            override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
-            override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {}
-            override fun afterTextChanged(s: Editable?) {
-                myClear.visibility = if (s.isNullOrEmpty()) View.INVISIBLE else View.VISIBLE
-            }
-        })
-        col.addView(LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-            addView(myEdit, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
-            addView(myClear)
-        })
-        col.addView(Button(this).apply {
-            text = getString(R.string.save)
-            setOnClickListener { saveMyRoute(myEdit) }
-        })
-        col.addView(Ui.hint(this, getString(R.string.my_route_help)))
+        subscriptionsSection = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        col.addView(subscriptionsSection)
 
         col.addView(Ui.heading(this, getString(R.string.access_label)))
         col.addView(CheckBox(this).apply {
@@ -503,11 +504,13 @@ class SettingsActivity : ThemedActivity() {
                 subscriptionsSection.addView(Ui.hint(this, if (refreshingSubscriptions) getString(R.string.sub_refreshing) else refreshResult))
             }
             val buttons = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+            val gap = LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT)
+                .apply { marginEnd = Ui.dp(this@SettingsActivity, 12) }
             if (!Subscriptions.isClosed(status)) buttons.addView(Button(this).apply {
                 text = getString(R.string.sub_refresh)
                 isEnabled = !refreshingSubscriptions && !editingRoutes
                 setOnClickListener { refreshSubscriptions() }
-            })
+            }, gap)
             buttons.addView(Button(this).apply {
                 text = getString(R.string.sub_remove)
                 isEnabled = !refreshingSubscriptions && !editingRoutes
