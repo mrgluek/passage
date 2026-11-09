@@ -151,6 +151,11 @@ func (a *App) networkChanged(now time.Time) bool {
 }
 
 func (n *networkChange) observeState(state networkState, ok bool, now time.Time) bool {
+	if ok && len(state.dns) == 0 && state.paths == "" {
+		// No network at all: nothing to restart for. The next usable state is
+		// compared with the last one that was running.
+		return false
+	}
 	if !ok {
 		// A route-read failure leaves only the resolver set to compare.
 		_, state.paths, _ = strings.Cut(n.current, "|")

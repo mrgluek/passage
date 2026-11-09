@@ -54,7 +54,7 @@ func TestWatchNetwork(t *testing.T) {
 			last = key
 			fmt.Printf("%s key changed ok=%v dns=%v paths=%q\n", now.Format("15:04:05"), ok, state.dns, state.paths)
 		}
-		if ok && change.observe(state.key(), now) {
+		if change.observeState(state, ok, now) {
 			restarts++
 			fmt.Printf("%s RESTART #%d\n", now.Format("15:04:05"), restarts)
 		}

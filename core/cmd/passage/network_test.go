@@ -193,3 +193,36 @@ func TestNetworkEqualMetricsRecordedRoutes(t *testing.T) {
 		}
 	}
 }
+
+// A moment with no network at all (adapters re-binding, a VPN reconnecting)
+// does not restart the router; only a usable state that differs from the
+// running one does, after the settle time.
+func TestNoNetworkStateDoesNotRestart(t *testing.T) {
+	route := networkRoute{name: "Ethernet", index: 1, gateway: "gateway-a", address: "address-a", metric: 10}
+	running := networkStateFor([]string{"a.example.org:53"}, []networkRoute{route})
+	start := time.Unix(1000, 0)
+	change := networkChange{current: running.key()}
+	for i := range 10 {
+		if change.observeState(networkState{}, true, start.Add(time.Duration(i)*2*time.Second)) {
+			t.Fatalf("restart on a state without a network at second %d", i*2)
+		}
+	}
+	// The same network comes back: nothing to restart.
+	for i := range 4 {
+		if change.observeState(running, true, start.Add(time.Duration(20+i*2)*time.Second)) {
+			t.Fatal("restart although the same network returned")
+		}
+	}
+	// A different network comes back after the gap: restarts once, after settling.
+	other := networkStateFor([]string{"b.example.org:53"}, []networkRoute{route})
+	restarts := 0
+	for i := range 6 {
+		if change.observeState(networkState{}, true, start.Add(time.Duration(40+i*4)*time.Second)) ||
+			change.observeState(other, true, start.Add(time.Duration(42+i*4)*time.Second)) {
+			restarts++
+		}
+	}
+	if restarts != 1 {
+		t.Fatalf("%d restarts after a different network returned, want 1", restarts)
+	}
+}
