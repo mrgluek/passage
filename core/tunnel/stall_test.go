@@ -887,3 +887,67 @@ func TestLegacyTunnelStallCooldown(t *testing.T) {
 		})
 	}
 }
+
+// A held route is deprioritised, never forbidden: with every route held the
+// group keeps using its current route, and a failed dial still falls through
+// to the other held route.
+func TestDialUsesHeldRoutesAsLastResort(t *testing.T) {
+	hold := func(tt *Tunnel, g *group) {
+		until := time.Now().Add(time.Hour)
+		g.stalls[RouteDirect] = &stallState{Until: until, Steps: 1}
+		tt.tunnelStall = &stallState{Until: until, Steps: 1}
+	}
+	for _, current := range []Route{RouteDirect, RouteTunnel} {
+		t.Run(current.String(), func(t *testing.T) {
+			var directCalls, tunnelCalls atomic.Int32
+			tt := newTestTunnel(t, ModeAuto, echoDialer("d:", &directCalls), echoDialer("t:", &tunnelCalls))
+			g := tt.testGroup("relay.example.org:443")
+			g.route = current
+			tt.mu.Lock()
+			hold(tt, g)
+			tt.mu.Unlock()
+			c, r, err := tt.dial(g, "relay.example.org:443")
+			if err != nil {
+				t.Fatal(err)
+			}
+			c.Close()
+			if r != current {
+				t.Fatalf("all routes held: dial used %v, want the current route %v", r, current)
+			}
+		})
+	}
+	t.Run("control: one held route is skipped", func(t *testing.T) {
+		var directCalls, tunnelCalls atomic.Int32
+		tt := newTestTunnel(t, ModeAuto, echoDialer("d:", &directCalls), echoDialer("t:", &tunnelCalls))
+		g := tt.testGroup("relay.example.org:443")
+		g.route = RouteDirect
+		tt.mu.Lock()
+		g.stalls[RouteDirect] = &stallState{Until: time.Now().Add(time.Hour), Steps: 1}
+		tt.mu.Unlock()
+		c, r, err := tt.dial(g, "relay.example.org:443")
+		if err != nil {
+			t.Fatal(err)
+		}
+		c.Close()
+		if r != RouteTunnel {
+			t.Fatalf("held direct with a free tunnel: dial used %v", r)
+		}
+	})
+	t.Run("fall through", func(t *testing.T) {
+		var directCalls, tunnelCalls atomic.Int32
+		tt := newTestTunnel(t, ModeAuto, echoDialer("d:", &directCalls), failDialer(&tunnelCalls))
+		g := tt.testGroup("relay.example.org:443")
+		g.route = RouteTunnel
+		tt.mu.Lock()
+		hold(tt, g)
+		tt.mu.Unlock()
+		c, r, err := tt.dial(g, "relay.example.org:443")
+		if err != nil {
+			t.Fatal(err)
+		}
+		c.Close()
+		if r != RouteDirect || tunnelCalls.Load() != 1 || directCalls.Load() != 1 {
+			t.Fatalf("route %v, tunnel dials %d, direct dials %d", r, tunnelCalls.Load(), directCalls.Load())
+		}
+	})
+}
