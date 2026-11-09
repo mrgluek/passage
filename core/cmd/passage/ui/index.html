@@ -93,11 +93,13 @@ a { color: var(--accent); cursor: pointer; text-decoration: underline; }
   <button id="updateNotice" class="primary hidden"></button>
   <div class="state" id="head"></div>
   <div id="line"></div>
+  <button id="startHint" class="primary hidden"></button>
   <div id="noLink" class="hidden">
     <p class="hint" data-t="no_link"></p>
     <button data-t="open_settings" id="openSettings"></button>
   </div>
   <div id="homeRoutes"></div>
+  <div id="connectBox">
   <h2 data-t="connect_label"></h2>
   <p class="hint" data-t="connect_help"></p>
   <div class="row" style="margin-top:8px">
@@ -108,6 +110,7 @@ a { color: var(--accent); cursor: pointer; text-decoration: underline; }
       <button class="icon" id="copyLink"><svg viewBox="0 0 24 24"><path d="M16,1L4,1c-1.1,0 -2,0.9 -2,2v14h2L4,3h12L16,1zM19,5L8,5c-1.1,0 -2,0.9 -2,2v14c0,1.1 0.9,2 2,2h11c1.1,0 2,-0.9 2,-2L21,7c0,-1.1 -0.9,-2 -2,-2zM19,21L8,21L8,7h11v14z"/></svg></button><br>
       <button class="icon" id="copyTg"><svg viewBox="0 0 24 24"><path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"/></svg></button>
     </div>
+  </div>
   </div>
   <div class="row" style="margin-top:14px">
     <h2 class="grow" style="margin:0" data-t="status_label"></h2>
@@ -334,6 +337,9 @@ function render(v) {
   $("updateCancel").classList.toggle("hidden", !["checking", "downloading"].includes(u.state));
   $("head").textContent = v.head;
   $("line").textContent = v.line;
+  $("startHint").textContent = v.start_hint || "";
+  $("startHint").classList.toggle("hidden", !v.start_hint);
+  $("connectBox").classList.toggle("hidden", !!v.start_hint);
   $("startStopPath").setAttribute("d", v.running
     ? "M7,6h10a1,1 0,0 1,1 1v10a1,1 0,0 1,-1 1h-10a1,1 0,0 1,-1 -1v-10a1,1 0,0 1,1 -1z"
     : "M8,5.5v13a1,1 0,0 0,1.5 0.86l10.2,-6.5a1,1 0,0 0,0 -1.72l-10.2,-6.5A1,1 0,0 0,8 5.5z");
@@ -478,6 +484,7 @@ $("updateInstall").onclick = async () => {
 };
 $("subscriptionNoticeClose").onclick = () => call("dismissSubscriptionNotice").then(refresh, fail);
 $("startStop").onclick = () => call(last && last.running ? "stop" : "start").then(refresh, fail);
+$("startHint").onclick = $("startStop").onclick;
 $("settingsBtn").onclick = $("openSettings").onclick = () => page("settings");
 $("backBtn").onclick = () => page("home");
 $("head").onclick = () => {

@@ -65,3 +65,25 @@ func TestSettingsEmptyStrings(t *testing.T) {
 		}
 	}
 }
+
+func TestStartHint(t *testing.T) {
+	for _, tc := range []struct{ lang, want string }{
+		{"en", "Routes loaded. Start the proxy."},
+		{"ru", "Маршруты загружены. Запустите прокси."},
+	} {
+		tr := tr(table(tc.lang))
+		for _, check := range []struct {
+			running bool
+			routes  int
+			want    string
+		}{
+			{true, 3, ""},
+			{false, 0, ""},
+			{false, 3, tc.want},
+		} {
+			if got := startHint(tr, check.running, check.routes); got != check.want {
+				t.Errorf("%s startHint(%v, %d) = %q, want %q", tc.lang, check.running, check.routes, got, check.want)
+			}
+		}
+	}
+}

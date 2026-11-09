@@ -36,6 +36,7 @@ class MainActivity : ThemedActivity() {
     private lateinit var noLinkBox: LinearLayout
     private lateinit var routeBox: LinearLayout
     private lateinit var connectBox: LinearLayout
+    private lateinit var startHintButton: Button
     private lateinit var detailsBox: LinearLayout
     private var shownRoutes: String? = null
     private var shownDetails: String? = null
@@ -153,6 +154,13 @@ class MainActivity : ThemedActivity() {
             setOnClickListener { startActivity(Intent(this@MainActivity, SettingsActivity::class.java)) }
         })
         col.addView(noLinkBox)
+
+        startHintButton = Button(this).apply {
+            text = getString(R.string.start_hint)
+            visibility = View.GONE
+            setOnClickListener { onStartClicked() }
+        }
+        col.addView(startHintButton)
 
         routeBox = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
@@ -303,6 +311,9 @@ class MainActivity : ThemedActivity() {
         } ?: getString(R.string.sub_routes_updated, notice.added, notice.removed)
         val hasLink = settings.link.isNotEmpty() || settings.subscriptions.isNotEmpty() || settings.savedRoutes.isNotEmpty()
         noLinkBox.visibility = if (hasLink) View.GONE else View.VISIBLE
+        val startHint = !active && settings.installedRoutes.isNotEmpty()
+        startHintButton.visibility = if (startHint) View.VISIBLE else View.GONE
+        connectBox.visibility = if (startHint) View.GONE else View.VISIBLE
         showRoutes()
         showDetails()
         batteryButton.visibility = if (Ui.batteryExempt(this)) View.GONE else View.VISIBLE

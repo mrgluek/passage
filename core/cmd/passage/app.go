@@ -368,6 +368,7 @@ type view struct {
 	Head               string            `json:"head"`
 	Line               string            `json:"line"`
 	Full               string            `json:"full"`
+	StartHint          string            `json:"start_hint"`
 	HasLink            bool              `json:"has_link"`
 	Mode               string            `json:"mode"`
 	Routes             []routeChoice     `json:"routes"`
@@ -379,6 +380,14 @@ type view struct {
 	Pass               string            `json:"pass"`
 	ProxyLink          string            `json:"proxy_link"` // socks5://
 	TgLink             string            `json:"tg_link"`    // tg://socks
+}
+
+// startHint asks to start the proxy when routes exist but it is not running.
+func startHint(t tr, running bool, routes int) string {
+	if !running && routes > 0 {
+		return t.f("start_hint")
+	}
+	return ""
 }
 
 func (a *App) view() view {
@@ -398,6 +407,7 @@ func (a *App) view() view {
 	default:
 		v.Head = a.t.f("proxy_stopped")
 	}
+	v.StartHint = startHint(a.t, v.Running, len(v.Routes))
 	var full string
 	if a.tun != nil {
 		st := a.tun.Status(500)
