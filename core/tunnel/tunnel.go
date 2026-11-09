@@ -169,6 +169,7 @@ type Tunnel struct {
 	probeMTTunnel func(ctx context.Context, hostport string) error
 	ipv6Route     func() bool // nil: hasIPv6Route
 	now           func() time.Time
+	previous      *lastNetwork
 
 	mu          sync.Mutex
 	mode        string
@@ -324,6 +325,8 @@ func Start(cfg Config) (*Tunnel, error) {
 	}
 	if t.mode == ModeAuto {
 		t.telegram.route = t.autoRouteLocked(t.telegram)
+	} else {
+		rememberTunnel(t.cfg, t.telegram.name, t.telegram.route == RouteTunnel, t.timeNow())
 	}
 
 	ln, err := net.Listen("tcp", cfg.Listen)
@@ -447,6 +450,8 @@ func (t *Tunnel) relayLocked(host string) *group {
 	g.seen = true
 	if t.mode == ModeAuto {
 		g.route = t.autoRouteLocked(g)
+	} else {
+		rememberTunnel(t.cfg, g.name, g.route == RouteTunnel, t.timeNow())
 	}
 	t.relays[host] = g
 	for len(t.relays) > maxRelayGroups {
@@ -521,15 +526,36 @@ func (t *Tunnel) groupsLocked() []*group {
 	return out
 }
 
-// autoRouteLocked is where auto starts g: the tunnel when g had to use it
-// on this network before, else direct. Caller holds t.mu.
+// autoRouteLocked chooses the initial auto route. Caller holds t.mu.
 func (t *Tunnel) autoRouteLocked(g *group) Route {
-	if g.kind == kindOther || t.ways[RouteTunnel].dial == nil || !knownBlocked(t.cfg, g.name) {
+	if t.mode != ModeAuto || g.kind == kindOther {
 		return RouteDirect
 	}
-	g.state, g.failStreak = "blocked", blockedAfter
-	t.log.add("%s used the tunnel on this network before: starting there", g.name)
-	return RouteTunnel
+	if t.previous == nil {
+		last := previousNetwork(t.cfg)
+		t.previous = &last
+	}
+	now := t.timeNow()
+	if t.ways[RouteTunnel].dial == nil {
+		rememberTunnel(t.cfg, g.name, false, now)
+		return RouteDirect
+	}
+	blocked, clean := knownNetworkGroup(t.cfg, g.name, now)
+	inherited := !blocked && !clean && t.previous.Network != networkKey(t.cfg) &&
+		now.Sub(t.previous.At) >= 0 && now.Sub(t.previous.At) < previousNetworkMemory &&
+		t.previous.Groups[groupKey(g.name)]
+	route := RouteDirect
+	if blocked || inherited {
+		g.state, g.failStreak = "blocked", blockedAfter
+		if inherited {
+			t.log.add("%s: previous network used the tunnel: starting there", g.name)
+		} else {
+			t.log.add("%s used the tunnel on this network before: starting there", g.name)
+		}
+		route = RouteTunnel
+	}
+	rememberTunnel(t.cfg, g.name, route == RouteTunnel, now)
+	return route
 }
 
 func initialRoute(mode string) Route {
@@ -732,6 +758,9 @@ func (t *Tunnel) setRouteLocked(g *group, r Route, reason string) {
 	}
 	old := g.route
 	g.route = r
+	if g.kind != kindOther && (old == RouteTunnel || r == RouteTunnel) {
+		rememberTunnel(t.cfg, g.name, r == RouteTunnel, t.timeNow())
+	}
 	g.routeSince = time.Now()
 	g.tunnelFails = 0
 	t.routeGen.Add(1)
@@ -1448,13 +1477,12 @@ func (t *Tunnel) applyProbe(g *group, res probeResult) {
 		return
 	}
 	t.setRouteLocked(g, route, state)
-	// Remembered per network, so auto starts there next time; written by
-	// another goroutine, the state file is no reason to hold t.mu.
+	// Keep verdicts and route changes in the same order.
 	switch {
 	case state == "blocked" && route == RouteTunnel:
-		go rememberBlocked(t.cfg, g.name, true)
+		rememberBlockedAt(t.cfg, g.name, true, t.timeNow())
 	case state == "direct" && route == RouteDirect:
-		go rememberBlocked(t.cfg, g.name, false)
+		rememberBlockedAt(t.cfg, g.name, false, t.timeNow())
 	}
 }
 

@@ -1019,6 +1019,8 @@ func resetKnownStrategies() {
 	knownStrategies.Lock()
 	knownStrategies.m = map[string]knownStrategy{}
 	knownStrategies.blocked = map[string]map[string]time.Time{}
+	knownStrategies.clean = map[string]map[string]time.Time{}
+	knownStrategies.last = lastNetwork{}
 	knownStrategies.loaded = map[string]bool{}
 	knownStrategies.Unlock()
 }
@@ -1070,11 +1072,11 @@ func TestBlockedNetworkStartsOnTheTunnel(t *testing.T) {
 	}
 	elsewhere := newTestTunnel(t, ModeAuto, echoDialer("D:", &n), echoDialer("T:", &n))
 	elsewhere.cfg.StateFile, elsewhere.cfg.SystemResolvers = file, []string{"198.51.100.53:53"}
-	if g := elsewhere.testGroup("relay.example.org:443"); g.route != RouteDirect {
-		t.Fatal("another network must start direct")
+	if g := elsewhere.testGroup("relay.example.org:443"); g.route != RouteTunnel {
+		t.Fatal("another network must inherit the tunnel")
 	}
 
-	// Open again: back to direct and forgotten.
+	// Open again: back to direct and remembered as clean.
 	g := again.relays["relay.example.org"]
 	for i := 0; i < recoveredAfter; i++ {
 		again.applyProbe(g, probeResult{Relays: 1, RelayOK: 1, NetworkOK: true})
