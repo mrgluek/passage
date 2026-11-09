@@ -69,6 +69,7 @@ type App struct {
 	subscriptionRefreshing bool
 	subscriptionResults    map[string]string
 	subscriptionNotice     string
+	subscriptionFetcher    subscriptionFetcher
 }
 
 func newApp(dir, version, iroh, lang string, os platform) *App {

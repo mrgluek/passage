@@ -89,7 +89,10 @@ func (a *App) subscribe(text string, replace bool) error {
 	if r.Collision && !replace {
 		return errors.New(a.t.f("sub_collision"))
 	}
-	return a.applySubscriptionsLocked(r.Config, true)
+	if err := a.applySubscriptionsLocked(r.Config, true); err != nil {
+		return err
+	}
+	return a.refreshSubscriptionsLocked(r.SubscriptionID, true)
 }
 
 func (a *App) applySubscriptionsLocked(cfg tunnel.Config, restart bool) error {
@@ -207,9 +210,17 @@ func routeChanges(before, after tunnel.Config) (added, removed int) {
 	return
 }
 
+type subscriptionFetcher interface {
+	Refresh(context.Context, tunnel.Config, []tunnel.SubscriptionDial) tunnel.SubscriptionRefreshResult
+}
+
 func (a *App) refreshSubscriptions(id string) error {
 	a.mu.Lock()
 	defer a.mu.Unlock()
+	return a.refreshSubscriptionsLocked(id, false)
+}
+
+func (a *App) refreshSubscriptionsLocked(id string, initial bool) error {
 	if a.subscriptionRefreshing {
 		return nil
 	}
@@ -218,14 +229,20 @@ func (a *App) refreshSubscriptions(id string) error {
 	}
 	a.subscriptionRefreshing = true
 	a.subscriptionResults = map[string]string{}
-	cfg, tun, epoch := a.linkCfg, a.tun, a.subscriptionEpoch
+	if a.subscriptionFetcher == nil {
+		a.subscriptionFetcher = &tunnel.SubscriptionRefresher{}
+	}
+	cfg, tun, epoch, fetcher := a.linkCfg, a.tun, a.subscriptionEpoch, a.subscriptionFetcher
 	go func() {
 		var out tunnel.SubscriptionRefreshResult
 		if tun != nil {
-			out = tun.RefreshSubscriptions(context.Background())
+			if initial {
+				out = tun.RefreshInitialSubscriptions(context.Background())
+			} else {
+				out = tun.RefreshSubscriptions(context.Background())
+			}
 		} else {
-			var ref tunnel.SubscriptionRefresher
-			out = ref.Refresh(context.Background(), cfg, nil)
+			out = fetcher.Refresh(context.Background(), cfg, nil)
 		}
 		a.mu.Lock()
 		defer a.mu.Unlock()

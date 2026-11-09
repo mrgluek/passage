@@ -130,6 +130,7 @@ func Java_info_gluek_passage_Native_removeSubscription(env *C.JNIEnv, cls C.jcla
 func Java_info_gluek_passage_Native_refreshSubscriptions(env *C.JNIEnv, cls C.jclass, request C.jbyteArray) C.jbyteArray {
 	var in struct {
 		Existing tunnel.Config `json:"existing"`
+		Initial  bool          `json:"initial"`
 	}
 	if err := json.Unmarshal([]byte(goString(env, request)), &in); err != nil {
 		return fail(env, errors.New("invalid refresh request"))
@@ -138,6 +139,9 @@ func Java_info_gluek_passage_Native_refreshSubscriptions(env *C.JNIEnv, cls C.jc
 	t := cur
 	mu.Unlock()
 	if t != nil {
+		if in.Initial {
+			return result(env, t.RefreshInitialSubscriptions(context.Background()))
+		}
 		return result(env, t.RefreshSubscriptions(context.Background()))
 	}
 	var ref tunnel.SubscriptionRefresher

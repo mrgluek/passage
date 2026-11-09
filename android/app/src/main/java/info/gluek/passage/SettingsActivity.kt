@@ -457,7 +457,7 @@ class SettingsActivity : ThemedActivity() {
                                         settings.saveRoutes(if (subscribing) previousLink else incoming, result.getJSONObject("config").toString())
                                     }
                                     runOnUiThread {
-                                        restartIfRunning()
+                                        if (subscribing) refreshSubscriptions(initial = true) else restartIfRunning()
                                         if (isFinishing || isDestroyed) return@runOnUiThread
                                         editingRoutes = false
                                         routeDraft = null
@@ -525,7 +525,8 @@ class SettingsActivity : ThemedActivity() {
         }
     }
 
-    private fun refreshSubscriptions() {
+    private fun refreshSubscriptions(initial: Boolean = false) {
+        if (refreshingSubscriptions) return
         val previous = settings.routesConfig
         refreshingSubscriptions = true
         refreshResult = ""
@@ -533,19 +534,21 @@ class SettingsActivity : ThemedActivity() {
         worker.execute {
             var restart = false
             val message = try {
-                if (PassageService.active && PassageService.runningRoutesConfig != previous) throw IllegalStateException()
-                val result = Native.json(Native.refreshSubscriptions(Subscriptions.request(previous).toString().toByteArray(Charsets.UTF_8)))
-                if (result.has("error")) throw IllegalStateException()
-                val config = result.getJSONObject("config")
-                val changed = result.optBoolean("changed")
-                synchronized(Settings.configLock) {
-                    if (!settings.saveSubscriptionRefresh(previous, config)) throw IllegalStateException()
-                    if (!changed) PassageService.savedRefreshMetadata(previous, config.toString())
+                PassageService.withSubscriptionRouter(previous) {
+                    val request = Subscriptions.request(previous).put("initial", initial)
+                    val result = Native.json(Native.refreshSubscriptions(request.toString().toByteArray(Charsets.UTF_8)))
+                    if (result.has("error")) throw IllegalStateException()
+                    val config = result.getJSONObject("config")
+                    val changed = result.optBoolean("changed")
+                    synchronized(Settings.configLock) {
+                        if (!settings.saveSubscriptionRefresh(previous, config)) throw IllegalStateException()
+                        if (!changed) PassageService.savedRefreshMetadata(previous, config.toString())
+                    }
+                    restart = changed
+                    val errors = Subscriptions.rows(config).mapNotNull { Subscriptions.errorResource(it.optString("last_error")) }
+                    if (errors.isNotEmpty()) getString(R.string.sub_failed, getString(errors.first()))
+                    else getString(if (restart) R.string.sub_updated else R.string.sub_current)
                 }
-                restart = changed
-                val errors = Subscriptions.rows(config).mapNotNull { Subscriptions.errorResource(it.optString("last_error")) }
-                if (errors.isNotEmpty()) getString(R.string.sub_failed, getString(errors.first()))
-                else getString(if (restart) R.string.sub_updated else R.string.sub_current)
             } catch (_: Throwable) { getString(R.string.sub_save_failed) }
             // Restart even if the activity was closed while fetching.
             if (restart) restartIfRunning()
