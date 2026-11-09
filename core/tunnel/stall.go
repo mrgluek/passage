@@ -21,8 +21,8 @@ type stallState struct {
 	Steps  int
 	Count  int64
 	recent []struct {
-		socket any
-		at     time.Time
+		key string
+		at  time.Time
 	}
 }
 
@@ -151,38 +151,48 @@ func (s *stallState) recovered(log *eventLog, route string) {
 	}
 	s.success()
 }
-func (s *stallState) record(now time.Time, log *eventLog, route string, first bool, socket any) {
+func (s *stallState) record(now time.Time, log *eventLog, route string, first bool, key string, pinned ...bool) bool {
 	s.Count++
+	if len(pinned) > 0 && pinned[0] {
+		route += " (pinned)"
+	}
 	if !first {
 		if log != nil {
 			log.add("%s: connection closed, no reply (later)", route)
 		}
-		return
+		return false
 	}
 	recent := s.recent[:0]
 	duplicate := false
 	for _, stall := range s.recent {
 		if now.Sub(stall.at) <= stallCorroborateWindow {
 			recent = append(recent, stall)
-			duplicate = duplicate || stall.socket == socket
+			duplicate = duplicate || stall.key == key
 		}
 	}
 	clear(s.recent[len(recent):])
 	s.recent = recent
 	if !duplicate {
 		s.recent = append(s.recent, struct {
-			socket any
-			at     time.Time
-		}{socket, now})
+			key string
+			at  time.Time
+		}{key, now})
 	}
 	if duplicate || len(s.recent) < 2 {
 		if log != nil {
 			log.add("%s: connection closed, no reply (first, single)", route)
 		}
-		return
+		return false
+	}
+	if len(pinned) > 0 && pinned[0] {
+		if log != nil {
+			log.add("%s: connection closed, no reply (first, pinned)", route)
+		}
+		return true
 	}
 	s.fail(now)
 	if log != nil {
 		log.stalled(now, route, "first reply", s.Until.Sub(now), s.Count)
 	}
+	return true
 }

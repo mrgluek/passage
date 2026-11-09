@@ -79,6 +79,7 @@ type group struct {
 	okStreak    int
 	state       string
 	lastProbe   time.Time
+	stalls      [numRoutes]*stallState
 	lastResult  probeResult
 }
 
@@ -186,7 +187,8 @@ type Tunnel struct {
 	lastCanary  string    // the canary that answered last; tried first next time
 	strategy    *strategy // the smart route's working strategy, if any
 	stats       [numRoutes]routeStats
-	stalls      map[string]map[Route]*stallState
+	feedbackSeq atomic.Uint64
+	tunnelStall *stallState
 	// Bytes per route, counted as they flow: IMAP IDLE connections live for
 	// hours, so totals taken at close would show nothing for them.
 	upBytes   [numRoutes]atomic.Int64
@@ -777,7 +779,7 @@ func (t *Tunnel) handle(c net.Conn) {
 		}
 		t.mu.Lock()
 		t.stats[route].Fails++
-		if route == RouteTunnel {
+		if route == RouteTunnel && !errors.Is(err, errDestinationRefused) {
 			g.tunnelFails++
 		}
 		t.mu.Unlock()
@@ -808,13 +810,16 @@ func (t *Tunnel) handle(c net.Conn) {
 	start := time.Now()
 	var up, down atomic.Int64
 	raw := remote
-	key := networkKey(t.cfg)
+	key := fmt.Sprint(t.feedbackSeq.Add(1))
+	if route == RouteTunnel {
+		key = addr
+	}
 	remote = watchResponses(raw, func() {
 		poolFeedback(raw, false)
-		t.connectionFeedback(g, route, key, raw, false)
+		t.connectionFeedback(g, route, key, false)
 	}, func(first bool) {
 		poolFeedback(raw, true, first)
-		t.connectionFeedback(g, route, key, raw, true, first)
+		t.connectionFeedback(g, route, key, true, first)
 		c.Close()
 	})
 	defer remote.Close()
@@ -896,9 +901,9 @@ func (t *Tunnel) dial(g *group, addr string) (net.Conn, Route, error) {
 	}
 	t.mu.Lock()
 	route, mode := g.route, t.mode
-	if mode == ModeAuto && route != RouteTunnel && t.routeStalledLocked(route) {
+	if mode == ModeAuto && t.groupStalledLocked(g, route) {
 		for n := RouteDirect; n < numRoutes; n++ {
-			if usable(n) && !t.routeStalledLocked(n) {
+			if usable(n) && !t.groupStalledLocked(g, n) {
 				route = n
 				break
 			}
@@ -927,14 +932,14 @@ func (t *Tunnel) dial(g *group, addr string) (net.Conn, Route, error) {
 		}
 		next := r
 		for n := r + 1; n < numRoutes; n++ {
-			if !tried[n] && usable(n) && !t.routeStalledLocked(n) {
+			if !tried[n] && usable(n) && !t.groupStalledLocked(g, n) {
 				next = n
 				break
 			}
 		}
 		if next == r && mode == ModeAuto {
 			for n := RouteDirect; n < numRoutes; n++ {
-				if !tried[n] && usable(n) && t.routeStalledLocked(n) {
+				if !tried[n] && usable(n) && t.groupStalledLocked(g, n) {
 					next = n
 					break
 				}
@@ -1366,11 +1371,11 @@ func (t *Tunnel) applyProbe(g *group, res probeResult) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	gs := g
-	if t.routeStalledLocked(RouteDirect) {
+	if t.groupStalledLocked(g, RouteDirect) {
 		res.RelayOK = 0
 		res.NetworkOK = true
 	}
-	if t.routeStalledLocked(RouteSmart) {
+	if t.groupStalledLocked(g, RouteSmart) {
 		res.SmartOK = false
 	}
 	gs.lastProbe = time.Now()
@@ -1756,8 +1761,11 @@ func (t *Tunnel) Status(n int) Status {
 func (t *Tunnel) routeStatsLocked(r Route) routeStats {
 	s := t.stats[r]
 	s.Up, s.Down = t.upBytes[r].Load(), t.downBytes[r].Load()
-	if t.routeStalledLocked(r) {
-		s.State, s.Reason = routeFailed, "stalled"
+	for _, g := range t.groupsLocked() {
+		if t.groupStalledLocked(g, r) {
+			s.State, s.Reason = routeFailed, "stalled"
+			break
+		}
 	}
 	return s
 }
@@ -1811,23 +1819,38 @@ func (h *logHandler) WithAttrs(as []slog.Attr) slog.Handler {
 
 func (h *logHandler) WithGroup(string) slog.Handler { return h }
 
-func (t *Tunnel) routeStalledLocked(r Route) bool {
-	h := t.stalls[networkKey(t.cfg)][r]
+func (t *Tunnel) groupStalledLocked(g *group, r Route) bool {
+	if g == nil || g.kind == kindOther && r != RouteTunnel {
+		return false
+	}
+	h := g.stalls[r]
+	if r == RouteTunnel {
+		h = t.tunnelStall
+	}
 	return h.blocked(t.timeNow(), t.log, r.String())
 }
-func (t *Tunnel) connectionFeedback(g *group, r Route, key string, socket net.Conn, stalled bool, first ...bool) {
+func (t *Tunnel) connectionFeedback(g *group, r Route, key string, stalled bool, first ...bool) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	if t.stalls == nil {
-		t.stalls = map[string]map[Route]*stallState{}
+	h := g.stalls[r]
+	if r == RouteTunnel {
+		// Pool routes keep their own evidence.
+		if _, pooled := t.client.(*routePool); pooled {
+			if stalled {
+				t.stats[r].Fails++
+				t.stats[r].Stalls++
+			}
+			return
+		}
+		h = t.tunnelStall
 	}
-	if t.stalls[key] == nil {
-		t.stalls[key] = map[Route]*stallState{}
-	}
-	h := t.stalls[key][r]
 	if h == nil {
 		h = &stallState{}
-		t.stalls[key][r] = h
+		if r == RouteTunnel {
+			t.tunnelStall = h
+		} else {
+			g.stalls[r] = h
+		}
 	}
 	if !stalled {
 		h.recovered(t.log, r.String())
@@ -1835,16 +1858,18 @@ func (t *Tunnel) connectionFeedback(g *group, r Route, key string, socket net.Co
 	}
 	t.stats[r].Fails++
 	t.stats[r].Stalls++
-	// Individual tunnel routes carry their own cooldown.
-	if r != RouteTunnel {
-		h.record(t.timeNow(), t.log, r.String(), len(first) == 0 || first[0], socket)
+	isFirst := len(first) == 0 || first[0]
+	corroborated := h.record(t.timeNow(), t.log, r.String(), isFirst, key, r == RouteTunnel && strings.HasPrefix(t.only, "route:"))
+	if !isFirst {
+		return
 	}
-	if key == networkKey(t.cfg) && g.route == r && r != RouteTunnel {
-		next, fail, ok, state := decide(r, probeResult{Stalled: true, SmartOK: t.usableLocked(g, RouteSmart) && !t.routeStalledLocked(RouteSmart)}, g.failStreak, g.okStreak, true)
+	if corroborated && g.kind != kindOther && g.route == r && r != RouteTunnel {
+		next, fail, ok, state := decide(r, probeResult{Stalled: true, SmartOK: t.usableLocked(g, RouteSmart) && !t.groupStalledLocked(g, RouteSmart)}, max(g.failStreak, blockedAfter-1), g.okStreak, true)
 		g.failStreak, g.okStreak, g.state = fail, ok, state
 		if t.mode == ModeAuto && t.usableLocked(g, next) {
 			t.setRouteLocked(g, next, "stalled")
 		}
 	}
+	t.urgent.Store(true)
 	t.kickProbe()
 }
