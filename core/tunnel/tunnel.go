@@ -811,10 +811,10 @@ func (t *Tunnel) handle(c net.Conn) {
 	key := networkKey(t.cfg)
 	remote = watchResponses(raw, func() {
 		poolFeedback(raw, false)
-		t.connectionFeedback(g, route, key, false)
+		t.connectionFeedback(g, route, key, raw, false)
 	}, func(first bool) {
 		poolFeedback(raw, true, first)
-		t.connectionFeedback(g, route, key, true, first)
+		t.connectionFeedback(g, route, key, raw, true, first)
 		c.Close()
 	})
 	defer remote.Close()
@@ -1815,7 +1815,7 @@ func (t *Tunnel) routeStalledLocked(r Route) bool {
 	h := t.stalls[networkKey(t.cfg)][r]
 	return h.blocked(t.timeNow(), t.log, r.String())
 }
-func (t *Tunnel) connectionFeedback(g *group, r Route, key string, stalled bool, first ...bool) {
+func (t *Tunnel) connectionFeedback(g *group, r Route, key string, socket net.Conn, stalled bool, first ...bool) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	if t.stalls == nil {
@@ -1837,7 +1837,7 @@ func (t *Tunnel) connectionFeedback(g *group, r Route, key string, stalled bool,
 	t.stats[r].Stalls++
 	// Individual tunnel routes carry their own cooldown.
 	if r != RouteTunnel {
-		h.record(t.timeNow(), t.log, r.String(), len(first) == 0 || first[0])
+		h.record(t.timeNow(), t.log, r.String(), len(first) == 0 || first[0], socket)
 	}
 	if key == networkKey(t.cfg) && g.route == r && r != RouteTunnel {
 		next, fail, ok, state := decide(r, probeResult{Stalled: true, SmartOK: t.usableLocked(g, RouteSmart) && !t.routeStalledLocked(RouteSmart)}, g.failStreak, g.okStreak, true)

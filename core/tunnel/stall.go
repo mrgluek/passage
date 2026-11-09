@@ -14,20 +14,24 @@ const (
 // Variables allow short deadlines in tests.
 var firstResponseTimeout = defaultFirstResponseTimeout
 var responseStallTimeout = defaultResponseStallTimeout
+var stallCorroborateWindow = 120 * time.Second
 
 type stallState struct {
-	Until time.Time
-	Steps int
-	Count int64
+	Until  time.Time
+	Steps  int
+	Count  int64
+	recent []struct {
+		socket any
+		at     time.Time
+	}
 }
 
 func (s *stallState) fail(now time.Time) {
 	delays := [...]time.Duration{2 * time.Minute, 10 * time.Minute, 30 * time.Minute}
 	s.Steps++
-	s.Count++
 	s.Until = now.Add(delays[min(s.Steps, len(delays))-1])
 }
-func (s *stallState) success() { s.Steps = 0; s.Until = time.Time{} }
+func (s *stallState) success() { s.Steps = 0; s.Until = time.Time{}; s.recent = nil }
 
 // responseWatch waits for a reply only after all writes have completed.
 type responseWatch struct {
@@ -147,13 +151,38 @@ func (s *stallState) recovered(log *eventLog, route string) {
 	}
 	s.success()
 }
-func (s *stallState) record(now time.Time, log *eventLog, route string, first bool) {
+func (s *stallState) record(now time.Time, log *eventLog, route string, first bool, socket any) {
+	s.Count++
+	if !first {
+		if log != nil {
+			log.add("%s: connection closed, no reply (later)", route)
+		}
+		return
+	}
+	recent := s.recent[:0]
+	duplicate := false
+	for _, stall := range s.recent {
+		if now.Sub(stall.at) <= stallCorroborateWindow {
+			recent = append(recent, stall)
+			duplicate = duplicate || stall.socket == socket
+		}
+	}
+	clear(s.recent[len(recent):])
+	s.recent = recent
+	if !duplicate {
+		s.recent = append(s.recent, struct {
+			socket any
+			at     time.Time
+		}{socket, now})
+	}
+	if duplicate || len(s.recent) < 2 {
+		if log != nil {
+			log.add("%s: connection closed, no reply (first, single)", route)
+		}
+		return
+	}
 	s.fail(now)
 	if log != nil {
-		kind := "later reply"
-		if first {
-			kind = "first reply"
-		}
-		log.stalled(now, route, kind, s.Until.Sub(now), s.Count)
+		log.stalled(now, route, "first reply", s.Until.Sub(now), s.Count)
 	}
 }

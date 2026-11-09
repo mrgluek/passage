@@ -111,19 +111,28 @@ func TestResponseWatch(t *testing.T) {
 	}
 }
 
+func poolStall(t *testing.T, p *routePool, index int, network string) {
+	t.Helper()
+	a, b := net.Pipe()
+	defer a.Close()
+	defer b.Close()
+	(&poolConn{Conn: a, pool: p, index: index, network: network}).feedback(true)
+}
+
 func TestStallBackoffPerNetwork(t *testing.T) {
 	now := time.Unix(1000, 0)
 	p := &routePool{network: "a", now: func() time.Time { return now }, clients: []soarClient{&poolFixture{}, &poolFixture{}}, ipv6: []bool{false, false}}
 	c := &poolConn{pool: p, index: 0, network: "a"}
 	for _, delay := range []time.Duration{2 * time.Minute, 10 * time.Minute, 30 * time.Minute, 30 * time.Minute} {
-		c.feedback(true)
+		poolStall(t, p, 0, "a")
+		poolStall(t, p, 0, "a")
 		if got := p.stalls["a"][0].Until.Sub(now); got != delay {
 			t.Fatalf("backoff %v want %v", got, delay)
 		}
 		if got := p.order(nil); got[0] != 1 {
 			t.Fatal("retry did not prefer backup", got)
 		}
-		now = now.Add(delay)
+		now = now.Add(delay + time.Nanosecond)
 	}
 	p.network = "b"
 	if p.order(nil)[0] != 0 {
@@ -131,16 +140,18 @@ func TestStallBackoffPerNetwork(t *testing.T) {
 	}
 	p.network = "a"
 	c.feedback(false)
-	c.feedback(true)
+	poolStall(t, p, 0, "a")
+	poolStall(t, p, 0, "a")
 	if p.stalls["a"][0].Until.Sub(now) != 2*time.Minute {
 		t.Fatal("success did not reset backoff")
 	}
-	(&poolConn{pool: p, index: 1, network: "a"}).feedback(true)
+	poolStall(t, p, 1, "a")
+	poolStall(t, p, 1, "a")
 	if len(p.order(nil)) != 2 {
 		t.Fatal("blocked routes unavailable as last resort")
 	}
 	states := p.states()
-	if states[0].State != routeFailed || states[0].Reason != "stalled" || states[0].Stalls != 5 {
+	if states[0].State != routeFailed || states[0].Reason != "stalled" || states[0].Stalls != 10 {
 		t.Fatalf("status %+v", states)
 	}
 }
@@ -200,22 +211,29 @@ func TestStalledSOCKSRetryUsesBackup(t *testing.T) {
 				tt.relayLocked("relay.example.org").route = RouteSmart
 				tt.mu.Unlock()
 			}
-			c, code := socksConnect(t, tt.Addr(), "u", "p", addr)
-			if code != repSucceeded {
-				t.Fatal(code)
+			var silentConns []net.Conn
+			for range 2 {
+				c, code := socksConnect(t, tt.Addr(), "u", "p", addr)
+				if code != repSucceeded {
+					t.Fatal(code)
+				}
+				defer c.Close()
+				silentConns = append(silentConns, c)
 			}
-			c.Write([]byte("x"))
-			c.SetReadDeadline(time.Now().Add(time.Second))
-			_, err := c.Read(make([]byte, 1))
-			c.Close()
-			if err == nil {
-				t.Fatal("silent connection survived")
+			for _, c := range silentConns {
+				c.Write([]byte("x"))
+				c.SetReadDeadline(time.Now().Add(time.Second))
+				_, err := c.Read(make([]byte, 1))
+				c.Close()
+				if err == nil {
+					t.Fatal("silent connection survived")
+				}
 			}
 			routeName := kind
 			if kind == "tunnel" {
 				routeName = "a"
 			}
-			expected := "stalled: " + routeName + " (first reply), blocked for 2 min, count=1"
+			expected := "stalled: " + routeName + " (first reply), blocked for 2 min, count=2"
 			found := 0
 			for _, event := range tt.Status(500).Events {
 				if strings.HasPrefix(event.Msg, "stalled:") {
@@ -239,7 +257,7 @@ func TestStalledSOCKSRetryUsesBackup(t *testing.T) {
 			if _, err := io.ReadFull(retry, make([]byte, 1)); err != nil {
 				t.Fatal("backup failed", err)
 			}
-			if firstCalls.Load() != 1 || backupCalls.Load() != 1 {
+			if firstCalls.Load() != 2 || backupCalls.Load() != 1 {
 				t.Fatalf("calls %d/%d", firstCalls.Load(), backupCalls.Load())
 			}
 			tt.mu.Lock()
@@ -287,7 +305,8 @@ func TestBlockedPoolLastResort(t *testing.T) {
 		return a, nil
 	}
 	p := &routePool{clients: []soarClient{&poolFixture{dial: dial}}, ipv6: []bool{false}}
-	(&poolConn{pool: p, index: 0}).feedback(true)
+	poolStall(t, p, 0, "")
+	poolStall(t, p, 0, "")
 	c, err := p.DialContext(context.Background(), "tcp", "example.org:443")
 	if err != nil {
 		t.Fatal(err)
@@ -346,7 +365,8 @@ func TestPoolDoesNotRaceStalledRoute(t *testing.T) {
 		}
 	}}
 	p := &routePool{clients: []soarClient{blocked, ready}, ipv6: []bool{false, false}}
-	(&poolConn{pool: p, index: 0}).feedback(true)
+	poolStall(t, p, 0, "")
+	poolStall(t, p, 0, "")
 	c, err := p.DialContext(context.Background(), "tcp", "example.org:443")
 	if err != nil {
 		t.Fatal(err)
@@ -513,9 +533,9 @@ func TestStallHistory(t *testing.T) {
 				log := newEventLog(20)
 				now := time.Unix(1000, 0)
 				state := &stallState{}
-				feedback := func(stalled, first bool) {
+				feedback := func(stalled, first bool, socket net.Conn) {
 					if stalled {
-						state.record(now, log, route, first)
+						state.record(now, log, route, first, socket)
 					} else {
 						state.recovered(log, route)
 					}
@@ -523,7 +543,7 @@ func TestStallHistory(t *testing.T) {
 				force := func() {
 					a, b := net.Pipe()
 					done := make(chan struct{})
-					c := watchResponses(a, nil, func(gotFirst bool) { feedback(true, gotFirst); close(done) })
+					c := watchResponses(a, nil, func(gotFirst bool) { feedback(true, gotFirst, a); close(done) })
 					go func() {
 						defer b.Close()
 						if !first {
@@ -547,33 +567,45 @@ func TestStallHistory(t *testing.T) {
 					c.Close()
 				}
 				force()
-				kind := "later reply"
+				kind := "later"
 				if first {
-					kind = "first reply"
+					kind = "first, single"
 				}
-				want := fmt.Sprintf("stalled: %s (%s), blocked for 2 min, count=1", route, kind)
-				if events := log.last(20); len(events) != 1 || events[0].Msg != want {
+				want := fmt.Sprintf("%s: connection closed, no reply (%s)", route, kind)
+				if events := log.last(20); len(events) != 1 || events[0].Msg != want || state.blocked(now, log, route) {
+					t.Fatalf("events %+v, state %+v", events, state)
+				}
+				if !first {
+					force()
+					if events := log.last(20); len(events) != 2 || events[1].Msg != want || state.Steps != 0 {
+						t.Fatalf("events %+v, state %+v", events, state)
+					}
+					return
+				}
+				force()
+				want = fmt.Sprintf("stalled: %s (first reply), blocked for 2 min, count=2", route)
+				if events := log.last(20); len(events) != 2 || events[1].Msg != want {
 					t.Fatalf("events %+v, want %s", events, want)
 				}
 				force()
-				if len(log.last(20)) != 1 {
+				if len(log.last(20)) != 2 {
 					t.Fatal("burst was not limited")
 				}
 				now = now.Add(30 * time.Second)
 				force()
-				want = fmt.Sprintf("stalled: %s (%s), blocked for 30 min, count=3", route, kind)
-				if events := log.last(20); len(events) != 2 || events[1].Msg != want {
+				want = fmt.Sprintf("stalled: %s (first reply), blocked for 30 min, count=4", route)
+				if events := log.last(20); len(events) != 3 || events[2].Msg != want {
 					t.Fatalf("events %+v", events)
 				}
 				a, b := net.Pipe()
-				c := watchResponses(a, func() { feedback(false, true) }, func(bool) { t.Error("unexpected stall") })
+				c := watchResponses(a, func() { feedback(false, true, a) }, func(bool) { t.Error("unexpected stall") })
 				go func() { b.Write([]byte("x")); b.Close() }()
 				if _, err := c.Read(make([]byte, 1)); err != nil {
 					t.Fatal(err)
 				}
 				c.Close()
 				events := log.last(20)
-				if len(events) != 3 || events[2].Msg != "unblocked: "+route+" (first reply)" || state.Steps != 0 {
+				if len(events) != 4 || events[3].Msg != "unblocked: "+route+" (first reply)" || state.Steps != 0 {
 					t.Fatalf("events %+v, state %+v", events, state)
 				}
 			})
@@ -585,10 +617,14 @@ func TestPoolStallEvents(t *testing.T) {
 	now := time.Unix(1000, 0)
 	log := newEventLog(20)
 	p := &routePool{log: log, now: func() time.Time { return now }, ids: []string{"route-a"}}
-	c := &poolConn{pool: p}
+	a, b := net.Pipe()
+	defer a.Close()
+	defer b.Close()
+	c := &poolConn{Conn: a, pool: p}
 	c.feedback(true, false)
+	poolStall(t, p, 0, "")
 	c.feedback(true, true)
-	if events := log.last(20); len(events) != 1 || events[0].Msg != "stalled: route-a (later reply), blocked for 2 min, count=1" {
+	if events := log.last(20); len(events) != 3 || events[2].Msg != "stalled: route-a (first reply), blocked for 2 min, count=3" {
 		t.Fatalf("events %+v", events)
 	}
 	now = now.Add(10 * time.Minute)
@@ -598,12 +634,148 @@ func TestPoolStallEvents(t *testing.T) {
 	}
 	p.stalledLocked("", 0, now)
 	p.mu.Unlock()
-	if events := log.last(20); len(events) != 2 || events[1].Msg != "unblocked: route-a (cooldown ended)" {
+	if events := log.last(20); len(events) != 4 || events[3].Msg != "unblocked: route-a (cooldown ended)" {
 		t.Fatalf("events %+v", events)
 	}
 	c.feedback(false)
-	c.feedback(true)
+	poolStall(t, p, 0, "")
+	poolStall(t, p, 0, "")
 	if p.stalls[""][0].Steps != 1 {
 		t.Fatal("first reply did not reset step")
+	}
+}
+
+func TestStallCorroboration(t *testing.T) {
+	for _, layer := range []string{"pool", "tunnel"} {
+		for _, scenario := range []string{"later", "distinct", "duplicate", "expired", "recovered", "network", "route"} {
+			t.Run(layer+"/"+scenario, func(t *testing.T) {
+				now := time.Unix(1000, 0)
+				log := newEventLog(20)
+				p := &routePool{log: log, now: func() time.Time { return now }, ids: []string{"route-a", "route-b"}}
+				tt := &Tunnel{log: log, now: func() time.Time { return now }}
+				g := newGroup("relay", kindRelay, RouteDirect)
+				state := func(network string, route int) *stallState {
+					if layer == "pool" {
+						return p.stalls[network][route]
+					}
+					return tt.stalls[network][Route(route)]
+				}
+				feedback := func(socket net.Conn, network string, route int, stalled, first bool) {
+					if layer == "pool" {
+						(&poolConn{Conn: socket, pool: p, network: network, index: route}).feedback(stalled, first)
+					} else {
+						tt.connectionFeedback(g, Route(route), network, socket, stalled, first)
+					}
+				}
+				a, peerA := net.Pipe()
+				b, peerB := net.Pipe()
+				defer a.Close()
+				defer b.Close()
+				defer peerA.Close()
+				defer peerB.Close()
+				assertOpen := func(s *stallState) {
+					t.Helper()
+					if s.blocked(now, log, "route-a") || s.Steps != 0 || !s.Until.IsZero() {
+						t.Fatalf("isolated stall changed cooldown: %+v", s)
+					}
+					for _, event := range log.last(20) {
+						if strings.HasPrefix(event.Msg, "stalled:") {
+							t.Fatalf("isolated stall logged %q", event.Msg)
+						}
+					}
+				}
+				feedback(a, "a", 0, true, scenario != "later")
+				s := state("a", 0)
+				assertOpen(s)
+				if s.Count != 1 || len(log.last(20)) != 1 {
+					t.Fatalf("missing stall count or log: %+v, %+v", s, log.last(20))
+				}
+				switch scenario {
+				case "later":
+					feedback(b, "a", 0, true, false)
+					assertOpen(s)
+					return
+				case "duplicate":
+					feedback(a, "a", 0, true, true)
+					assertOpen(s)
+					return
+				case "expired":
+					now = now.Add(stallCorroborateWindow + time.Nanosecond)
+					feedback(b, "a", 0, true, true)
+					assertOpen(s)
+					if len(s.recent) != 1 {
+						t.Fatalf("old stall retained: %+v", s.recent)
+					}
+					return
+				case "network":
+					feedback(b, "b", 0, true, true)
+					assertOpen(s)
+					assertOpen(state("b", 0))
+					return
+				case "route":
+					feedback(b, "a", 1, true, true)
+					assertOpen(s)
+					assertOpen(state("a", 1))
+					return
+				}
+				now = now.Add(stallCorroborateWindow / 2)
+				feedback(b, "a", 0, true, true)
+				if !s.blocked(now, log, "route-a") || s.Until != now.Add(2*time.Minute) || s.Steps != 1 || s.Count != 2 {
+					t.Fatalf("distinct stalls did not block: %+v", s)
+				}
+				until := s.Until
+				feedback(a, "a", 0, true, false)
+				if s.Until != until || s.Steps != 1 || s.Count != 3 {
+					t.Fatalf("later stall changed cooldown: %+v", s)
+				}
+				if layer == "tunnel" && (tt.stats[0].Fails != 3 || tt.stats[0].Stalls != 3) {
+					t.Fatalf("stall counters %+v", tt.stats[0])
+				}
+				if scenario == "recovered" {
+					feedback(b, "a", 0, false, true)
+					if s.Steps != 0 || !s.Until.IsZero() || s.Count != 3 {
+						t.Fatalf("success did not reset cooldown: %+v", s)
+					}
+					feedback(a, "a", 0, true, true)
+					if s.blocked(now, log, "route-a") {
+						t.Fatal("success retained corroboration")
+					}
+					feedback(b, "a", 0, true, true)
+					if s.Until != now.Add(2*time.Minute) || s.Steps != 1 {
+						t.Fatalf("success did not reset ladder: %+v", s)
+					}
+				}
+			})
+		}
+	}
+}
+
+func TestIsolatedStallsStillSwitchGroup(t *testing.T) {
+	for _, first := range []bool{false, true} {
+		t.Run(fmt.Sprintf("first=%v", first), func(t *testing.T) {
+			now := time.Unix(1000, 0)
+			tt := &Tunnel{log: newEventLog(20), mode: ModeAuto, now: func() time.Time { return now }}
+			tt.ways[RouteTunnel].dial = func(context.Context, string, string) (net.Conn, error) { return nil, nil }
+			g := newGroup("relay", kindRelay, RouteDirect)
+			a, b := net.Pipe()
+			defer a.Close()
+			defer b.Close()
+			key := networkKey(tt.cfg)
+			for i := range 2 {
+				tt.connectionFeedback(g, RouteDirect, key, a, true, first)
+				if tt.routeStalledLocked(RouteDirect) || tt.stats[RouteDirect].Stalls != int64(i+1) || g.failStreak != i+1 {
+					t.Fatalf("isolated feedback: state %+v, stats %+v, group %+v", tt.stalls[key][RouteDirect], tt.stats[RouteDirect], g)
+				}
+			}
+			if g.route != RouteTunnel {
+				t.Fatalf("group route %v, want tunnel", g.route)
+			}
+			for _, socket := range []net.Conn{a, b} {
+				tt.connectionFeedback(g, RouteTunnel, key, socket, true, true)
+			}
+			if s := tt.stalls[key][RouteTunnel]; s.Count != 0 || s.Steps != 0 || !s.Until.IsZero() || len(s.recent) != 0 {
+				t.Fatalf("tunnel route recorded stall: %+v", s)
+			}
+		})
 	}
 }

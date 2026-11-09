@@ -564,7 +564,7 @@ func (c *poolConn) feedback(stalled bool, first ...bool) {
 		p.stalls[c.network][c.index] = h
 	}
 	if stalled {
-		h.record(p.clock(), p.log, p.routeName(c.index), len(first) == 0 || first[0])
+		h.record(p.clock(), p.log, p.routeName(c.index), len(first) == 0 || first[0], c.Conn)
 		all := len(p.clients) > 0
 		for i := range p.clients {
 			if p.matches(i, p.only) && !p.stalledLocked(p.network, i, p.clock()) && !p.clock().Before(p.failedUntil[i]) {
