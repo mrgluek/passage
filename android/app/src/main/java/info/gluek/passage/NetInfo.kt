@@ -19,7 +19,7 @@ object NetInfo {
         val privateDns: Boolean,
     ) {
         /** A change of either restarts the tunnel (soar's path set is fixed per client). */
-        val key: Pair<List<String>, String> get() = dns to operator
+        val key: Pair<List<String>, String> get() = dns.distinct().sorted() to operator
     }
 
     fun snapshot(context: Context): Snapshot {

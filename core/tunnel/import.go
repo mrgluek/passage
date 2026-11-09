@@ -16,13 +16,14 @@ import (
 var AuthorKey string
 
 type ImportResult struct {
-	Config       Config                   `json:"config"`
-	Signature    string                   `json:"signature"`
-	Mode         string                   `json:"mode"`
-	Count        int                      `json:"count"`
-	IDs          []string                 `json:"route_ids"`
-	Collision    bool                     `json:"collision"`
-	Subscription *SubscriptionDescription `json:"subscription,omitempty"`
+	SubscriptionID string                   `json:"subscription_id,omitempty"`
+	Config         Config                   `json:"config"`
+	Signature      string                   `json:"signature"`
+	Mode           string                   `json:"mode"`
+	Count          int                      `json:"count"`
+	IDs            []string                 `json:"route_ids"`
+	Collision      bool                     `json:"collision"`
+	Subscription   *SubscriptionDescription `json:"subscription,omitempty"`
 }
 
 func ImportLink(existing Config, text string, replaceIDs bool) (ImportResult, error) {

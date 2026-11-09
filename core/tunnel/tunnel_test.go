@@ -577,14 +577,79 @@ func TestNoTunnelSessionSwitchesAnyway(t *testing.T) {
 	}
 }
 
-func TestTunnelCheckedOnlyBeforeASwitch(t *testing.T) {
+func TestFirstProbeChecksTunnelAndSwitches(t *testing.T) {
+	for _, canaryOK := range []bool{false, true} {
+		t.Run(fmt.Sprint(canaryOK), func(t *testing.T) {
+			tt, probes := relayDownTunnel(t, nil, true)
+			tt.mu.Lock()
+			tt.relays["relay.example.org"].failStreak = 0
+			tt.mu.Unlock()
+			if !canaryOK {
+				tt.probeTLS = func(context.Context, string, string) error { return context.DeadlineExceeded }
+			}
+			tt.check()
+			s := tt.Status(0)
+			if probes.Load() != 1 || s.Route != "tunnel" || !s.LastResult.TunnelOK {
+				t.Fatalf("first round: %d probes, %+v", probes.Load(), s)
+			}
+		})
+	}
+}
+
+func TestLaterProbeChecksTunnelOnlyBeforeSwitch(t *testing.T) {
 	tt, probes := relayDownTunnel(t, nil, true)
 	tt.mu.Lock()
-	tt.relays["relay.example.org"].failStreak = 0
+	g := tt.relays["relay.example.org"]
+	g.failStreak = 0
+	g.lastProbe = time.Now()
 	tt.mu.Unlock()
 	tt.check()
 	if probes.Load() != 0 {
-		t.Fatalf("the first blocked probe must not touch the tunnel (%d probes)", probes.Load())
+		t.Fatalf("premature tunnel check: %d", probes.Load())
+	}
+}
+
+func TestWarmTunnelOnlyWhenGroupStartsOnTunnel(t *testing.T) {
+	for _, route := range []Route{RouteDirect, RouteTunnel} {
+		t.Run(route.String(), func(t *testing.T) {
+			var n atomic.Int32
+			tt := newTestTunnel(t, ModeAuto, nil, nil)
+			tt.client = &poolFixture{}
+			tt.telegram.route = route
+			tt.cfg.Canaries = []string{"example.org:443"}
+			tt.probeTunnel = func(_ context.Context, hp, _ string) error {
+				if hp != "example.org:443" {
+					t.Errorf("warmup target %s", hp)
+				}
+				n.Add(1)
+				return nil
+			}
+			tt.warmTunnel()
+			tt.Close()
+			want := int32(0)
+			if route == RouteTunnel {
+				want = 1
+			}
+			if n.Load() != want {
+				t.Fatalf("warmup calls %d, want %d", n.Load(), want)
+			}
+		})
+	}
+}
+
+func TestNetworkKeyIgnoresResolverOrder(t *testing.T) {
+	a := Config{SystemResolvers: []string{"a.example.org:53", "b.example.org:53"}, Operator: "test"}
+	b := a
+	b.SystemResolvers = []string{"b.example.org:53", "a.example.org:53", "a.example.org:53"}
+	if networkKey(a) != networkKey(b) {
+		t.Fatal("resolver order changed network key")
+	}
+	b.SystemResolvers = []string{"c.example.org:53"}
+	if networkKey(a) == networkKey(b) {
+		t.Fatal("resolver set did not change network key")
+	}
+	if a.SystemResolvers[0] != "a.example.org:53" {
+		t.Fatal("modified caller's resolver order")
 	}
 }
 
@@ -952,14 +1017,24 @@ func (t *Tunnel) testGroup(addr string) *group {
 // resetKnownStrategies forgets every strategy, as a new process would.
 func resetKnownStrategies() {
 	knownStrategies.Lock()
+	var paths []string
+	for path := range knownStrategies.writers {
+		paths = append(paths, path)
+	}
+	knownStrategies.Unlock()
+	for _, path := range paths {
+		flushKnownState(path)
+	}
+	knownStrategies.Lock()
 	knownStrategies.m = map[string]knownStrategy{}
 	knownStrategies.blocked = map[string]map[string]time.Time{}
+	knownStrategies.clean = map[string]map[string]time.Time{}
+	knownStrategies.last = lastNetwork{}
 	knownStrategies.loaded = map[string]bool{}
 	knownStrategies.Unlock()
 }
 
-// waitKnownBlocked waits for the remembered verdict, which is saved off
-// the router's lock.
+// waitKnownBlocked waits for the in-memory verdict.
 func waitKnownBlocked(t *testing.T, cfg Config, group string, want bool) {
 	t.Helper()
 	for deadline := time.Now().Add(2 * time.Second); knownBlocked(cfg, group) != want; {
@@ -985,6 +1060,7 @@ func TestBlockedNetworkStartsOnTheTunnel(t *testing.T) {
 		t.Fatalf("route %v, want tunnel", mail.route)
 	}
 	waitKnownBlocked(t, tt.cfg, "relay.example.org", true)
+	flushKnownState(file)
 	if b, _ := os.ReadFile(file); strings.Contains(string(b), "relay.example.org") {
 		t.Fatalf("the state file must not name the relay: %s", b)
 	}
@@ -1005,11 +1081,11 @@ func TestBlockedNetworkStartsOnTheTunnel(t *testing.T) {
 	}
 	elsewhere := newTestTunnel(t, ModeAuto, echoDialer("D:", &n), echoDialer("T:", &n))
 	elsewhere.cfg.StateFile, elsewhere.cfg.SystemResolvers = file, []string{"198.51.100.53:53"}
-	if g := elsewhere.testGroup("relay.example.org:443"); g.route != RouteDirect {
-		t.Fatal("another network must start direct")
+	if g := elsewhere.testGroup("relay.example.org:443"); g.route != RouteTunnel {
+		t.Fatal("another network must inherit the tunnel")
 	}
 
-	// Open again: back to direct and forgotten.
+	// Open again: back to direct and remembered as clean.
 	g := again.relays["relay.example.org"]
 	for i := 0; i < recoveredAfter; i++ {
 		again.applyProbe(g, probeResult{Relays: 1, RelayOK: 1, NetworkOK: true})
@@ -1026,6 +1102,7 @@ func TestStrategySurvivesARestart(t *testing.T) {
 	file := filepath.Join(t.TempDir(), "state.json")
 	cfg := Config{SystemResolvers: []string{"192.0.2.53:53"}, Operator: "25001", StateFile: file}
 	rememberStrategy(cfg, "split:2")
+	flushKnownState(file)
 
 	b, err := os.ReadFile(file)
 	if err != nil {
@@ -1057,5 +1134,19 @@ func TestDialsFollowMode(t *testing.T) {
 		if got := len(tu.Dials()); got != c.want {
 			t.Errorf("mode %s: %d routes", c.mode, got)
 		}
+	}
+}
+
+func TestCleanNetworkFirstRoundDoesNotProbeTunnel(t *testing.T) {
+	tt, probes := relayDownTunnel(t, nil, true)
+	tt.probeTLS = func(context.Context, string, string) error { return nil }
+	tt.check()
+	tt.mu.Lock()
+	g := tt.relays["relay.example.org"]
+	g.lastProbe = time.Time{}
+	tt.mu.Unlock()
+	tt.check()
+	if probes.Load() != 0 {
+		t.Fatalf("clean network started %d tunnel probes", probes.Load())
 	}
 }

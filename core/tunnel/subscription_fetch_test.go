@@ -11,6 +11,7 @@ import (
 	"net/http/httptest"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/fxamacker/cbor/v2"
 	links "github.com/mrgluek/passage-link/link"
@@ -49,7 +50,7 @@ func TestSubscriptionFetchFallbackAnd304(t *testing.T) {
 	var ref SubscriptionRefresher
 	cfg := Config{Subscriptions: []Subscription{s}}
 	out := ref.Refresh(context.Background(), cfg, []SubscriptionDial{broken})
-	if !out.Changed || len(out.Config.Routes) != 1 || out.Config.Subscriptions[0].ETag != `"one"` || tried.Load() != 1 {
+	if !out.Changed || len(out.Config.Routes) != 1 || out.Config.Subscriptions[0].ETag != `"one"` || tried.Load() > 1 {
 		t.Fatal("fallback failed")
 	}
 	second := ref.Refresh(context.Background(), out.Config, []SubscriptionDial{broken})
@@ -256,5 +257,139 @@ func TestClosedSubscriptionLifecycle(t *testing.T) {
 	removed, err := RemoveSubscription(out.Config, s.ID)
 	if err != nil || len(removed.Subscriptions) != 1 || len(removed.Routes) != 2 {
 		t.Fatal("remove", err)
+	}
+}
+
+func TestSubscriptionFetchTiers(t *testing.T) {
+	sub, key, bundle := subFixture(t)
+	raw, err := links.SealSubFile(bundle, bundle.Sub, sub.ReadKey, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.Write(raw) }))
+	defer server.Close()
+	subscriptionTestHTTP = true
+	t.Cleanup(func() { subscriptionTestHTTP = false })
+	sub.Sources = []string{server.URL}
+	for _, name := range []string{"working tunnel", "tunnel deadline", "no tunnels", "failed tunnel"} {
+		t.Run(name, func(t *testing.T) {
+			const tierTimeout = 40 * time.Millisecond
+			var directCalls, tunnelCalls atomic.Int32
+			start := time.Now()
+			dial := (&net.Dialer{}).DialContext
+			ref := SubscriptionRefresher{
+				tunnelTimeout: time.Second,
+				directTimeout: time.Second,
+				directDial: func(ctx context.Context, network, address string) (net.Conn, error) {
+					directCalls.Add(1)
+					if name == "tunnel deadline" && time.Since(start) < tierTimeout {
+						t.Error("direct started before tunnel deadline")
+					}
+					return dial(ctx, network, address)
+				},
+			}
+			tunnel := func(ctx context.Context, network, address string) (net.Conn, error) {
+				tunnelCalls.Add(1)
+				switch name {
+				case "working tunnel":
+					return dial(ctx, network, address)
+				case "failed tunnel":
+					return nil, errors.New("unavailable")
+				default:
+					<-ctx.Done()
+					return nil, ctx.Err()
+				}
+			}
+			dialers := []SubscriptionDial{tunnel}
+			if name == "tunnel deadline" {
+				ref.tunnelTimeout = tierTimeout
+			}
+			if name == "no tunnels" {
+				dialers = nil
+				ref.tunnelTimeout = time.Hour
+			}
+			ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+			defer cancel()
+			cfg := Config{Subscriptions: []Subscription{sub}}
+			out := ref.Refresh(ctx, cfg, dialers)
+			if !out.Changed || ctx.Err() != nil {
+				t.Fatal("refresh failed", out)
+			}
+			wantDirect, wantTunnel := int32(1), int32(1)
+			if name == "working tunnel" {
+				wantDirect = 0
+			}
+			if name == "no tunnels" {
+				wantTunnel = 0
+			}
+			if directCalls.Load() != wantDirect || tunnelCalls.Load() != wantTunnel {
+				t.Fatalf("calls: direct %d, tunnel %d", directCalls.Load(), tunnelCalls.Load())
+			}
+			last := ref.last[networkKey(cfg)+":"+sub.ID]
+			wantDial := len(dialers)
+			if name == "working tunnel" {
+				wantDial = 0
+			}
+			if last != (subscriptionPair{sub.Sources[0], wantDial}) {
+				t.Fatal("successful pair not remembered", last)
+			}
+		})
+	}
+}
+
+func TestSubscriptionPairsLastSuccessFirst(t *testing.T) {
+	sources := []string{"https://example.org/one", "https://example.org/two"}
+	for _, tier := range []struct{ first, end int }{{0, 2}, {2, 3}} {
+		last := subscriptionPair{sources[1], tier.end - 1}
+		pairs := subscriptionPairs(sources, tier.first, tier.end, last)
+		if pairs[0] != last || len(pairs) != (tier.end-tier.first)*len(sources) {
+			t.Fatal("last successful pair is not first", pairs)
+		}
+		seen := map[subscriptionPair]bool{}
+		for _, pair := range pairs {
+			if seen[pair] || pair.dial < tier.first || pair.dial >= tier.end {
+				t.Fatal("invalid tier pair", pair)
+			}
+			seen[pair] = true
+		}
+	}
+}
+
+func TestSubscriptionTunnelRaceCancelsLosers(t *testing.T) {
+	sub, key, bundle := subFixture(t)
+	raw, err := links.SealSubFile(bundle, bundle.Sub, sub.ReadKey, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	entered := make(chan struct{})
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		<-entered
+		w.Write(raw)
+	}))
+	defer server.Close()
+	subscriptionTestHTTP = true
+	t.Cleanup(func() { subscriptionTestHTTP = false })
+	sub.Sources = []string{server.URL}
+	canceled := make(chan struct{})
+	slow := func(ctx context.Context, _, _ string) (net.Conn, error) {
+		close(entered)
+		<-ctx.Done()
+		close(canceled)
+		return nil, ctx.Err()
+	}
+	ref := SubscriptionRefresher{directDial: func(context.Context, string, string) (net.Conn, error) {
+		t.Error("direct called after tunnel success")
+		return nil, errors.New("unexpected direct")
+	}}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	out := ref.Refresh(ctx, Config{Subscriptions: []Subscription{sub}}, []SubscriptionDial{slow, (&net.Dialer{}).DialContext})
+	if !out.Changed || ctx.Err() != nil {
+		t.Fatal("tunnel race failed", out)
+	}
+	select {
+	case <-canceled:
+	case <-time.After(time.Second):
+		t.Fatal("losing tunnel dial not canceled")
 	}
 }

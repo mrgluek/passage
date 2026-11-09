@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"path/filepath"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -111,19 +112,30 @@ func TestResponseWatch(t *testing.T) {
 	}
 }
 
+var stallTestID atomic.Uint64
+
+func poolStall(t *testing.T, p *routePool, index int, network string) {
+	t.Helper()
+	a, b := net.Pipe()
+	defer a.Close()
+	defer b.Close()
+	(&poolConn{Conn: a, pool: p, index: index, network: network, address: fmt.Sprintf("%d.example.org:443", stallTestID.Add(1))}).feedback(true)
+}
+
 func TestStallBackoffPerNetwork(t *testing.T) {
 	now := time.Unix(1000, 0)
 	p := &routePool{network: "a", now: func() time.Time { return now }, clients: []soarClient{&poolFixture{}, &poolFixture{}}, ipv6: []bool{false, false}}
 	c := &poolConn{pool: p, index: 0, network: "a"}
 	for _, delay := range []time.Duration{2 * time.Minute, 10 * time.Minute, 30 * time.Minute, 30 * time.Minute} {
-		c.feedback(true)
+		poolStall(t, p, 0, "a")
+		poolStall(t, p, 0, "a")
 		if got := p.stalls["a"][0].Until.Sub(now); got != delay {
 			t.Fatalf("backoff %v want %v", got, delay)
 		}
 		if got := p.order(nil); got[0] != 1 {
 			t.Fatal("retry did not prefer backup", got)
 		}
-		now = now.Add(delay)
+		now = now.Add(delay + time.Nanosecond)
 	}
 	p.network = "b"
 	if p.order(nil)[0] != 0 {
@@ -131,16 +143,18 @@ func TestStallBackoffPerNetwork(t *testing.T) {
 	}
 	p.network = "a"
 	c.feedback(false)
-	c.feedback(true)
+	poolStall(t, p, 0, "a")
+	poolStall(t, p, 0, "a")
 	if p.stalls["a"][0].Until.Sub(now) != 2*time.Minute {
 		t.Fatal("success did not reset backoff")
 	}
-	(&poolConn{pool: p, index: 1, network: "a"}).feedback(true)
+	poolStall(t, p, 1, "a")
+	poolStall(t, p, 1, "a")
 	if len(p.order(nil)) != 2 {
 		t.Fatal("blocked routes unavailable as last resort")
 	}
 	states := p.states()
-	if states[0].State != routeFailed || states[0].Reason != "stalled" || states[0].Stalls != 5 {
+	if states[0].State != routeFailed || states[0].Reason != "stalled" || states[0].Stalls != 10 {
 		t.Fatalf("status %+v", states)
 	}
 }
@@ -200,22 +214,33 @@ func TestStalledSOCKSRetryUsesBackup(t *testing.T) {
 				tt.relayLocked("relay.example.org").route = RouteSmart
 				tt.mu.Unlock()
 			}
-			c, code := socksConnect(t, tt.Addr(), "u", "p", addr)
-			if code != repSucceeded {
-				t.Fatal(code)
+			var silentConns []net.Conn
+			for i := range 2 {
+				target := addr
+				if kind == "tunnel" && i == 1 {
+					target = "relay.example.org:465"
+				}
+				c, code := socksConnect(t, tt.Addr(), "u", "p", target)
+				if code != repSucceeded {
+					t.Fatal(code)
+				}
+				defer c.Close()
+				silentConns = append(silentConns, c)
 			}
-			c.Write([]byte("x"))
-			c.SetReadDeadline(time.Now().Add(time.Second))
-			_, err := c.Read(make([]byte, 1))
-			c.Close()
-			if err == nil {
-				t.Fatal("silent connection survived")
+			for _, c := range silentConns {
+				c.Write([]byte("x"))
+				c.SetReadDeadline(time.Now().Add(time.Second))
+				_, err := c.Read(make([]byte, 1))
+				c.Close()
+				if err == nil {
+					t.Fatal("silent connection survived")
+				}
 			}
 			routeName := kind
 			if kind == "tunnel" {
 				routeName = "a"
 			}
-			expected := "stalled: " + routeName + " (first reply), blocked for 2 min, count=1"
+			expected := "stalled: " + routeName + " (first reply), blocked for 2 min, count=2"
 			found := 0
 			for _, event := range tt.Status(500).Events {
 				if strings.HasPrefix(event.Msg, "stalled:") {
@@ -239,7 +264,7 @@ func TestStalledSOCKSRetryUsesBackup(t *testing.T) {
 			if _, err := io.ReadFull(retry, make([]byte, 1)); err != nil {
 				t.Fatal("backup failed", err)
 			}
-			if firstCalls.Load() != 1 || backupCalls.Load() != 1 {
+			if firstCalls.Load() != 2 || backupCalls.Load() != 1 {
 				t.Fatalf("calls %d/%d", firstCalls.Load(), backupCalls.Load())
 			}
 			tt.mu.Lock()
@@ -287,7 +312,8 @@ func TestBlockedPoolLastResort(t *testing.T) {
 		return a, nil
 	}
 	p := &routePool{clients: []soarClient{&poolFixture{dial: dial}}, ipv6: []bool{false}}
-	(&poolConn{pool: p, index: 0}).feedback(true)
+	poolStall(t, p, 0, "")
+	poolStall(t, p, 0, "")
 	c, err := p.DialContext(context.Background(), "tcp", "example.org:443")
 	if err != nil {
 		t.Fatal(err)
@@ -346,7 +372,8 @@ func TestPoolDoesNotRaceStalledRoute(t *testing.T) {
 		}
 	}}
 	p := &routePool{clients: []soarClient{blocked, ready}, ipv6: []bool{false, false}}
-	(&poolConn{pool: p, index: 0}).feedback(true)
+	poolStall(t, p, 0, "")
+	poolStall(t, p, 0, "")
 	c, err := p.DialContext(context.Background(), "tcp", "example.org:443")
 	if err != nil {
 		t.Fatal(err)
@@ -513,9 +540,9 @@ func TestStallHistory(t *testing.T) {
 				log := newEventLog(20)
 				now := time.Unix(1000, 0)
 				state := &stallState{}
-				feedback := func(stalled, first bool) {
+				feedback := func(stalled, first bool, socket net.Conn) {
 					if stalled {
-						state.record(now, log, route, first)
+						state.record(now, log, route, first, fmt.Sprintf("%p", socket))
 					} else {
 						state.recovered(log, route)
 					}
@@ -523,7 +550,7 @@ func TestStallHistory(t *testing.T) {
 				force := func() {
 					a, b := net.Pipe()
 					done := make(chan struct{})
-					c := watchResponses(a, nil, func(gotFirst bool) { feedback(true, gotFirst); close(done) })
+					c := watchResponses(a, nil, func(gotFirst bool) { feedback(true, gotFirst, a); close(done) })
 					go func() {
 						defer b.Close()
 						if !first {
@@ -547,26 +574,37 @@ func TestStallHistory(t *testing.T) {
 					c.Close()
 				}
 				force()
-				kind := "later reply"
+				kind := "later"
 				if first {
-					kind = "first reply"
+					kind = "first, single"
 				}
-				want := fmt.Sprintf("stalled: %s (%s), blocked for 2 min, count=1", route, kind)
-				if events := log.last(20); len(events) != 1 || events[0].Msg != want {
+				want := fmt.Sprintf("%s: connection closed, no reply (%s)", route, kind)
+				if events := log.last(20); len(events) != 1 || events[0].Msg != want || state.blocked(now, log, route) {
+					t.Fatalf("events %+v, state %+v", events, state)
+				}
+				if !first {
+					force()
+					if events := log.last(20); len(events) != 2 || events[1].Msg != want || state.Steps != 0 {
+						t.Fatalf("events %+v, state %+v", events, state)
+					}
+					return
+				}
+				force()
+				want = fmt.Sprintf("stalled: %s (first reply), blocked for 2 min, count=2", route)
+				if events := log.last(20); len(events) != 2 || events[1].Msg != want {
 					t.Fatalf("events %+v, want %s", events, want)
 				}
 				force()
-				if len(log.last(20)) != 1 {
+				if len(log.last(20)) != 2 {
 					t.Fatal("burst was not limited")
 				}
 				now = now.Add(30 * time.Second)
 				force()
-				want = fmt.Sprintf("stalled: %s (%s), blocked for 30 min, count=3", route, kind)
-				if events := log.last(20); len(events) != 2 || events[1].Msg != want {
+				if events := log.last(20); len(events) != 2 || state.Steps != 1 {
 					t.Fatalf("events %+v", events)
 				}
 				a, b := net.Pipe()
-				c := watchResponses(a, func() { feedback(false, true) }, func(bool) { t.Error("unexpected stall") })
+				c := watchResponses(a, func() { feedback(false, true, a) }, func(bool) { t.Error("unexpected stall") })
 				go func() { b.Write([]byte("x")); b.Close() }()
 				if _, err := c.Read(make([]byte, 1)); err != nil {
 					t.Fatal(err)
@@ -585,10 +623,14 @@ func TestPoolStallEvents(t *testing.T) {
 	now := time.Unix(1000, 0)
 	log := newEventLog(20)
 	p := &routePool{log: log, now: func() time.Time { return now }, ids: []string{"route-a"}}
-	c := &poolConn{pool: p}
+	a, b := net.Pipe()
+	defer a.Close()
+	defer b.Close()
+	c := &poolConn{Conn: a, pool: p, address: "example.org:443"}
 	c.feedback(true, false)
+	poolStall(t, p, 0, "")
 	c.feedback(true, true)
-	if events := log.last(20); len(events) != 1 || events[0].Msg != "stalled: route-a (later reply), blocked for 2 min, count=1" {
+	if events := log.last(20); len(events) != 3 || events[2].Msg != "stalled: route-a (first reply), blocked for 2 min, count=3" {
 		t.Fatalf("events %+v", events)
 	}
 	now = now.Add(10 * time.Minute)
@@ -598,12 +640,359 @@ func TestPoolStallEvents(t *testing.T) {
 	}
 	p.stalledLocked("", 0, now)
 	p.mu.Unlock()
-	if events := log.last(20); len(events) != 2 || events[1].Msg != "unblocked: route-a (cooldown ended)" {
+	if events := log.last(20); len(events) != 4 || events[3].Msg != "unblocked: route-a (cooldown ended)" {
 		t.Fatalf("events %+v", events)
 	}
 	c.feedback(false)
-	c.feedback(true)
+	poolStall(t, p, 0, "")
+	poolStall(t, p, 0, "")
 	if p.stalls[""][0].Steps != 1 {
 		t.Fatal("first reply did not reset step")
+	}
+}
+
+func TestStallCorroboration(t *testing.T) {
+	for _, layer := range []string{"pool", "group", "tunnel"} {
+		for _, scenario := range []string{"later", "distinct", "duplicate", "expired", "recovered", "route", "group"} {
+			t.Run(layer+"/"+scenario, func(t *testing.T) {
+				now := time.Unix(1000, 0)
+				log := newEventLog(20)
+				p := &routePool{log: log, now: func() time.Time { return now }, ids: []string{"route-a", "route-b"}}
+				tt := &Tunnel{log: log, now: func() time.Time { return now }}
+				g := newGroup("relay", kindRelay, RouteDirect)
+				feedback := func(key string, route int, stalled, first bool) {
+					switch layer {
+					case "pool":
+						(&poolConn{pool: p, network: "a", index: route, address: key}).feedback(stalled, first)
+					case "group":
+						tt.connectionFeedback(g, Route(route), key, stalled, first)
+					case "tunnel":
+						tt.connectionFeedback(g, RouteTunnel, key, stalled, first)
+					}
+				}
+				state := func() *stallState {
+					if layer == "pool" {
+						return p.stalls["a"][0]
+					}
+					if layer == "tunnel" {
+						return tt.tunnelStall
+					}
+					return g.stalls[RouteDirect]
+				}
+				assertOpen := func() {
+					t.Helper()
+					s := state()
+					if s.blocked(now, log, "route-a") || s.Steps != 0 {
+						t.Fatalf("isolated evidence changed cooldown: %+v", s)
+					}
+				}
+				feedback("a.example.org:443", 0, true, scenario != "later")
+				assertOpen()
+				switch scenario {
+				case "later":
+					feedback("b.example.org:443", 0, true, false)
+					assertOpen()
+					return
+				case "duplicate":
+					feedback("a.example.org:443", 0, true, true)
+					assertOpen()
+					return
+				case "expired":
+					now = now.Add(121 * time.Second)
+					feedback("b.example.org:443", 0, true, true)
+					assertOpen()
+					return
+				case "route":
+					if layer == "tunnel" {
+						return
+					}
+					feedback("b.example.org:443", 1, true, true)
+					assertOpen()
+					return
+				case "group":
+					if layer != "group" {
+						return
+					}
+					other := newGroup("other", kindRelay, RouteDirect)
+					tt.connectionFeedback(other, RouteDirect, "b", true, true)
+					assertOpen()
+					return
+				}
+				now = now.Add(60 * time.Second)
+				feedback("b.example.org:443", 0, true, true)
+				s := state()
+				if !s.blocked(now, log, "route-a") || s.Until != now.Add(2*time.Minute) || s.Steps != 1 || s.Count != 2 {
+					t.Fatalf("distinct stalls: %+v", s)
+				}
+				until := s.Until
+				feedback("a.example.org:443", 0, true, false)
+				if s.Until != until || s.Count != 3 {
+					t.Fatalf("later stall changed hold: %+v", s)
+				}
+				if scenario == "recovered" {
+					feedback("c.example.org:443", 0, false, true)
+					assertOpen()
+					feedback("a.example.org:443", 0, true, true)
+					assertOpen()
+				}
+			})
+		}
+	}
+}
+
+func TestStallsSwitchGroupOnlyWhenCorroborated(t *testing.T) {
+	for _, scenario := range []string{"later", "first", "recovered", "expired", "other"} {
+		t.Run(scenario, func(t *testing.T) {
+			now := time.Unix(1000, 0)
+			tt := &Tunnel{log: newEventLog(20), mode: ModeAuto, now: func() time.Time { return now }}
+			tt.ways[RouteTunnel].dial = func(context.Context, string, string) (net.Conn, error) { return nil, nil }
+			g := newGroup("relay", kindRelay, RouteDirect)
+			if scenario == "other" {
+				g.kind = kindOther
+			}
+			tt.connectionFeedback(g, RouteDirect, "1", true, scenario != "later")
+			if scenario == "recovered" {
+				tt.connectionFeedback(g, RouteDirect, "3", false)
+			}
+			if scenario == "expired" {
+				now = now.Add(121 * time.Second)
+			}
+			tt.connectionFeedback(g, RouteDirect, "2", true, scenario != "later")
+			want := RouteDirect
+			if scenario == "first" {
+				want = RouteTunnel
+			}
+			if g.route != want {
+				t.Fatalf("route %v, want %v", g.route, want)
+			}
+			if scenario != "first" && g.failStreak != 0 {
+				t.Fatalf("fail streak %d", g.failStreak)
+			}
+			if tt.stats[RouteDirect].Stalls != 2 {
+				t.Fatal(tt.stats[RouteDirect])
+			}
+		})
+	}
+}
+
+func TestStallDoesNotCrossGroups(t *testing.T) {
+	cfg := Config{Operator: t.Name()}
+	tt := &Tunnel{cfg: cfg, log: newEventLog(20), mode: ModeAuto, relays: map[string]*group{}}
+	tt.ways[RouteTunnel].dial = func(context.Context, string, string) (net.Conn, error) { return nil, nil }
+	tt.telegram = newGroup("telegram", kindTelegram, RouteDirect)
+	tt.other = newGroup("other", kindOther, RouteDirect)
+	relay := newGroup("relay.example.org", kindRelay, RouteDirect)
+	tt.relays[relay.name] = relay
+	tt.connectionFeedback(tt.telegram, RouteDirect, "1", true)
+	tt.connectionFeedback(tt.telegram, RouteDirect, "2", true)
+	tt.applyProbe(relay, probeResult{Relays: 1, RelayOK: 1, NetworkOK: true})
+	if relay.route != RouteDirect || relay.lastResult.RelayOK != 1 || relay.failStreak != 0 || knownBlocked(cfg, relay.name) {
+		t.Fatalf("stall leaked: %+v", relay)
+	}
+	if tt.routeStatsLocked(RouteDirect).Reason != "stalled" {
+		t.Fatal("missing aggregate stall status")
+	}
+	// A probe cannot release a group's application hold.
+	tt.applyProbe(tt.telegram, probeResult{Relays: 1, RelayOK: 1, NetworkOK: true})
+	if tt.telegram.route != RouteTunnel || !tt.groupStalledLocked(tt.telegram, RouteDirect) {
+		t.Fatal("probe released group")
+	}
+	// An unrelated group's reply cannot release it either.
+	tt.connectionFeedback(relay, RouteDirect, "3", false)
+	if !tt.groupStalledLocked(tt.telegram, RouteDirect) {
+		t.Fatal("reply crossed groups")
+	}
+	tt.connectionFeedback(tt.telegram, RouteDirect, "4", false)
+	if tt.groupStalledLocked(tt.telegram, RouteDirect) {
+		t.Fatal("group reply did not release hold")
+	}
+}
+
+func TestPinnedRouteNeverCoolsDown(t *testing.T) {
+	now := time.Unix(1000, 0)
+	failures := 0
+	p := &routePool{only: "route:a", kinds: []string{"http", "turn"}, ids: []string{"a", "b"}, clients: []soarClient{&poolFixture{}, &poolFixture{}}, ipv6: []bool{false, false}, log: newEventLog(20), now: func() time.Time { return now }, onFailure: func() { failures++ }}
+	for range 4 {
+		poolStall(t, p, 0, "")
+	}
+	s := p.stalls[""][0]
+	if s.Steps != 0 || !s.Until.IsZero() || failures != 0 {
+		t.Fatalf("pinned cooldown: %+v, callbacks %d", s, failures)
+	}
+	if got := p.order(nil); len(got) != 1 || got[0] != 0 {
+		t.Fatal(got)
+	}
+	for _, e := range p.log.last(20) {
+		if !strings.Contains(e.Msg, "pinned") {
+			t.Fatal(e.Msg)
+		}
+	}
+}
+
+func TestRefusedDoesNotMarkTunnelUnhealthy(t *testing.T) {
+	tt := newTestTunnel(t, ModeAlways, nil, func(context.Context, string, string) (net.Conn, error) { return nil, errDestinationRefused })
+	defer tt.Close()
+	c, code := socksConnect(t, tt.Addr(), "u", "p", "relay.example.org:443")
+	c.Close()
+	if code == repSucceeded {
+		t.Fatal("refused destination succeeded")
+	}
+	tt.mu.Lock()
+	defer tt.mu.Unlock()
+	if g := tt.relays["relay.example.org"]; g.tunnelFails != 0 {
+		t.Fatalf("tunnel failures %d", g.tunnelFails)
+	}
+}
+
+func TestLegacyTunnelStallCooldown(t *testing.T) {
+	for _, pinned := range []bool{false, true} {
+		t.Run(fmt.Sprint(pinned), func(t *testing.T) {
+			direct := func(context.Context, string, string) (net.Conn, error) {
+				a, b := net.Pipe()
+				b.Close()
+				return a, nil
+			}
+			tt := newTestTunnel(t, ModeAuto, direct, direct)
+			g := tt.testGroup("relay.example.org:443")
+			g.route = RouteTunnel
+			if pinned {
+				tt.only = "route:legacy-dns"
+				tt.mode = ModeAlways
+			}
+			tt.connectionFeedback(g, RouteTunnel, "a.example.org:443", true)
+			tt.connectionFeedback(g, RouteTunnel, "a.example.org:443", true)
+			if tt.tunnelStall.Steps != 0 {
+				t.Fatal("same destination cooled down tunnel")
+			}
+			tt.connectionFeedback(g, RouteTunnel, "b.example.org:443", true)
+			c, r, err := tt.dial(g, "relay.example.org:443")
+			if err != nil {
+				t.Fatal(err)
+			}
+			c.Close()
+			want := RouteTunnel
+			if r != want {
+				t.Fatalf("dial route %v, want %v", r, want)
+			}
+			if pinned && tt.tunnelStall.Steps != 0 {
+				t.Fatal("pinned legacy route cooled down")
+			}
+			tt.connectionFeedback(g, RouteTunnel, "c.example.org:443", false)
+			if tt.tunnelStall.Steps != 0 || !tt.tunnelStall.Until.IsZero() {
+				t.Fatal("route reply did not clear cooldown")
+			}
+		})
+	}
+}
+
+// A held route is deprioritised, never forbidden: with every route held the
+// group keeps using its current route, and a failed dial still falls through
+// to the other held route.
+func TestDialUsesHeldRoutesAsLastResort(t *testing.T) {
+	hold := func(tt *Tunnel, g *group) {
+		until := time.Now().Add(time.Hour)
+		g.stalls[RouteDirect] = &stallState{Until: until, Steps: 1}
+		tt.tunnelStall = &stallState{Until: until, Steps: 1}
+	}
+	for _, current := range []Route{RouteDirect, RouteTunnel} {
+		t.Run(current.String(), func(t *testing.T) {
+			var directCalls, tunnelCalls atomic.Int32
+			tt := newTestTunnel(t, ModeAuto, echoDialer("d:", &directCalls), echoDialer("t:", &tunnelCalls))
+			g := tt.testGroup("relay.example.org:443")
+			g.route = current
+			tt.mu.Lock()
+			hold(tt, g)
+			tt.mu.Unlock()
+			c, r, err := tt.dial(g, "relay.example.org:443")
+			if err != nil {
+				t.Fatal(err)
+			}
+			c.Close()
+			if r != current {
+				t.Fatalf("all routes held: dial used %v, want the current route %v", r, current)
+			}
+		})
+	}
+	t.Run("control: one held route is skipped", func(t *testing.T) {
+		var directCalls, tunnelCalls atomic.Int32
+		tt := newTestTunnel(t, ModeAuto, echoDialer("d:", &directCalls), echoDialer("t:", &tunnelCalls))
+		g := tt.testGroup("relay.example.org:443")
+		g.route = RouteDirect
+		tt.mu.Lock()
+		g.stalls[RouteDirect] = &stallState{Until: time.Now().Add(time.Hour), Steps: 1}
+		tt.mu.Unlock()
+		c, r, err := tt.dial(g, "relay.example.org:443")
+		if err != nil {
+			t.Fatal(err)
+		}
+		c.Close()
+		if r != RouteTunnel {
+			t.Fatalf("held direct with a free tunnel: dial used %v", r)
+		}
+	})
+	t.Run("fall through", func(t *testing.T) {
+		var directCalls, tunnelCalls atomic.Int32
+		tt := newTestTunnel(t, ModeAuto, echoDialer("d:", &directCalls), failDialer(&tunnelCalls))
+		g := tt.testGroup("relay.example.org:443")
+		g.route = RouteTunnel
+		tt.mu.Lock()
+		hold(tt, g)
+		tt.mu.Unlock()
+		c, r, err := tt.dial(g, "relay.example.org:443")
+		if err != nil {
+			t.Fatal(err)
+		}
+		c.Close()
+		if r != RouteDirect || tunnelCalls.Load() != 1 || directCalls.Load() != 1 {
+			t.Fatalf("route %v, tunnel dials %d, direct dials %d", r, tunnelCalls.Load(), directCalls.Load())
+		}
+	})
+}
+
+func TestStallProbeFlood(t *testing.T) {
+	for _, kind := range []groupKind{kindOther, kindRelay} {
+		t.Run(fmt.Sprint(kind), func(t *testing.T) {
+			tt := newTestTunnel(t, ModeAuto, nil, nil)
+			now := time.Now()
+			tt.now = func() time.Time { return now }
+			g := newGroup("relay.example.org", kind, RouteDirect)
+			rounds := 0
+			for range 1000 {
+				tt.connectionFeedback(g, RouteDirect, "same-connection", true)
+				select {
+				case <-tt.kick:
+					rounds++
+				default:
+				}
+				now = now.Add(50 * time.Millisecond)
+			}
+			want := 5
+			if kind == kindOther {
+				want = 0
+			}
+			if rounds != want || tt.urgent.Load() {
+				t.Fatalf("kicks %d, want %d; minimum gap bypass %v", rounds, want, tt.urgent.Load())
+			}
+		})
+	}
+}
+
+func TestStallHoldDoesNotEscalateOrRememberBlocked(t *testing.T) {
+	resetKnownStrategies()
+	defer resetKnownStrategies()
+	tt := newTestTunnel(t, ModeAuto, nil, func(context.Context, string, string) (net.Conn, error) { return nil, nil })
+	tt.cfg.StateFile = filepath.Join(t.TempDir(), "state.json")
+	g := tt.testGroup("relay.example.org:443")
+	for i := range 20 {
+		tt.connectionFeedback(g, RouteDirect, fmt.Sprint(i), true)
+	}
+	if g.stalls[RouteDirect].Steps != 1 {
+		t.Fatal("parallel stalls escalated hold")
+	}
+	for range blockedAfter + 1 {
+		tt.applyProbe(g, probeResult{Relays: 1, RelayOK: 1, NetworkOK: true})
+	}
+	if knownBlocked(tt.cfg, g.name) {
+		t.Fatal("hold wrote blocked memory")
 	}
 }

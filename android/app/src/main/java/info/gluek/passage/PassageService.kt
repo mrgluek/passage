@@ -29,6 +29,19 @@ import java.util.concurrent.Executors
  */
 class PassageService : Service() {
     companion object {
+        @Volatile private var instance: PassageService? = null
+
+        fun <T> withSubscriptionRouter(previous: String, refresh: () -> T): T {
+            val service = instance
+            if (active && service != null) {
+                return service.worker.submit<T> {
+                    if (active && runningRoutesConfig != previous) service.startTunnel("subscription imported")
+                    refresh()
+                }.get()
+            }
+            return refresh()
+        }
+
         private const val ACTION_START = "info.gluek.passage.START"
         private const val ACTION_STOP = "info.gluek.passage.STOP"
         private const val ACTION_NOTIFY = "info.gluek.passage.NOTIFY"
@@ -116,6 +129,7 @@ class PassageService : Service() {
 
     override fun onCreate() {
         super.onCreate()
+        instance = this
         Diagnostics.event("service created")
     }
 
@@ -147,6 +161,7 @@ class PassageService : Service() {
     }
 
     override fun onDestroy() {
+        instance = null
         Diagnostics.event("service destroyed")
         if (active) release()
         worker.shutdown()

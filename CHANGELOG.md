@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.7.2
+
+- Steadier route switching: a slow connection that is simply idle no longer
+  sends everything through another route. Each kind of traffic is judged on
+  its own, and a route you pinned by hand stays in use.
+- Faster start on a new network: Passage remembers which networks needed a
+  tunnel and begins there, and a network change on the computer no longer
+  restarts it for harmless adapter changes.
+- Routes from a subscription link are loaded right after you add it, and the
+  list is fetched faster when one address does not answer.
+- Home shows a Start button when routes are loaded but the proxy is stopped.
+- IPv6 addresses that the exit cannot reach no longer mark a working tunnel
+  as unhealthy.
+
 ## 0.7.1
 
 - On the computer, a subscription from the author now also takes over a route

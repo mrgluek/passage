@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"net"
 	"os"
+	"slices"
 	"strings"
 	"sync"
 	"syscall"
@@ -25,8 +26,11 @@ var knownStrategies = struct {
 	sync.Mutex
 	m       map[string]knownStrategy
 	blocked map[string]map[string]time.Time // network -> group -> when
-	loaded  map[string]bool                 // state files already read
-}{m: map[string]knownStrategy{}, blocked: map[string]map[string]time.Time{}, loaded: map[string]bool{}}
+	clean   map[string]map[string]time.Time
+	last    lastNetwork
+	loaded  map[string]bool // state files already read
+	writers map[string]*knownStateWriter
+}{m: map[string]knownStrategy{}, blocked: map[string]map[string]time.Time{}, clean: map[string]map[string]time.Time{}, loaded: map[string]bool{}, writers: map[string]*knownStateWriter{}}
 
 // blockedMemory is how long a group stays known as blocked on a network
 // without being seen blocked again.
@@ -41,7 +45,10 @@ const maxKnownNetworks = 32
 
 // networkKey identifies the network by what the app passes in at start.
 func networkKey(c Config) string {
-	sum := sha256.Sum256([]byte(strings.Join(c.SystemResolvers, ",") + "|" + c.Operator))
+	resolvers := slices.Clone(c.SystemResolvers)
+	slices.Sort(resolvers)
+	resolvers = slices.Compact(resolvers)
+	sum := sha256.Sum256([]byte(strings.Join(resolvers, ",") + "|" + c.Operator))
 	return hex.EncodeToString(sum[:12])
 }
 
@@ -59,7 +66,7 @@ func rememberStrategy(c Config, name string) {
 	defer knownStrategies.Unlock()
 	loadKnownLocked(c.StateFile)
 	k := networkKey(c)
-	if old, ok := knownStrategies.m[k]; ok && old.Name == name && time.Since(old.At) < time.Hour {
+	if old, ok := knownStrategies.m[k]; (!ok && name == "") || (ok && old.Name == name && time.Since(old.At) < time.Hour) {
 		return // unchanged and recent: no write
 	}
 	if name == "" {
@@ -76,7 +83,7 @@ func rememberStrategy(c Config, name string) {
 		}
 		delete(knownStrategies.m, oldest)
 	}
-	saveKnownLocked(c.StateFile)
+	dirtyKnownLocked(c.StateFile)
 }
 
 func groupKey(name string) string {
@@ -84,22 +91,89 @@ func groupKey(name string) string {
 	return hex.EncodeToString(sum[:8])
 }
 
+type lastNetwork struct {
+	Network string          `json:"network"`
+	Groups  map[string]bool `json:"groups"`
+	At      time.Time       `json:"at"`
+}
+
+const previousNetworkMemory = 24 * time.Hour
+
 // knownBlocked reports whether group had to use the tunnel on c's network.
-// Only with a state file: a router without one starts from direct.
 func knownBlocked(c Config, group string) bool {
+	blocked, _ := knownNetworkGroup(c, group, time.Now())
+	return blocked
+}
+
+func knownNetworkGroup(c Config, group string, now time.Time) (blocked, clean bool) {
 	if c.StateFile == "" {
-		return false
+		return false, false
 	}
 	knownStrategies.Lock()
 	defer knownStrategies.Unlock()
 	loadKnownLocked(c.StateFile)
-	at, ok := knownStrategies.blocked[networkKey(c)][groupKey(group)]
-	return ok && time.Since(at) < blockedMemory
+	k, g := networkKey(c), groupKey(group)
+	b, bok := knownStrategies.blocked[k][g]
+	d, dok := knownStrategies.clean[k][g]
+	return bok && now.Sub(b) < blockedMemory && (!dok || !d.After(b)),
+		dok && now.Sub(d) < blockedMemory && (!bok || d.After(b))
 }
 
-// rememberBlocked records whether group has to use the tunnel on c's
-// network, and saves.
+func previousNetwork(c Config) lastNetwork {
+	if c.StateFile == "" {
+		return lastNetwork{}
+	}
+	knownStrategies.Lock()
+	defer knownStrategies.Unlock()
+	loadKnownLocked(c.StateFile)
+	last := knownStrategies.last
+	last.Groups = make(map[string]bool, len(knownStrategies.last.Groups))
+	for g, tunnel := range knownStrategies.last.Groups {
+		last.Groups[g] = tunnel
+	}
+	return last
+}
+
+func rememberTunnelLocked(c Config, group string, tunnel bool, now time.Time) bool {
+	last := &knownStrategies.last
+	changed := last.Network != networkKey(c) || last.Groups[groupKey(group)] != tunnel || now.Sub(last.At) >= time.Hour
+	if !changed {
+		return false
+	}
+	if last.Network != networkKey(c) {
+		*last = lastNetwork{Network: networkKey(c), Groups: map[string]bool{}}
+	}
+	if last.Groups == nil {
+		last.Groups = map[string]bool{}
+	}
+	if tunnel {
+		last.Groups[groupKey(group)] = true
+	} else {
+		delete(last.Groups, groupKey(group))
+	}
+	last.At = now.UTC()
+	return changed
+}
+
+// rememberTunnel records a route without assigning a network verdict.
+func rememberTunnel(c Config, group string, tunnel bool, now time.Time) {
+	if c.StateFile == "" {
+		return
+	}
+	knownStrategies.Lock()
+	defer knownStrategies.Unlock()
+	loadKnownLocked(c.StateFile)
+	if rememberTunnelLocked(c, group, tunnel, now) {
+		dirtyKnownLocked(c.StateFile)
+	}
+}
+
 func rememberBlocked(c Config, group string, blocked bool) {
+	rememberBlockedAt(c, group, blocked, time.Now())
+}
+
+// rememberBlockedAt records the verdict and current route together.
+func rememberBlockedAt(c Config, group string, blocked bool, now time.Time) {
 	if c.StateFile == "" {
 		return
 	}
@@ -107,37 +181,55 @@ func rememberBlocked(c Config, group string, blocked bool) {
 	defer knownStrategies.Unlock()
 	loadKnownLocked(c.StateFile)
 	k, g := networkKey(c), groupKey(group)
-	at, ok := knownStrategies.blocked[k][g]
-	if blocked == ok && (!ok || time.Since(at) < time.Hour) {
-		return // unchanged and recent: no write
-	}
+	memory, opposite := knownStrategies.blocked, knownStrategies.clean
 	if !blocked {
-		delete(knownStrategies.blocked[k], g)
-		if len(knownStrategies.blocked[k]) == 0 {
-			delete(knownStrategies.blocked, k)
-		}
-	} else {
-		if knownStrategies.blocked[k] == nil {
-			knownStrategies.blocked[k] = map[string]time.Time{}
-		}
-		knownStrategies.blocked[k][g] = time.Now().UTC()
+		memory, opposite = opposite, memory
 	}
-	for len(knownStrategies.blocked) > maxKnownNetworks {
-		oldest, oldestAt := "", time.Time{}
-		for key, groups := range knownStrategies.blocked {
-			var latest time.Time
-			for _, t := range groups {
-				if t.After(latest) {
-					latest = t
+	at, ok := memory[k][g]
+	if ok && now.Sub(at) < time.Hour && knownStrategies.last.Network == k && knownStrategies.last.Groups[g] == blocked {
+		return
+	}
+	rememberTunnelLocked(c, group, blocked, now)
+	delete(opposite[k], g)
+	if len(opposite[k]) == 0 {
+		delete(opposite, k)
+	}
+	if memory[k] == nil {
+		memory[k] = map[string]time.Time{}
+	}
+	memory[k][g] = now.UTC()
+	pruneNetworkMemoryLocked(now)
+	dirtyKnownLocked(c.StateFile)
+}
+
+// Both verdicts share the network limit.
+func pruneNetworkMemoryLocked(now time.Time) {
+	latest := map[string]time.Time{}
+	for _, memory := range []map[string]map[string]time.Time{knownStrategies.blocked, knownStrategies.clean} {
+		for k, groups := range memory {
+			for g, at := range groups {
+				if now.Sub(at) >= blockedMemory {
+					delete(groups, g)
+				} else if at.After(latest[k]) {
+					latest[k] = at
 				}
 			}
-			if oldest == "" || latest.Before(oldestAt) {
-				oldest, oldestAt = key, latest
+			if len(groups) == 0 {
+				delete(memory, k)
 			}
 		}
-		delete(knownStrategies.blocked, oldest)
 	}
-	saveKnownLocked(c.StateFile)
+	for len(latest) > maxKnownNetworks {
+		oldest := ""
+		for k, at := range latest {
+			if oldest == "" || at.Before(latest[oldest]) {
+				oldest = k
+			}
+		}
+		delete(latest, oldest)
+		delete(knownStrategies.blocked, oldest)
+		delete(knownStrategies.clean, oldest)
+	}
 }
 
 func loadKnownLocked(path string) {
@@ -152,6 +244,8 @@ func loadKnownLocked(path string) {
 	var f struct {
 		Strategies map[string]knownStrategy        `json:"strategies"`
 		Blocked    map[string]map[string]time.Time `json:"blocked"`
+		Clean      map[string]map[string]time.Time `json:"clean"`
+		Last       lastNetwork                     `json:"last"`
 	}
 	if json.Unmarshal(b, &f) != nil {
 		return
@@ -161,29 +255,74 @@ func loadKnownLocked(path string) {
 			knownStrategies.m[k] = v
 		}
 	}
-	for k, groups := range f.Blocked {
-		if knownStrategies.blocked[k] == nil {
-			knownStrategies.blocked[k] = map[string]time.Time{}
+	for _, pair := range []struct {
+		dst, src map[string]map[string]time.Time
+	}{
+		{knownStrategies.blocked, f.Blocked}, {knownStrategies.clean, f.Clean},
+	} {
+		for k, groups := range pair.src {
+			if pair.dst[k] == nil {
+				pair.dst[k] = map[string]time.Time{}
+			}
+			for g, at := range groups {
+				if at.After(pair.dst[k][g]) {
+					pair.dst[k][g] = at
+				}
+			}
 		}
-		for g, at := range groups {
-			if at.After(knownStrategies.blocked[k][g]) {
-				knownStrategies.blocked[k][g] = at
+	}
+	if f.Last.At.After(knownStrategies.last.At) {
+		knownStrategies.last = f.Last
+	}
+}
+
+type knownStateWriter struct {
+	dirty bool
+	done  chan struct{}
+}
+
+// dirtyKnownLocked keeps at most one writer running for each state file.
+func dirtyKnownLocked(path string) {
+	if path == "" {
+		return
+	}
+	if w := knownStrategies.writers[path]; w != nil {
+		w.dirty = true
+		return
+	}
+	w := &knownStateWriter{dirty: true, done: make(chan struct{})}
+	knownStrategies.writers[path] = w
+	go writeKnownState(path, w)
+}
+
+func writeKnownState(path string, w *knownStateWriter) {
+	for {
+		knownStrategies.Lock()
+		if !w.dirty {
+			delete(knownStrategies.writers, path)
+			close(w.done)
+			knownStrategies.Unlock()
+			return
+		}
+		w.dirty = false
+		b, err := json.Marshal(map[string]any{"strategies": knownStrategies.m, "blocked": knownStrategies.blocked, "clean": knownStrategies.clean, "last": knownStrategies.last})
+		knownStrategies.Unlock()
+		if err == nil {
+			tmp := path + ".tmp"
+			if os.WriteFile(tmp, b, 0o600) == nil {
+				os.Rename(tmp, path)
 			}
 		}
 	}
 }
 
-func saveKnownLocked(path string) {
-	if path == "" {
-		return
-	}
-	b, err := json.Marshal(map[string]any{"strategies": knownStrategies.m, "blocked": knownStrategies.blocked})
-	if err != nil {
-		return
-	}
-	tmp := path + ".tmp"
-	if os.WriteFile(tmp, b, 0o600) == nil {
-		os.Rename(tmp, path)
+// flushKnownState waits for pending writes without holding the router lock.
+func flushKnownState(path string) {
+	knownStrategies.Lock()
+	w := knownStrategies.writers[path]
+	knownStrategies.Unlock()
+	if w != nil {
+		<-w.done
 	}
 }
 

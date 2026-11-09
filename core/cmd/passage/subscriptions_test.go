@@ -2,12 +2,14 @@ package main
 
 import (
 	stdbytes "bytes"
+	"context"
 	"crypto/ed25519"
 	"encoding/base64"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -59,6 +61,7 @@ func newSubscriptionTestApp(t *testing.T, lang string) *App {
 	t.Helper()
 	a := newApp(t.TempDir(), "dev", "", lang, &fakePlatform{})
 	a.settings.Running = false
+	a.subscriptionRefreshing = true
 	a.saveSettings()
 	return a
 }
@@ -384,6 +387,77 @@ func TestDesktopTrustedInviteTakeoverNotice(t *testing.T) {
 			if err != nil || strings.Contains(preview.Text, tc.notice) != trusted {
 				t.Fatalf("%s trusted=%v: %+v %v", tc.lang, trusted, preview, err)
 			}
+		}
+	}
+}
+
+type importRefreshFetcher struct {
+	calls            atomic.Int32
+	entered, release chan struct{}
+}
+
+func (f *importRefreshFetcher) Refresh(_ context.Context, cfg tunnel.Config, _ []tunnel.SubscriptionDial) tunnel.SubscriptionRefreshResult {
+	f.calls.Add(1)
+	close(f.entered)
+	<-f.release
+	cfg.Subscriptions = append([]tunnel.Subscription(nil), cfg.Subscriptions...)
+	cfg.Routes = []links.Route{{ID: "one"}}
+	cfg.Subscriptions[0].RouteIDs = []string{"one"}
+	cfg.Subscriptions[0].LastTry = time.Now().Unix()
+	return tunnel.SubscriptionRefreshResult{Config: cfg, Changed: true}
+}
+
+func TestDesktopImportRefreshesOnce(t *testing.T) {
+	_, key, _ := ed25519.GenerateKey(nil)
+	a := newSubscriptionTestApp(t, "en")
+	f := &importRefreshFetcher{entered: make(chan struct{}), release: make(chan struct{})}
+	a.subscriptionFetcher, a.subscriptionRefreshing = f, false
+	applied := make(chan struct{}, 1)
+	a.changed = func() {
+		a.mu.Lock()
+		done := !a.subscriptionRefreshing
+		a.mu.Unlock()
+		if done {
+			select {
+			case applied <- struct{}{}:
+			default:
+			}
+		}
+	}
+	if err := a.subscribe(desktopInvite(t, key, false), false); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-f.entered:
+	case <-time.After(time.Second):
+		t.Fatal("import did not refresh")
+	}
+	rows := a.view().Subscriptions
+	if len(rows) != 1 || !rows[0].Busy {
+		t.Fatal("missing refreshing state", rows)
+	}
+	if err := a.refreshSubscriptions(rows[0].ID); err != nil {
+		t.Fatal(err)
+	}
+	close(f.release)
+	select {
+	case <-applied:
+	case <-time.After(time.Second):
+		t.Fatal("result not applied")
+	}
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if f.calls.Load() != 1 || a.subscriptionRefreshing || len(a.linkCfg.Routes) != 1 || a.settings.RoutesNotice == "" {
+		t.Fatal("refresh not shared or result lost", f.calls.Load(), a.settings.RoutesNotice)
+	}
+}
+
+func TestHomeOffersSettingsWithoutRoutes(t *testing.T) {
+	for _, lang := range []string{"en", "ru"} {
+		a := newSubscriptionTestApp(t, lang)
+		a.settings.Running = true
+		if a.view().HasLink {
+			t.Fatal("empty route hint hidden", lang)
 		}
 	}
 }

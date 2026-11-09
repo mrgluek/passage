@@ -203,7 +203,7 @@ func SubscribeLink(cfg Config, text string, replaceSigner bool) (ImportResult, e
 		return ImportResult{}, err
 	}
 	i := decoded.Invite
-	out := ImportResult{Config: cfg, Signature: decoded.Signature, Mode: "subscribe", Subscription: &SubscriptionDescription{i.Name, len(i.Sources), i.Seed != nil}}
+	out := ImportResult{SubscriptionID: hex.EncodeToString(i.ID), Config: cfg, Signature: decoded.Signature, Mode: "subscribe", Subscription: &SubscriptionDescription{i.Name, len(i.Sources), i.Seed != nil}}
 	sub := Subscription{ID: hex.EncodeToString(i.ID), Name: i.Name, Signer: slices.Clone(i.Signer), Sources: slices.Clone(i.Sources), ReadKey: slices.Clone(i.ReadKey)}
 	at := slices.IndexFunc(cfg.Subscriptions, func(s Subscription) bool { return s.ID == sub.ID })
 	cfg.Subscriptions = slices.Clone(cfg.Subscriptions)

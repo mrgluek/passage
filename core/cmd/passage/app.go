@@ -59,7 +59,7 @@ type App struct {
 	linkCfg                tunnel.Config
 	linkErr                string
 	results                []tunnel.ImportResult
-	netKey                 string
+	network                networkChange
 	checking               time.Time
 	log                    *appLog
 	updater                desktopUpdate
@@ -69,6 +69,7 @@ type App struct {
 	subscriptionRefreshing bool
 	subscriptionResults    map[string]string
 	subscriptionNotice     string
+	subscriptionFetcher    subscriptionFetcher
 }
 
 func newApp(dir, version, iroh, lang string, os platform) *App {
@@ -180,14 +181,14 @@ func (a *App) startLocked(why string) {
 	}
 	cfg.Mode = a.mode()
 	cfg.My = s.My
-	dns := sysdns.Resolvers()
-	cfg.SystemResolvers = dns
+	state, _ := readNetwork()
+	cfg.SystemResolvers = state.dns
 	cfg.IrohBinary = a.iroh
 	data := a.path(dataName)
 	cfg.PrivateDir = filepath.Join(data, "iroh")
 	cfg.StateFile = filepath.Join(data, "router-state.json")
 	os.MkdirAll(data, 0700)
-	a.netKey = strings.Join(dns, ",")
+	a.network = networkChange{current: state.key()}
 	a.event("router start: %s mode=%s", why, cfg.Mode)
 	cfg, err := cfg.Normalize()
 	if err == nil {
@@ -221,7 +222,7 @@ func (a *App) tick() {
 		a.startLocked("retry")
 	case reload:
 		a.startLocked("restart on link change")
-	case strings.Join(sysdns.Resolvers(), ",") != a.netKey:
+	case a.networkChanged(time.Now()):
 		a.startLocked("restart on network change")
 	default:
 		if a.subscriptionRefreshing {
@@ -365,6 +366,7 @@ type view struct {
 	Head               string            `json:"head"`
 	Line               string            `json:"line"`
 	Full               string            `json:"full"`
+	StartHint          string            `json:"start_hint"`
 	HasLink            bool              `json:"has_link"`
 	Mode               string            `json:"mode"`
 	Routes             []routeChoice     `json:"routes"`
@@ -376,6 +378,14 @@ type view struct {
 	Pass               string            `json:"pass"`
 	ProxyLink          string            `json:"proxy_link"` // socks5://
 	TgLink             string            `json:"tg_link"`    // tg://socks
+}
+
+// startHint asks to start the proxy when routes exist but it is not running.
+func startHint(t tr, running bool, routes int) string {
+	if !running && routes > 0 {
+		return t.f("start_hint")
+	}
+	return ""
 }
 
 func (a *App) view() view {
@@ -395,6 +405,7 @@ func (a *App) view() view {
 	default:
 		v.Head = a.t.f("proxy_stopped")
 	}
+	v.StartHint = startHint(a.t, v.Running, len(v.Routes))
 	var full string
 	if a.tun != nil {
 		st := a.tun.Status(500)

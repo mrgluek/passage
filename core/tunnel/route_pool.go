@@ -218,7 +218,7 @@ func (p *routePool) DialContext(ctx context.Context, network, address string) (n
 				drain()
 				p.mark(r.i, false)
 				p.established.Store(true)
-				conn := net.Conn(&poolConn{Conn: r.conn, pool: p, index: r.i, network: p.network})
+				conn := net.Conn(&poolConn{Conn: r.conn, pool: p, index: r.i, network: p.network, address: address})
 				if r.i < len(p.kinds) {
 					conn = viaConn{conn, p.kinds[r.i]}
 				}
@@ -546,6 +546,7 @@ type poolConn struct {
 	pool    *routePool
 	index   int
 	network string
+	address string
 }
 
 func (c *poolConn) feedback(stalled bool, first ...bool) {
@@ -564,7 +565,11 @@ func (c *poolConn) feedback(stalled bool, first ...bool) {
 		p.stalls[c.network][c.index] = h
 	}
 	if stalled {
-		h.record(p.clock(), p.log, p.routeName(c.index), len(first) == 0 || first[0])
+		pinned := strings.HasPrefix(p.only, "route:")
+		corroborated := h.record(p.clock(), p.log, p.routeName(c.index), len(first) == 0 || first[0], c.address, pinned)
+		if pinned || !corroborated {
+			return
+		}
 		all := len(p.clients) > 0
 		for i := range p.clients {
 			if p.matches(i, p.only) && !p.stalledLocked(p.network, i, p.clock()) && !p.clock().Before(p.failedUntil[i]) {

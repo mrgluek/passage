@@ -81,6 +81,10 @@ jobs:
           go vet ./tunnel ./update ./internal/... ./cmd/passage-cli ./cmd/passage ./cmd/passage-http-exit ./cmd/passage-update-manifest
           go test ./...
 
+      - name: Show the network state read on Windows
+        working-directory: ./core
+        run: go test -count=1 -v -run TestReadNetworkNative ./cmd/passage
+
       - name: Set up Rust
         run: |
           rustup toolchain install 1.99.1 --profile minimal
