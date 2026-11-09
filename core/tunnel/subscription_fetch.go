@@ -26,6 +26,10 @@ type subscriptionPair struct {
 type SubscriptionRefresher struct {
 	mu   sync.Mutex
 	last map[string]subscriptionPair
+
+	tunnelTimeout time.Duration
+	directTimeout time.Duration
+	directDial    SubscriptionDial
 }
 
 type SubscriptionRefreshResult struct {
@@ -33,7 +37,7 @@ type SubscriptionRefreshResult struct {
 	Changed bool   `json:"changed"`
 }
 
-// Refresh races source/dialer pairs within one deadline per subscription.
+// Refresh races tunnel pairs first, then falls back to direct pairs.
 func (r *SubscriptionRefresher) Refresh(ctx context.Context, cfg Config, dialers []SubscriptionDial) SubscriptionRefreshResult {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -50,80 +54,105 @@ func (r *SubscriptionRefresher) Refresh(ctx context.Context, cfg Config, dialers
 		sub.LastError = "network"
 		key := networkKey(cfg) + ":" + sub.ID
 		last := r.last[key]
-		dials := append([]SubscriptionDial(nil), dialers...)
-		dials = append(dials, (&net.Dialer{}).DialContext)
-		var pairs []subscriptionPair
-		for di := range dials {
-			for _, source := range sub.Sources {
-				pairs = append(pairs, subscriptionPair{source, di})
-			}
+		direct := r.directDial
+		if direct == nil {
+			direct = (&net.Dialer{}).DialContext
 		}
-		for i := range pairs {
-			if pairs[i] == last {
-				pairs[0], pairs[i] = pairs[i], pairs[0]
-				break
-			}
+		dials := append(append([]SubscriptionDial(nil), dialers...), direct)
+		tunnelTimeout, directTimeout := r.tunnelTimeout, r.directTimeout
+		if tunnelTimeout <= 0 {
+			tunnelTimeout = 20 * time.Second
+		}
+		if directTimeout <= 0 {
+			directTimeout = 40 * time.Second
 		}
 		type response struct {
 			pair       subscriptionPair
 			blob       []byte
 			etag, code string
 		}
-		attempt, cancel := context.WithTimeout(ctx, 40*time.Second)
-		results := make(chan response, len(pairs))
-		var workers sync.WaitGroup
-		fetching := sub
-		for _, pair := range pairs {
-			workers.Go(func() {
-				blob, etag, code := fetchSubscription(attempt, fetching, pair.source, dials[pair.dial])
-				results <- response{pair, blob, etag, code}
-			})
-		}
-		for range pairs {
-			result := <-results
-			pair, blob, etag, code := result.pair, result.blob, result.etag, result.code
-			if code == "" {
-				id, _ := hex.DecodeString(sub.ID)
-				opened, err := links.OpenSubFile(blob, id, sub.ReadKey, ed25519.PublicKey(sub.Signer))
-				if err != nil {
-					sub.LastError = subscriptionError(err)
-					continue
-				}
-				candidate, err := ApplySubFile(out.Config, sub, opened.Bundle)
-				if errors.Is(err, links.ErrNotNewer) {
-					code = "unchanged"
-				} else if err != nil {
-					sub.LastError = subscriptionError(err)
-					continue
-				} else {
-					out.Config = candidate
-					sub = candidate.Subscriptions[index]
-					out.Changed = true
-				}
-			}
-			if code != "" && code != "unchanged" {
-				sub.LastError = code
+		succeeded := false
+		for _, tier := range []struct {
+			first, end int
+			timeout    time.Duration
+		}{{0, len(dialers), tunnelTimeout}, {len(dialers), len(dials), directTimeout}} {
+			if succeeded || ctx.Err() != nil || tier.first == tier.end {
 				continue
 			}
-			if code == "unchanged" {
-				sub.LastError = "unchanged"
+			pairs := subscriptionPairs(sub.Sources, tier.first, tier.end, last)
+			attempt, cancel := context.WithTimeout(ctx, tier.timeout)
+			results := make(chan response, len(pairs))
+			var workers sync.WaitGroup
+			fetching := sub
+			for _, pair := range pairs {
+				workers.Go(func() {
+					blob, etag, code := fetchSubscription(attempt, fetching, pair.source, dials[pair.dial])
+					results <- response{pair, blob, etag, code}
+				})
 			}
-			sub.LastOK = time.Now().Unix()
-			sub.ETag, sub.ETagSource = etag, pair.source
-			if r.last == nil {
-				r.last = map[string]subscriptionPair{}
+			for range pairs {
+				result := <-results
+				pair, blob, etag, code := result.pair, result.blob, result.etag, result.code
+				if code == "" {
+					id, _ := hex.DecodeString(sub.ID)
+					opened, err := links.OpenSubFile(blob, id, sub.ReadKey, ed25519.PublicKey(sub.Signer))
+					if err != nil {
+						sub.LastError = subscriptionError(err)
+						continue
+					}
+					candidate, err := ApplySubFile(out.Config, sub, opened.Bundle)
+					if errors.Is(err, links.ErrNotNewer) {
+						code = "unchanged"
+					} else if err != nil {
+						sub.LastError = subscriptionError(err)
+						continue
+					} else {
+						out.Config = candidate
+						sub = candidate.Subscriptions[index]
+						out.Changed = true
+					}
+				}
+				if code != "" && code != "unchanged" {
+					sub.LastError = code
+					continue
+				}
+				if code == "unchanged" {
+					sub.LastError = "unchanged"
+				}
+				sub.LastOK = time.Now().Unix()
+				sub.ETag, sub.ETagSource = etag, pair.source
+				if r.last == nil {
+					r.last = map[string]subscriptionPair{}
+				}
+				if len(r.last) >= 128 {
+					clear(r.last)
+				}
+				r.last[key] = pair
+				succeeded = true
+				break
 			}
-			if len(r.last) >= 128 {
-				clear(r.last)
-			}
-			r.last[key] = pair
-			break
+			cancel()
+			workers.Wait()
 		}
-		cancel()
-		workers.Wait()
 		out.Config.Subscriptions[index] = sub
 	}
 	return out
+}
+
+func subscriptionPairs(sources []string, first, end int, last subscriptionPair) []subscriptionPair {
+	var pairs []subscriptionPair
+	for di := first; di < end; di++ {
+		for _, source := range sources {
+			pairs = append(pairs, subscriptionPair{source, di})
+		}
+	}
+	for i := range pairs {
+		if pairs[i] == last {
+			pairs[0], pairs[i] = pairs[i], pairs[0]
+			break
+		}
+	}
+	return pairs
 }
 
 func fetchSubscription(ctx context.Context, sub Subscription, source string, dial SubscriptionDial) ([]byte, string, string) {
