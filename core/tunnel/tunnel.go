@@ -79,6 +79,7 @@ type group struct {
 	okStreak    int
 	state       string
 	lastProbe   time.Time
+	lastUrgent  time.Time
 	stalls      [numRoutes]*stallState
 	lastResult  probeResult
 }
@@ -968,7 +969,7 @@ func (t *Tunnel) dial(g *group, addr string) (net.Conn, Route, error) {
 	}
 	t.mu.Lock()
 	route, mode := g.route, t.mode
-	if mode == ModeAuto && t.groupStalledLocked(g, route) {
+	if mode == ModeAuto && route != RouteTunnel && t.groupStalledLocked(g, route) {
 		for n := RouteDirect; n < numRoutes; n++ {
 			if usable(n) && !t.groupStalledLocked(g, n) {
 				route = n
@@ -1397,8 +1398,8 @@ func (t *Tunnel) probeCanaries() bool {
 func (t *Tunnel) confirmViaTunnel(g *group, res probeResult) probeResult {
 	t.mu.Lock()
 	gs := g
-	check := t.mode == ModeAuto && res.Relays > 0 && (gs.lastProbe.IsZero() ||
-		!res.SmartOK && res.RelayOK == 0 && (!res.NetworkOK || gs.route == RouteDirect && gs.failStreak+1 >= blockedAfter))
+	check := t.mode == ModeAuto && res.Relays > 0 && !res.SmartOK && res.RelayOK == 0 &&
+		(gs.lastProbe.IsZero() || !res.NetworkOK || gs.route == RouteDirect && gs.failStreak+1 >= blockedAfter)
 	t.mu.Unlock()
 	canProbe := t.probeTunnel != nil
 	if g.kind == kindTelegram {
@@ -1438,6 +1439,7 @@ func (t *Tunnel) applyProbe(g *group, res probeResult) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	gs := g
+	probeResult := res
 	if t.groupStalledLocked(g, RouteDirect) {
 		res.RelayOK = 0
 		res.NetworkOK = true
@@ -1480,7 +1482,8 @@ func (t *Tunnel) applyProbe(g *group, res probeResult) {
 	t.setRouteLocked(g, route, state)
 	// Keep verdicts and route changes in the same order.
 	switch {
-	case state == "blocked" && route == RouteTunnel:
+	case state == "blocked" && route == RouteTunnel && probeResult.RelayOK == 0 && !probeResult.SmartOK &&
+		(probeResult.NetworkOK || probeResult.TunnelOK) && !(probeResult.TunnelChecked && !probeResult.TunnelOK):
 		rememberBlockedAt(t.cfg, g.name, true, t.timeNow())
 	case state == "direct" && route == RouteDirect:
 		rememberBlockedAt(t.cfg, g.name, false, t.timeNow())
@@ -1941,6 +1944,12 @@ func (t *Tunnel) connectionFeedback(g *group, r Route, key string, stalled bool,
 			t.setRouteLocked(g, next, "stalled")
 		}
 	}
-	t.urgent.Store(true)
-	t.kickProbe()
+	if !corroborated && g.kind != kindOther && t.mode == ModeAuto && r != RouteTunnel && !strings.HasPrefix(t.only, "route:") {
+		now := t.timeNow()
+		if g.lastUrgent.IsZero() || now.Sub(g.lastUrgent) >= minProbeGap {
+			g.lastUrgent = now
+			// Wake the monitor, keeping the minimum gap between rounds.
+			t.kickProbe()
+		}
+	}
 }

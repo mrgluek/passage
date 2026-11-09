@@ -190,6 +190,9 @@ func (s *stallState) record(now time.Time, log *eventLog, route string, first bo
 		}
 		return true
 	}
+	if s.blocked(now, log, route) {
+		return true
+	}
 	s.fail(now)
 	if log != nil {
 		log.stalled(now, route, "first reply", s.Until.Sub(now), s.Count)

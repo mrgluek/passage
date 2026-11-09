@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"path/filepath"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -599,8 +600,7 @@ func TestStallHistory(t *testing.T) {
 				}
 				now = now.Add(30 * time.Second)
 				force()
-				want = fmt.Sprintf("stalled: %s (first reply), blocked for 30 min, count=4", route)
-				if events := log.last(20); len(events) != 3 || events[2].Msg != want {
+				if events := log.last(20); len(events) != 2 || state.Steps != 1 {
 					t.Fatalf("events %+v", events)
 				}
 				a, b := net.Pipe()
@@ -611,7 +611,7 @@ func TestStallHistory(t *testing.T) {
 				}
 				c.Close()
 				events := log.last(20)
-				if len(events) != 4 || events[3].Msg != "unblocked: "+route+" (first reply)" || state.Steps != 0 {
+				if len(events) != 3 || events[2].Msg != "unblocked: "+route+" (first reply)" || state.Steps != 0 {
 					t.Fatalf("events %+v, state %+v", events, state)
 				}
 			})
@@ -870,10 +870,7 @@ func TestLegacyTunnelStallCooldown(t *testing.T) {
 				t.Fatal(err)
 			}
 			c.Close()
-			want := RouteDirect
-			if pinned {
-				want = RouteTunnel
-			}
+			want := RouteTunnel
 			if r != want {
 				t.Fatalf("dial route %v, want %v", r, want)
 			}
@@ -950,4 +947,52 @@ func TestDialUsesHeldRoutesAsLastResort(t *testing.T) {
 			t.Fatalf("route %v, tunnel dials %d, direct dials %d", r, tunnelCalls.Load(), directCalls.Load())
 		}
 	})
+}
+
+func TestStallProbeFlood(t *testing.T) {
+	for _, kind := range []groupKind{kindOther, kindRelay} {
+		t.Run(fmt.Sprint(kind), func(t *testing.T) {
+			tt := newTestTunnel(t, ModeAuto, nil, nil)
+			now := time.Now()
+			tt.now = func() time.Time { return now }
+			g := newGroup("relay.example.org", kind, RouteDirect)
+			rounds := 0
+			for range 1000 {
+				tt.connectionFeedback(g, RouteDirect, "same-connection", true)
+				select {
+				case <-tt.kick:
+					rounds++
+				default:
+				}
+				now = now.Add(50 * time.Millisecond)
+			}
+			want := 5
+			if kind == kindOther {
+				want = 0
+			}
+			if rounds != want || tt.urgent.Load() {
+				t.Fatalf("kicks %d, want %d; minimum gap bypass %v", rounds, want, tt.urgent.Load())
+			}
+		})
+	}
+}
+
+func TestStallHoldDoesNotEscalateOrRememberBlocked(t *testing.T) {
+	resetKnownStrategies()
+	defer resetKnownStrategies()
+	tt := newTestTunnel(t, ModeAuto, nil, func(context.Context, string, string) (net.Conn, error) { return nil, nil })
+	tt.cfg.StateFile = filepath.Join(t.TempDir(), "state.json")
+	g := tt.testGroup("relay.example.org:443")
+	for i := range 20 {
+		tt.connectionFeedback(g, RouteDirect, fmt.Sprint(i), true)
+	}
+	if g.stalls[RouteDirect].Steps != 1 {
+		t.Fatal("parallel stalls escalated hold")
+	}
+	for range blockedAfter + 1 {
+		tt.applyProbe(g, probeResult{Relays: 1, RelayOK: 1, NetworkOK: true})
+	}
+	if knownBlocked(tt.cfg, g.name) {
+		t.Fatal("hold wrote blocked memory")
+	}
 }

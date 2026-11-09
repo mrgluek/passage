@@ -1136,3 +1136,17 @@ func TestDialsFollowMode(t *testing.T) {
 		}
 	}
 }
+
+func TestCleanNetworkFirstRoundDoesNotProbeTunnel(t *testing.T) {
+	tt, probes := relayDownTunnel(t, nil, true)
+	tt.probeTLS = func(context.Context, string, string) error { return nil }
+	tt.check()
+	tt.mu.Lock()
+	g := tt.relays["relay.example.org"]
+	g.lastProbe = time.Time{}
+	tt.mu.Unlock()
+	tt.check()
+	if probes.Load() != 0 {
+		t.Fatalf("clean network started %d tunnel probes", probes.Load())
+	}
+}
