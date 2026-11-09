@@ -180,10 +180,7 @@ func (a *App) startLocked(why string) {
 	}
 	cfg.Mode = a.mode()
 	cfg.My = s.My
-	state, ok := readNetwork()
-	if !ok {
-		state.dns = sysdns.Resolvers()
-	}
+	state, _ := readNetwork()
 	cfg.SystemResolvers = state.dns
 	cfg.IrohBinary = a.iroh
 	data := a.path(dataName)

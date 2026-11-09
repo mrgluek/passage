@@ -4,6 +4,7 @@ import (
 	"net"
 	"unsafe"
 
+	"github.com/mrgluek/passage/core/internal/sysdns"
 	"golang.org/x/sys/windows"
 )
 
@@ -46,36 +47,4 @@ func defaultRoutes() ([]networkRoute, error) {
 	return routes, nil
 }
 
-func networkResolvers(routes []networkRoute) []string {
-	indices := map[uint32]bool{}
-	for _, r := range routes {
-		indices[uint32(r.index)] = true
-	}
-	size := uint32(15000)
-	for range 3 {
-		buf := make([]byte, size)
-		first := (*windows.IpAdapterAddresses)(unsafe.Pointer(&buf[0]))
-		err := windows.GetAdaptersAddresses(windows.AF_UNSPEC, windows.GAA_FLAG_SKIP_ANYCAST|windows.GAA_FLAG_SKIP_MULTICAST, 0, first, &size)
-		if err == windows.ERROR_BUFFER_OVERFLOW {
-			continue
-		}
-		if err != nil {
-			return nil
-		}
-		var out []string
-		for a := first; a != nil; a = a.Next {
-			if !indices[a.IfIndex] && !indices[a.Ipv6IfIndex] {
-				continue
-			}
-			for d := a.FirstDnsServerAddress; d != nil; d = d.Next {
-				ip := d.Address.IP()
-				if ip == nil || ip.IsLoopback() || ip.IsLinkLocalUnicast() || ip.To4() == nil && ip[0] == 0xfe && ip[1]&0xc0 == 0xc0 {
-					continue
-				}
-				out = append(out, net.JoinHostPort(ip.String(), "53"))
-			}
-		}
-		return out
-	}
-	return nil
-}
+func networkResolvers([]networkRoute) []string { return sysdns.Resolvers() }

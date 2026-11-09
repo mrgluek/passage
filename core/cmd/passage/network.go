@@ -6,6 +6,8 @@ import (
 	"slices"
 	"strings"
 	"time"
+
+	"github.com/mrgluek/passage/core/internal/sysdns"
 )
 
 const networkSettle = 3 * time.Second
@@ -61,18 +63,29 @@ func physicalInterfaceName(name string) bool {
 
 func interfaceRoute(index int, gateway string, metric uint64, ipv6 bool) (networkRoute, bool) {
 	iface, err := net.InterfaceByIndex(index)
-	if err != nil || iface.Flags&net.FlagUp == 0 || iface.Flags&(net.FlagLoopback|net.FlagPointToPoint) != 0 || !physicalInterfaceName(iface.Name) {
+	if err != nil {
 		return networkRoute{}, false
 	}
 	addresses, err := iface.Addrs()
 	if err != nil {
 		return networkRoute{}, false
 	}
+	return interfaceRouteFor(*iface, addresses, gateway, metric, ipv6)
+}
+
+func interfaceRouteFor(iface net.Interface, addresses []net.Addr, gateway string, metric uint64, ipv6 bool) (networkRoute, bool) {
+	if iface.Flags&net.FlagUp == 0 || iface.Flags&(net.FlagLoopback|net.FlagPointToPoint) != 0 || !physicalInterfaceName(iface.Name) {
+		return networkRoute{}, false
+	}
 	var ips []string
 	for _, addr := range addresses {
 		ip, _, err := net.ParseCIDR(addr.String())
 		if err == nil && ip.IsGlobalUnicast() && (ip.To4() == nil) == ipv6 {
-			ips = append(ips, ip.String())
+			address := ip.String()
+			if ipv6 {
+				address = ip.Mask(net.CIDRMask(64, 128)).String() + "/64"
+			}
+			ips = append(ips, address)
 		}
 	}
 	slices.Sort(ips)
@@ -80,7 +93,7 @@ func interfaceRoute(index int, gateway string, metric uint64, ipv6 bool) (networ
 	if len(ips) > 0 {
 		address = ips[0]
 	}
-	return networkRoute{name: iface.Name, index: index, gateway: gateway, address: address, metric: metric, ipv6: ipv6}, true
+	return networkRoute{name: iface.Name, index: iface.Index, gateway: gateway, address: address, metric: metric, ipv6: ipv6}, true
 }
 
 func primaryRoutes(routes []networkRoute) []networkRoute {
@@ -92,7 +105,7 @@ func primaryRoutes(routes []networkRoute) []networkRoute {
 			if r.ipv6 != ipv6 || !physicalInterfaceName(r.name) {
 				continue
 			}
-			if best == nil || r.metric < best.metric || r.metric == best.metric && routeKey(*r) < routeKey(*best) {
+			if best == nil || r.metric < best.metric || r.metric == best.metric && (r.index < best.index || r.index == best.index && routeKey(*r) < routeKey(*best)) {
 				best = r
 			}
 		}
@@ -108,12 +121,20 @@ func routeKey(r networkRoute) string {
 }
 
 func readNetwork() (networkState, bool) {
-	routes, err := defaultRoutes()
+	return readNetworkWith(defaultRoutes, networkResolvers, sysdns.Resolvers)
+}
+
+func readNetworkWith(readRoutes func() ([]networkRoute, error), resolvers func([]networkRoute) []string, fallback func() []string) (networkState, bool) {
+	routes, err := readRoutes()
 	if err != nil {
-		return networkState{}, false
+		return networkStateFor(fallback(), nil), false
 	}
 	routes = primaryRoutes(routes)
-	return networkStateFor(networkResolvers(routes), routes), true
+	dns := resolvers(routes)
+	if len(dns) == 0 {
+		dns = fallback()
+	}
+	return networkStateFor(dns, routes), true
 }
 
 func networkStateFor(dns []string, routes []networkRoute) networkState {
@@ -126,5 +147,13 @@ func networkStateFor(dns []string, routes []networkRoute) networkState {
 
 func (a *App) networkChanged(now time.Time) bool {
 	state, ok := readNetwork()
-	return ok && a.network.observe(state.key(), now)
+	return a.network.observeState(state, ok, now)
+}
+
+func (n *networkChange) observeState(state networkState, ok bool, now time.Time) bool {
+	if !ok {
+		// A route-read failure leaves only the resolver set to compare.
+		_, state.paths, _ = strings.Cut(n.current, "|")
+	}
+	return n.observe(state.key(), now)
 }

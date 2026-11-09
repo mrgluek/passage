@@ -1,6 +1,8 @@
 package main
 
 import (
+	"errors"
+	"net"
 	"slices"
 	"testing"
 	"time"
@@ -85,5 +87,109 @@ func TestReadNetwork(t *testing.T) {
 	// Exercise the native route reader without depending on network connectivity.
 	if _, ok := readNetwork(); !ok {
 		t.Fatal("cannot read native route table")
+	}
+}
+
+func TestNetworkReaderFallbackRecordedRoutes(t *testing.T) {
+	physical := networkRoute{name: "Ethernet", index: 1, metric: 10}
+	for _, tc := range []struct {
+		name   string
+		routes []networkRoute
+		err    error
+	}{
+		{"PPPoE", nil, nil},
+		{"Hyper-V external switch", []networkRoute{{name: "vEthernet (External)", index: 2}}, nil},
+		{"no adapter DNS", []networkRoute{physical}, nil},
+		{"route table unavailable", nil, errors.New("unavailable")},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dns := []string{"a.example.org:53"}
+			read := func() (networkState, bool) {
+				return readNetworkWith(func() ([]networkRoute, error) { return tc.routes, tc.err },
+					func([]networkRoute) []string { return nil }, func() []string { return dns })
+			}
+			state, ok := read()
+			if ok != (tc.err == nil) || !slices.Equal(state.dns, dns) {
+				t.Fatalf("state %+v, ok %v", state, ok)
+			}
+			n := networkChange{current: state.key()}
+			now := time.Unix(1000, 0)
+			dns = []string{"b.example.org:53"}
+			state, ok = read()
+			if n.observeState(state, ok, now) || !n.observeState(state, ok, now.Add(networkSettle)) {
+				t.Fatal("resolver change did not restart after settling")
+			}
+		})
+	}
+}
+
+func TestFailedNetworkReadKeepsPathAndComparesDNS(t *testing.T) {
+	dns := []string{"a.example.org:53"}
+	n := networkChange{current: networkStateFor(dns, []networkRoute{{name: "Ethernet", index: 1}}).key()}
+	now := time.Unix(1000, 0)
+	state := networkState{dns: dns}
+	if n.observeState(state, false, now) || n.observeState(state, false, now.Add(networkSettle)) {
+		t.Fatal("route failure alone restarted router")
+	}
+	state.dns = []string{"b.example.org:53"}
+	if n.observeState(state, false, now) || !n.observeState(state, false, now.Add(networkSettle)) {
+		t.Fatal("route failure hid DNS change")
+	}
+}
+
+func TestNetworkIncludesVPNResolvers(t *testing.T) {
+	routes := []networkRoute{{name: "Ethernet", index: 1}, {name: "tun0", index: 2}}
+	dns := []string{"a.example.org:53"}
+	read := func() networkState {
+		state, ok := readNetworkWith(func() ([]networkRoute, error) { return routes, nil },
+			func([]networkRoute) []string { return dns }, func() []string { t.Fatal("unexpected fallback"); return nil })
+		if !ok {
+			t.Fatal("route read failed")
+		}
+		return state
+	}
+	before := read()
+	dns = append(dns, "vpn.example.org:53")
+	after := read()
+	if before.paths != after.paths || before.key() == after.key() || !slices.Equal(after.dns, dns) {
+		t.Fatal("VPN DNS did not change network independently of physical routes")
+	}
+}
+
+func TestNetworkIPv6PrivacyRecordedAddresses(t *testing.T) {
+	iface := net.Interface{Index: 1, Name: "Ethernet", Flags: net.FlagUp}
+	read := func(addresses ...string) string {
+		var addrs []net.Addr
+		for _, address := range addresses {
+			ip, subnet, err := net.ParseCIDR(address)
+			if err != nil {
+				t.Fatal(err)
+			}
+			subnet.IP = ip
+			addrs = append(addrs, subnet)
+		}
+		route, ok := interfaceRouteFor(iface, addrs, "gateway", 10, true)
+		if !ok {
+			t.Fatal("physical interface rejected")
+		}
+		return networkStateFor(nil, []networkRoute{route}).key()
+	}
+	initial := read("2001:db8:1::abcd/64", "2001:db8:1::ffff/64")
+	if read("2001:db8:1::1/64", "2001:db8:1::abcd/64") != initial || read("2001:db8:1::2/64") != initial {
+		t.Fatal("privacy address rotation changed key")
+	}
+	if read("2001:db8:2::1/64") == initial {
+		t.Fatal("new prefix ignored")
+	}
+}
+
+func TestNetworkEqualMetricsRecordedRoutes(t *testing.T) {
+	a := networkRoute{name: "Ethernet", index: 2, metric: 10, address: "address-a"}
+	b := networkRoute{name: "Wi-Fi", index: 10, metric: 10, address: "address-b"}
+	for _, routes := range [][]networkRoute{{a, b}, {b, a}, {a, b, a}} {
+		chosen := primaryRoutes(routes)
+		if len(chosen) != 1 || chosen[0].index != a.index {
+			t.Fatalf("unstable primary: %+v", chosen)
+		}
 	}
 }
