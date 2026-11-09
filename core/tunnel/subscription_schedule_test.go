@@ -18,7 +18,7 @@ func TestSubscriptionScheduleFakeClock(t *testing.T) {
 	var s subscriptionSchedule
 	zero := func(time.Duration) time.Duration { return 0 }
 	max := func(d time.Duration) time.Duration { return d }
-	if s.first(zero) != 5*time.Second || s.first(max) != time.Minute {
+	if s.first(Config{}, zero) != 5*time.Second || s.first(Config{}, max) != time.Minute {
 		t.Fatal("first jitter")
 	}
 	for _, want := range []time.Duration{5 * time.Minute, 15 * time.Minute, time.Hour, 6 * time.Hour, 6 * time.Hour} {
@@ -143,5 +143,72 @@ func TestClosedSubscriptionRuntime(t *testing.T) {
 	case <-finished:
 	case <-time.After(time.Second):
 		t.Fatal("closed schedule is active")
+	}
+}
+
+func TestSubscriptionFirstRefresh(t *testing.T) {
+	now := time.Unix(1000, 0)
+	max := func(d time.Duration) time.Duration { return d }
+	for _, tc := range []struct {
+		name string
+		subs []Subscription
+		want time.Duration
+	}{
+		{"never tried", []Subscription{{RouteIDs: []string{"one"}}}, 0},
+		{"no routes", []Subscription{{LastTry: now.Unix()}}, 0},
+		{"installed", []Subscription{{LastTry: now.Unix(), RouteIDs: []string{"one"}}}, time.Minute},
+		{"closed", []Subscription{{Closed: true}}, time.Minute},
+		{"missing routes", []Subscription{{LastTry: now.Unix(), RouteIDs: []string{"missing"}}}, 0},
+		{"mixed", []Subscription{{LastTry: now.Unix(), RouteIDs: []string{"one"}}, {}}, 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var schedule subscriptionSchedule
+			if got := schedule.first(Config{Subscriptions: tc.subs, Routes: []links.Route{{ID: "one"}}}, max); got != tc.want {
+				t.Fatal(got, tc.want)
+			}
+		})
+	}
+}
+
+func TestInitialSubscriptionRefreshSharedWithStartup(t *testing.T) {
+	sub, _, _ := subFixture(t)
+	sub.Revision, sub.ETag = 1, "one"
+	var requests atomic.Int32
+	entered, release := make(chan struct{}), make(chan struct{})
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if requests.Add(1) == 1 {
+			close(entered)
+		}
+		<-release
+		w.WriteHeader(http.StatusNotModified)
+	}))
+	defer server.Close()
+	subscriptionTestHTTP = true
+	t.Cleanup(func() { subscriptionTestHTTP = false })
+	sub.Sources, sub.ETagSource = []string{server.URL}, server.URL
+	tun, err := Start(Config{Subscriptions: []Subscription{sub}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tun.Close()
+	select {
+	case <-entered:
+	case <-time.After(time.Second):
+		t.Fatal("startup did not refresh immediately")
+	}
+	finished := make(chan SubscriptionRefreshResult, 1)
+	go func() { finished <- tun.RefreshInitialSubscriptions(context.Background()) }()
+	close(release)
+	select {
+	case out := <-finished:
+		if out.Config.Subscriptions[0].LastError != "unchanged" {
+			t.Fatal(out)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("import refresh did not finish")
+	}
+	tun.RefreshInitialSubscriptions(context.Background())
+	if requests.Load() != 1 {
+		t.Fatal("duplicate initial refresh", requests.Load())
 	}
 }

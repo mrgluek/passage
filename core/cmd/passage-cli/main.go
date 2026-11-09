@@ -143,7 +143,7 @@ func main() {
 	}
 
 	if *refresh {
-		t.RefreshSubscriptions(context.Background())
+		t.RefreshInitialSubscriptions(context.Background())
 	}
 	sig := make(chan os.Signal, 1)
 	signal.Notify(sig, os.Interrupt, syscall.SIGTERM)

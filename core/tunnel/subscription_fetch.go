@@ -33,7 +33,7 @@ type SubscriptionRefreshResult struct {
 	Changed bool   `json:"changed"`
 }
 
-// Refresh tries tunnel dialers first, then direct, without exposing transport errors.
+// Refresh races source/dialer pairs within one deadline per subscription.
 func (r *SubscriptionRefresher) Refresh(ctx context.Context, cfg Config, dialers []SubscriptionDial) SubscriptionRefreshResult {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -58,20 +58,30 @@ func (r *SubscriptionRefresher) Refresh(ctx context.Context, cfg Config, dialers
 				pairs = append(pairs, subscriptionPair{source, di})
 			}
 		}
-		// Rotate within each tier, preserving tunnel-first fallback.
-		for start, end := 0, len(dialers)*len(sub.Sources); start < len(pairs); start, end = end, len(pairs) {
-			for i := start; i < end; i++ {
-				if pairs[i] == last {
-					pairs[start], pairs[i] = pairs[i], pairs[start]
-					break
-				}
-			}
-			if end == len(pairs) {
+		for i := range pairs {
+			if pairs[i] == last {
+				pairs[0], pairs[i] = pairs[i], pairs[0]
 				break
 			}
 		}
+		type response struct {
+			pair       subscriptionPair
+			blob       []byte
+			etag, code string
+		}
+		attempt, cancel := context.WithTimeout(ctx, 40*time.Second)
+		results := make(chan response, len(pairs))
+		var workers sync.WaitGroup
+		fetching := sub
 		for _, pair := range pairs {
-			blob, etag, code := fetchSubscription(ctx, sub, pair.source, dials[pair.dial])
+			workers.Go(func() {
+				blob, etag, code := fetchSubscription(attempt, fetching, pair.source, dials[pair.dial])
+				results <- response{pair, blob, etag, code}
+			})
+		}
+		for range pairs {
+			result := <-results
+			pair, blob, etag, code := result.pair, result.blob, result.etag, result.code
 			if code == "" {
 				id, _ := hex.DecodeString(sub.ID)
 				opened, err := links.OpenSubFile(blob, id, sub.ReadKey, ed25519.PublicKey(sub.Signer))
@@ -109,6 +119,8 @@ func (r *SubscriptionRefresher) Refresh(ctx context.Context, cfg Config, dialers
 			r.last[key] = pair
 			break
 		}
+		cancel()
+		workers.Wait()
 		out.Config.Subscriptions[index] = sub
 	}
 	return out

@@ -11,6 +11,7 @@ import (
 	"net/http/httptest"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/fxamacker/cbor/v2"
 	links "github.com/mrgluek/passage-link/link"
@@ -49,7 +50,7 @@ func TestSubscriptionFetchFallbackAnd304(t *testing.T) {
 	var ref SubscriptionRefresher
 	cfg := Config{Subscriptions: []Subscription{s}}
 	out := ref.Refresh(context.Background(), cfg, []SubscriptionDial{broken})
-	if !out.Changed || len(out.Config.Routes) != 1 || out.Config.Subscriptions[0].ETag != `"one"` || tried.Load() != 1 {
+	if !out.Changed || len(out.Config.Routes) != 1 || out.Config.Subscriptions[0].ETag != `"one"` || tried.Load() > 1 {
 		t.Fatal("fallback failed")
 	}
 	second := ref.Refresh(context.Background(), out.Config, []SubscriptionDial{broken})
@@ -256,5 +257,38 @@ func TestClosedSubscriptionLifecycle(t *testing.T) {
 	removed, err := RemoveSubscription(out.Config, s.ID)
 	if err != nil || len(removed.Subscriptions) != 1 || len(removed.Routes) != 2 {
 		t.Fatal("remove", err)
+	}
+}
+
+func TestSubscriptionFetchDoesNotWaitForTunnel(t *testing.T) {
+	sub, key, bundle := subFixture(t)
+	raw, err := links.SealSubFile(bundle, bundle.Sub, sub.ReadKey, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	entered := make(chan struct{})
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { <-entered; w.Write(raw) }))
+	defer server.Close()
+	subscriptionTestHTTP = true
+	t.Cleanup(func() { subscriptionTestHTTP = false })
+	sub.Sources = []string{server.URL}
+	canceled := make(chan struct{})
+	slow := func(ctx context.Context, _, _ string) (net.Conn, error) {
+		close(entered)
+		<-ctx.Done()
+		close(canceled)
+		return nil, ctx.Err()
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	var ref SubscriptionRefresher
+	out := ref.Refresh(ctx, Config{Subscriptions: []Subscription{sub}}, []SubscriptionDial{slow})
+	if !out.Changed || ctx.Err() != nil {
+		t.Fatal("direct waited for tunnel", out)
+	}
+	select {
+	case <-canceled:
+	case <-time.After(time.Second):
+		t.Fatal("losing dial not canceled")
 	}
 }
