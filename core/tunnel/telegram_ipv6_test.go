@@ -174,9 +174,7 @@ func TestTunnelConfirmationFollowsServerIPv6(t *testing.T) {
 				}
 				return nil
 			}
-			for range blockedAfter {
-				tt.check()
-			}
+			tt.check()
 			g := tt.Status(0).Groups["telegram"]
 			if g.Route != "tunnel" || !g.LastResult.TunnelOK || tt.Status(0).TunnelIPv6 != enabled {
 				t.Fatalf("IPv4 confirmation must still work: %+v", g)

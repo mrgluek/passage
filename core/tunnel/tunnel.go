@@ -362,6 +362,7 @@ func Start(cfg Config) (*Tunnel, error) {
 			pool.onFailure = t.requestSubscriptionRefresh
 		}
 	}
+	t.warmTunnel()
 	t.wg.Add(2)
 	go t.serve()
 	go t.monitor()
@@ -370,6 +371,42 @@ func Start(cfg Config) (*Tunnel, error) {
 		go t.subscriptionLoop()
 	}
 	return t, nil
+}
+
+// warmTunnel makes one request when a group starts on the tunnel.
+func (t *Tunnel) warmTunnel() {
+	t.mu.Lock()
+	var target string
+	var selected *group
+	for _, g := range t.groupsLocked() {
+		if g == nil || g.route != RouteTunnel {
+			continue
+		}
+		selected = g
+		hosts := t.targetsLocked(g)
+		if !t.cfg.TunnelIPv6 {
+			hosts, _ = withoutIPv6(hosts)
+		}
+		if len(hosts) > 0 {
+			target = hosts[0]
+			break
+		}
+	}
+	if selected != nil && target == "" && len(t.cfg.Canaries) > 0 {
+		target = t.cfg.Canaries[0]
+		selected = newGroup("", kindRelay, RouteTunnel)
+	}
+	t.mu.Unlock()
+	if target == "" || t.probeTunnel == nil || t.client == nil {
+		return
+	}
+	t.wg.Add(1)
+	go func() {
+		defer t.wg.Done()
+		ctx, cancel := context.WithTimeout(t.ctx, tunnelProbeTimeout)
+		defer cancel()
+		t.probeHost(ctx, selected, true, target)
+	}()
 }
 
 func (t *Tunnel) timeNow() time.Time {
@@ -1330,8 +1367,8 @@ func (t *Tunnel) probeCanaries() bool {
 func (t *Tunnel) confirmViaTunnel(g *group, res probeResult) probeResult {
 	t.mu.Lock()
 	gs := g
-	check := t.mode == ModeAuto && !res.SmartOK && res.Relays > 0 && res.RelayOK == 0 &&
-		(!res.NetworkOK || gs.route == RouteDirect && gs.failStreak+1 >= blockedAfter)
+	check := t.mode == ModeAuto && res.Relays > 0 && (gs.lastProbe.IsZero() ||
+		!res.SmartOK && res.RelayOK == 0 && (!res.NetworkOK || gs.route == RouteDirect && gs.failStreak+1 >= blockedAfter))
 	t.mu.Unlock()
 	canProbe := t.probeTunnel != nil
 	if g.kind == kindTelegram {
@@ -1378,10 +1415,15 @@ func (t *Tunnel) applyProbe(g *group, res probeResult) {
 	if t.groupStalledLocked(g, RouteSmart) {
 		res.SmartOK = false
 	}
-	gs.lastProbe = time.Now()
+	first := gs.lastProbe.IsZero()
+	gs.lastProbe = t.timeNow()
 	gs.lastResult = res
 	healthy := gs.tunnelFails == 0 && (t.client == nil || t.client.Established())
-	route, fail, ok, state := decide(gs.route, res, gs.failStreak, gs.okStreak, healthy)
+	failStreak := gs.failStreak
+	if first && res.RelayOK == 0 && res.TunnelOK {
+		failStreak = max(failStreak, blockedAfter-1)
+	}
+	route, fail, ok, state := decide(gs.route, res, failStreak, gs.okStreak, healthy)
 	if g.kind == kindTelegram && route == RouteSmart {
 		route = RouteTunnel
 	}

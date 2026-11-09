@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"net"
 	"os"
+	"slices"
 	"strings"
 	"sync"
 	"syscall"
@@ -41,7 +42,10 @@ const maxKnownNetworks = 32
 
 // networkKey identifies the network by what the app passes in at start.
 func networkKey(c Config) string {
-	sum := sha256.Sum256([]byte(strings.Join(c.SystemResolvers, ",") + "|" + c.Operator))
+	resolvers := slices.Clone(c.SystemResolvers)
+	slices.Sort(resolvers)
+	resolvers = slices.Compact(resolvers)
+	sum := sha256.Sum256([]byte(strings.Join(resolvers, ",") + "|" + c.Operator))
 	return hex.EncodeToString(sum[:12])
 }
 

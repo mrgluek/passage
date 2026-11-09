@@ -59,7 +59,7 @@ type App struct {
 	linkCfg                tunnel.Config
 	linkErr                string
 	results                []tunnel.ImportResult
-	netKey                 string
+	network                networkChange
 	checking               time.Time
 	log                    *appLog
 	updater                desktopUpdate
@@ -180,14 +180,17 @@ func (a *App) startLocked(why string) {
 	}
 	cfg.Mode = a.mode()
 	cfg.My = s.My
-	dns := sysdns.Resolvers()
-	cfg.SystemResolvers = dns
+	state, ok := readNetwork()
+	if !ok {
+		state.dns = sysdns.Resolvers()
+	}
+	cfg.SystemResolvers = state.dns
 	cfg.IrohBinary = a.iroh
 	data := a.path(dataName)
 	cfg.PrivateDir = filepath.Join(data, "iroh")
 	cfg.StateFile = filepath.Join(data, "router-state.json")
 	os.MkdirAll(data, 0700)
-	a.netKey = strings.Join(dns, ",")
+	a.network = networkChange{current: state.key()}
 	a.event("router start: %s mode=%s", why, cfg.Mode)
 	cfg, err := cfg.Normalize()
 	if err == nil {
@@ -221,7 +224,7 @@ func (a *App) tick() {
 		a.startLocked("retry")
 	case reload:
 		a.startLocked("restart on link change")
-	case strings.Join(sysdns.Resolvers(), ",") != a.netKey:
+	case a.networkChanged(time.Now()):
 		a.startLocked("restart on network change")
 	default:
 		if a.subscriptionRefreshing {

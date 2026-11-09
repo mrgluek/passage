@@ -577,14 +577,79 @@ func TestNoTunnelSessionSwitchesAnyway(t *testing.T) {
 	}
 }
 
-func TestTunnelCheckedOnlyBeforeASwitch(t *testing.T) {
+func TestFirstProbeChecksTunnelAndSwitches(t *testing.T) {
+	for _, canaryOK := range []bool{false, true} {
+		t.Run(fmt.Sprint(canaryOK), func(t *testing.T) {
+			tt, probes := relayDownTunnel(t, nil, true)
+			tt.mu.Lock()
+			tt.relays["relay.example.org"].failStreak = 0
+			tt.mu.Unlock()
+			if !canaryOK {
+				tt.probeTLS = func(context.Context, string, string) error { return context.DeadlineExceeded }
+			}
+			tt.check()
+			s := tt.Status(0)
+			if probes.Load() != 1 || s.Route != "tunnel" || !s.LastResult.TunnelOK {
+				t.Fatalf("first round: %d probes, %+v", probes.Load(), s)
+			}
+		})
+	}
+}
+
+func TestLaterProbeChecksTunnelOnlyBeforeSwitch(t *testing.T) {
 	tt, probes := relayDownTunnel(t, nil, true)
 	tt.mu.Lock()
-	tt.relays["relay.example.org"].failStreak = 0
+	g := tt.relays["relay.example.org"]
+	g.failStreak = 0
+	g.lastProbe = time.Now()
 	tt.mu.Unlock()
 	tt.check()
 	if probes.Load() != 0 {
-		t.Fatalf("the first blocked probe must not touch the tunnel (%d probes)", probes.Load())
+		t.Fatalf("premature tunnel check: %d", probes.Load())
+	}
+}
+
+func TestWarmTunnelOnlyWhenGroupStartsOnTunnel(t *testing.T) {
+	for _, route := range []Route{RouteDirect, RouteTunnel} {
+		t.Run(route.String(), func(t *testing.T) {
+			var n atomic.Int32
+			tt := newTestTunnel(t, ModeAuto, nil, nil)
+			tt.client = &poolFixture{}
+			tt.telegram.route = route
+			tt.cfg.Canaries = []string{"example.org:443"}
+			tt.probeTunnel = func(_ context.Context, hp, _ string) error {
+				if hp != "example.org:443" {
+					t.Errorf("warmup target %s", hp)
+				}
+				n.Add(1)
+				return nil
+			}
+			tt.warmTunnel()
+			tt.Close()
+			want := int32(0)
+			if route == RouteTunnel {
+				want = 1
+			}
+			if n.Load() != want {
+				t.Fatalf("warmup calls %d, want %d", n.Load(), want)
+			}
+		})
+	}
+}
+
+func TestNetworkKeyIgnoresResolverOrder(t *testing.T) {
+	a := Config{SystemResolvers: []string{"a.example.org:53", "b.example.org:53"}, Operator: "test"}
+	b := a
+	b.SystemResolvers = []string{"b.example.org:53", "a.example.org:53", "a.example.org:53"}
+	if networkKey(a) != networkKey(b) {
+		t.Fatal("resolver order changed network key")
+	}
+	b.SystemResolvers = []string{"c.example.org:53"}
+	if networkKey(a) == networkKey(b) {
+		t.Fatal("resolver set did not change network key")
+	}
+	if a.SystemResolvers[0] != "a.example.org:53" {
+		t.Fatal("modified caller's resolver order")
 	}
 }
 
