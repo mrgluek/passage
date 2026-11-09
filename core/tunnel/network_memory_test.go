@@ -260,3 +260,107 @@ func TestLastNetworkFollowsRouteChanges(t *testing.T) {
 		}
 	}
 }
+
+func TestKnownStateUnchangedDoesNotRewrite(t *testing.T) {
+	for _, kind := range []string{"route", "blocked", "clean", "strategy", "forgotten strategy"} {
+		t.Run(kind, func(t *testing.T) {
+			resetKnownStrategies()
+			defer resetKnownStrategies()
+			cfg := Config{StateFile: filepath.Join(t.TempDir(), "state.json")}
+			now := time.Now().UTC()
+			remember := func(at time.Time) {
+				switch kind {
+				case "route":
+					rememberTunnel(cfg, "relay.example.org", true, at)
+				case "blocked", "clean":
+					rememberBlockedAt(cfg, "relay.example.org", kind == "blocked", at)
+				case "strategy":
+					rememberStrategy(cfg, "split:2")
+				case "forgotten strategy":
+					rememberStrategy(cfg, "")
+				}
+			}
+			rememberTunnel(cfg, "relay.example.org", true, now)
+			remember(now)
+			flushKnownState(cfg.StateFile)
+			before, err := os.Stat(cfg.StateFile)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, age := range []time.Duration{time.Second, time.Minute, time.Hour - time.Nanosecond} {
+				remember(now.Add(age))
+				flushKnownState(cfg.StateFile)
+				after, err := os.Stat(cfg.StateFile)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if !os.SameFile(before, after) {
+					t.Fatalf("unchanged %s rewrote state after %v", kind, age)
+				}
+			}
+			if kind == "route" || kind == "blocked" || kind == "clean" {
+				remember(now.Add(time.Hour))
+				flushKnownState(cfg.StateFile)
+				resetKnownStrategies()
+				if last := previousNetwork(cfg); !last.At.Equal(now.Add(time.Hour)) {
+					t.Fatalf("hourly refresh was not persisted: %+v", last)
+				}
+			}
+		})
+	}
+}
+
+func TestKnownStateFlushKeepsVerdictThenRouteOrder(t *testing.T) {
+	resetKnownStrategies()
+	defer resetKnownStrategies()
+	cfg := Config{StateFile: filepath.Join(t.TempDir(), "state.json")}
+	now := time.Now().UTC()
+	// Exercise updates while the writer may be saving an earlier snapshot.
+	for i := 0; i < 200; i++ {
+		at := now.Add(time.Duration(i) * time.Second)
+		rememberBlockedAt(cfg, "relay.example.org", true, at)
+		rememberTunnel(cfg, "relay.example.org", false, at)
+	}
+	flushKnownState(cfg.StateFile)
+	resetKnownStrategies()
+	if blocked, clean := knownNetworkGroup(cfg, "relay.example.org", now); !blocked || clean {
+		t.Fatal("flush lost the verdict")
+	}
+	last := previousNetwork(cfg)
+	if last.Network != networkKey(cfg) || last.Groups[groupKey("relay.example.org")] || !last.At.Equal(now.Add(199*time.Second)) {
+		t.Fatalf("flush lost the later route update: %+v", last)
+	}
+	// A route-only change must persist without changing the verdict.
+	rememberTunnel(cfg, "relay.example.org", true, now.Add(200*time.Second))
+	flushKnownState(cfg.StateFile)
+	resetKnownStrategies()
+	if !previousNetwork(cfg).Groups[groupKey("relay.example.org")] {
+		t.Fatal("changed route did not survive flush")
+	}
+	if blocked, clean := knownNetworkGroup(cfg, "relay.example.org", now); !blocked || clean {
+		t.Fatal("route update changed the verdict")
+	}
+}
+
+func TestTunnelCloseFlushesKnownState(t *testing.T) {
+	resetKnownStrategies()
+	defer resetKnownStrategies()
+	tt := newTestTunnel(t, ModeAuto, nil, nil)
+	tt.cfg.StateFile = filepath.Join(t.TempDir(), "state.json")
+	now := time.Now().UTC()
+	rememberBlockedAt(tt.cfg, "relay.example.org", true, now)
+	tt.Close()
+	data, err := os.ReadFile(tt.cfg.StateFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var state struct {
+		Blocked map[string]map[string]time.Time `json:"blocked"`
+	}
+	if err := json.Unmarshal(data, &state); err != nil {
+		t.Fatal(err)
+	}
+	if !state.Blocked[networkKey(tt.cfg)][groupKey("relay.example.org")].Equal(now) {
+		t.Fatal("Close did not persist the pending verdict")
+	}
+}

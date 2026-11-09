@@ -613,6 +613,7 @@ func (t *Tunnel) Close() {
 		t.client.Close()
 	}
 	t.wg.Wait()
+	flushKnownState(t.cfg.StateFile)
 }
 
 // restrict limits the tunnel to a type or route ID ("" = all).

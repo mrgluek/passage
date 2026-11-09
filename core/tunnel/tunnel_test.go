@@ -1017,6 +1017,15 @@ func (t *Tunnel) testGroup(addr string) *group {
 // resetKnownStrategies forgets every strategy, as a new process would.
 func resetKnownStrategies() {
 	knownStrategies.Lock()
+	var paths []string
+	for path := range knownStrategies.writers {
+		paths = append(paths, path)
+	}
+	knownStrategies.Unlock()
+	for _, path := range paths {
+		flushKnownState(path)
+	}
+	knownStrategies.Lock()
 	knownStrategies.m = map[string]knownStrategy{}
 	knownStrategies.blocked = map[string]map[string]time.Time{}
 	knownStrategies.clean = map[string]map[string]time.Time{}
@@ -1025,8 +1034,7 @@ func resetKnownStrategies() {
 	knownStrategies.Unlock()
 }
 
-// waitKnownBlocked waits for the remembered verdict, which is saved off
-// the router's lock.
+// waitKnownBlocked waits for the in-memory verdict.
 func waitKnownBlocked(t *testing.T, cfg Config, group string, want bool) {
 	t.Helper()
 	for deadline := time.Now().Add(2 * time.Second); knownBlocked(cfg, group) != want; {
@@ -1052,6 +1060,7 @@ func TestBlockedNetworkStartsOnTheTunnel(t *testing.T) {
 		t.Fatalf("route %v, want tunnel", mail.route)
 	}
 	waitKnownBlocked(t, tt.cfg, "relay.example.org", true)
+	flushKnownState(file)
 	if b, _ := os.ReadFile(file); strings.Contains(string(b), "relay.example.org") {
 		t.Fatalf("the state file must not name the relay: %s", b)
 	}
@@ -1093,6 +1102,7 @@ func TestStrategySurvivesARestart(t *testing.T) {
 	file := filepath.Join(t.TempDir(), "state.json")
 	cfg := Config{SystemResolvers: []string{"192.0.2.53:53"}, Operator: "25001", StateFile: file}
 	rememberStrategy(cfg, "split:2")
+	flushKnownState(file)
 
 	b, err := os.ReadFile(file)
 	if err != nil {

@@ -29,7 +29,8 @@ var knownStrategies = struct {
 	clean   map[string]map[string]time.Time
 	last    lastNetwork
 	loaded  map[string]bool // state files already read
-}{m: map[string]knownStrategy{}, blocked: map[string]map[string]time.Time{}, clean: map[string]map[string]time.Time{}, loaded: map[string]bool{}}
+	writers map[string]*knownStateWriter
+}{m: map[string]knownStrategy{}, blocked: map[string]map[string]time.Time{}, clean: map[string]map[string]time.Time{}, loaded: map[string]bool{}, writers: map[string]*knownStateWriter{}}
 
 // blockedMemory is how long a group stays known as blocked on a network
 // without being seen blocked again.
@@ -65,7 +66,7 @@ func rememberStrategy(c Config, name string) {
 	defer knownStrategies.Unlock()
 	loadKnownLocked(c.StateFile)
 	k := networkKey(c)
-	if old, ok := knownStrategies.m[k]; ok && old.Name == name && time.Since(old.At) < time.Hour {
+	if old, ok := knownStrategies.m[k]; (!ok && name == "") || (ok && old.Name == name && time.Since(old.At) < time.Hour) {
 		return // unchanged and recent: no write
 	}
 	if name == "" {
@@ -82,7 +83,7 @@ func rememberStrategy(c Config, name string) {
 		}
 		delete(knownStrategies.m, oldest)
 	}
-	saveKnownLocked(c.StateFile)
+	dirtyKnownLocked(c.StateFile)
 }
 
 func groupKey(name string) string {
@@ -135,7 +136,10 @@ func previousNetwork(c Config) lastNetwork {
 
 func rememberTunnelLocked(c Config, group string, tunnel bool, now time.Time) bool {
 	last := &knownStrategies.last
-	changed := last.Network != networkKey(c) || last.Groups[groupKey(group)] != tunnel || !last.At.Equal(now)
+	changed := last.Network != networkKey(c) || last.Groups[groupKey(group)] != tunnel || now.Sub(last.At) >= time.Hour
+	if !changed {
+		return false
+	}
 	if last.Network != networkKey(c) {
 		*last = lastNetwork{Network: networkKey(c), Groups: map[string]bool{}}
 	}
@@ -160,7 +164,7 @@ func rememberTunnel(c Config, group string, tunnel bool, now time.Time) {
 	defer knownStrategies.Unlock()
 	loadKnownLocked(c.StateFile)
 	if rememberTunnelLocked(c, group, tunnel, now) {
-		saveKnownLocked(c.StateFile)
+		dirtyKnownLocked(c.StateFile)
 	}
 }
 
@@ -195,7 +199,7 @@ func rememberBlockedAt(c Config, group string, blocked bool, now time.Time) {
 	}
 	memory[k][g] = now.UTC()
 	pruneNetworkMemoryLocked(now)
-	saveKnownLocked(c.StateFile)
+	dirtyKnownLocked(c.StateFile)
 }
 
 // Both verdicts share the network limit.
@@ -272,17 +276,53 @@ func loadKnownLocked(path string) {
 	}
 }
 
-func saveKnownLocked(path string) {
+type knownStateWriter struct {
+	dirty bool
+	done  chan struct{}
+}
+
+// dirtyKnownLocked keeps at most one writer running for each state file.
+func dirtyKnownLocked(path string) {
 	if path == "" {
 		return
 	}
-	b, err := json.Marshal(map[string]any{"strategies": knownStrategies.m, "blocked": knownStrategies.blocked, "clean": knownStrategies.clean, "last": knownStrategies.last})
-	if err != nil {
+	if w := knownStrategies.writers[path]; w != nil {
+		w.dirty = true
 		return
 	}
-	tmp := path + ".tmp"
-	if os.WriteFile(tmp, b, 0o600) == nil {
-		os.Rename(tmp, path)
+	w := &knownStateWriter{dirty: true, done: make(chan struct{})}
+	knownStrategies.writers[path] = w
+	go writeKnownState(path, w)
+}
+
+func writeKnownState(path string, w *knownStateWriter) {
+	for {
+		knownStrategies.Lock()
+		if !w.dirty {
+			delete(knownStrategies.writers, path)
+			close(w.done)
+			knownStrategies.Unlock()
+			return
+		}
+		w.dirty = false
+		b, err := json.Marshal(map[string]any{"strategies": knownStrategies.m, "blocked": knownStrategies.blocked, "clean": knownStrategies.clean, "last": knownStrategies.last})
+		knownStrategies.Unlock()
+		if err == nil {
+			tmp := path + ".tmp"
+			if os.WriteFile(tmp, b, 0o600) == nil {
+				os.Rename(tmp, path)
+			}
+		}
+	}
+}
+
+// flushKnownState waits for pending writes without holding the router lock.
+func flushKnownState(path string) {
+	knownStrategies.Lock()
+	w := knownStrategies.writers[path]
+	knownStrategies.Unlock()
+	if w != nil {
+		<-w.done
 	}
 }
 
