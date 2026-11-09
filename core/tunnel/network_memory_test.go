@@ -45,7 +45,7 @@ func TestPreviousNetworkStart(t *testing.T) {
 		{name: "always", previous: true, mode: ModeAlways},
 		{name: "selected route", previous: true, mode: "route:test"},
 		{name: "no tunnel", previous: true, noTunnel: true},
-		{name: "same network", previous: true, here: "unknown"},
+		{name: "same network", previous: true, here: "unknown", wantTunnel: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			resetKnownStrategies()
@@ -82,12 +82,16 @@ func TestPreviousNetworkStart(t *testing.T) {
 			if tc.wantTunnel && (g.state != "blocked" || g.failStreak != blockedAfter) {
 				t.Fatalf("inconsistent tunnel state: %s, %d", g.state, g.failStreak)
 			}
-			if tc.name == "unknown after tunnel" {
+			if tc.name == "unknown after tunnel" || tc.name == "same network" {
 				blocked, clean := knownNetworkGroup(current, g.name, now)
 				if blocked || clean {
 					t.Fatal("inheritance wrote a network verdict")
 				}
-				if events := tt.log.last(30); len(events) != 1 || events[0].Msg != "relay.example.org: previous network used the tunnel: starting there" {
+				source := "network"
+				if tc.name == "same network" {
+					source = "run"
+				}
+				if events := tt.log.last(30); len(events) != 1 || events[0].Msg != "relay.example.org: previous "+source+" used the tunnel: starting there" {
 					t.Fatal("missing inherited start log")
 				}
 			}

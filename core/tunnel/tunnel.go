@@ -542,13 +542,15 @@ func (t *Tunnel) autoRouteLocked(g *group) Route {
 		return RouteDirect
 	}
 	blocked, clean := knownNetworkGroup(t.cfg, g.name, now)
-	inherited := !blocked && !clean && t.previous.Network != networkKey(t.cfg) &&
+	inherited := !blocked && !clean &&
 		now.Sub(t.previous.At) >= 0 && now.Sub(t.previous.At) < previousNetworkMemory &&
 		t.previous.Groups[groupKey(g.name)]
 	route := RouteDirect
 	if blocked || inherited {
 		g.state, g.failStreak = "blocked", blockedAfter
-		if inherited {
+		if inherited && t.previous.Network == networkKey(t.cfg) {
+			t.log.add("%s: previous run used the tunnel: starting there", g.name)
+		} else if inherited {
 			t.log.add("%s: previous network used the tunnel: starting there", g.name)
 		} else {
 			t.log.add("%s used the tunnel on this network before: starting there", g.name)
