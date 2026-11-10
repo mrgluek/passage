@@ -80,7 +80,7 @@ type WSSClient struct {
 }
 
 func NewWSSClient(params links.WSSParams) (*WSSClient, error) {
-	r := links.Route{ID: "web", Type: "wss", Wire: "wss-v1", Params: map[string]any{"endpoint": params.Endpoint, "key": params.Key}}
+	r := links.Route{ID: "web", Type: "wss", Wire: "wss-v2", Params: map[string]any{"endpoint": params.Endpoint, "key": params.Key, "dial_ip": params.DialIP, "sni": params.SNI}}
 	if _, err := links.ValidateRoute(r); err != nil {
 		return nil, err
 	}
@@ -89,6 +89,23 @@ func NewWSSClient(params links.WSSParams) (*WSSClient, error) {
 	// connections through environment HTTP proxies.
 	transport := http.DefaultTransport.(*http.Transport).Clone()
 	transport.Proxy = nil
+	if params.SNI != "" {
+		if transport.TLSClientConfig == nil {
+			transport.TLSClientConfig = &tls.Config{}
+		} else {
+			transport.TLSClientConfig = transport.TLSClientConfig.Clone()
+		}
+		transport.TLSClientConfig.ServerName = params.SNI
+	}
+	if params.DialIP != "" {
+		transport.DialContext = func(ctx context.Context, network, address string) (net.Conn, error) {
+			_, port, err := net.SplitHostPort(address)
+			if err != nil {
+				return nil, err
+			}
+			return (&net.Dialer{}).DialContext(ctx, network, net.JoinHostPort(params.DialIP, port))
+		}
+	}
 	transport.DialContext = countingDial(transport.DialContext)
 	return &WSSClient{params: params, httpClient: &http.Client{Transport: transport, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}, life: life, cancel: cancel}, nil
 }

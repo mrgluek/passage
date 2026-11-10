@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"github.com/getlantern/soar"
+	"github.com/mrgluek/passage/core/internal/reporttext"
 )
 
 // Route is one way to open connections. Routes are ordered from the most
@@ -62,26 +63,44 @@ type hostSeen struct {
 	seq uint64
 }
 
+var relayOrdinal atomic.Uint64
+
 type group struct {
-	name        string
-	kind        groupKind
-	pinned      bool      // from cfg.ProbeTargets: never dropped
-	used        time.Time // last CONNECT, for dropping the least recently used relay
-	route       Route
-	routeSince  time.Time
-	via         string              // route type of the newest open tunnel connection: iroh, soar
-	tunnelFails int                 // tunnel dial failures since the route last changed
-	hosts       map[string]hostSeen // probe host -> last seen in a CONNECT
-	ports       map[string]string   // probe host -> port to probe
-	hostSeq     uint64
-	seen        bool // has carried traffic; only then is it probed
-	failStreak  int
-	okStreak    int
-	state       string
-	lastProbe   time.Time
-	lastUrgent  time.Time
-	stalls      [numRoutes]*stallState
-	lastResult  probeResult
+	name           string
+	ordinal        uint64
+	kind           groupKind
+	pinned         bool      // from cfg.ProbeTargets: never dropped
+	used           time.Time // last CONNECT, for dropping the least recently used relay
+	route          Route
+	routeSince     time.Time
+	via            string              // route type of the newest open tunnel connection: iroh, soar
+	tunnelFails    int                 // tunnel dial failures since the last reply or route change
+	hosts          map[string]hostSeen // probe host -> last seen in a CONNECT
+	ports          map[string]string   // probe host -> port to probe
+	hostSeq        uint64
+	seen           bool // has carried traffic; only then is it probed
+	failStreak     int
+	okStreak       int
+	state          string
+	lastProbe      time.Time
+	lastUrgent     time.Time
+	stalls         [numRoutes]*hold
+	lastResult     probeResult
+	lastConn       time.Time
+	lastConnResult connectionResult
+	lastDisagree   time.Time
+
+	trial          *groupTrial
+	lastTrial      time.Time
+	failedTrials   int
+	goodSinceTrial bool
+	memoryRestored bool
+	restoredRoute  string
+	probeBlind     bool
+	probeBlindAt   time.Time
+
+	lastDirectConn   time.Time
+	lastDirectResult connectionResult
 }
 
 // viaLocked is the route type behind the tunnel while the group uses it.
@@ -92,8 +111,16 @@ func (g *group) viaLocked() string {
 	return g.via
 }
 
-func newGroup(name string, kind groupKind, route Route) *group {
-	return &group{name: name, kind: kind, route: route, routeSince: time.Now(),
+func newGroup(name string, kind groupKind, route Route, clock ...func() time.Time) *group {
+	now := time.Now
+	if len(clock) > 0 {
+		now = clock[0]
+	}
+	var ordinal uint64
+	if kind == kindRelay {
+		ordinal = relayOrdinal.Add(1)
+	}
+	return &group{name: name, kind: kind, ordinal: ordinal, route: route, routeSince: now(),
 		hosts: map[string]hostSeen{}, ports: map[string]string{}, state: "unknown"}
 }
 
@@ -181,7 +208,7 @@ type Tunnel struct {
 	routeGen    atomic.Int64      // bumped on every route change, for the shell to nudge the core
 	urgent      atomic.Bool       // the next probe skips minProbeGap (Recheck)
 	intercepted bool              // this network redirects port-53 traffic (see intercept.go)
-	dnsEgress   string            // who actually resolves for the interceptor, if learned
+	dnsEgress   string            // masked address, if learned
 	clients     map[net.Conn]bool // true until the SOCKS handshake finishes
 	pending     int
 	conns       map[*tracked]struct{}
@@ -189,8 +216,13 @@ type Tunnel struct {
 	lastCanary  string    // the canary that answered last; tried first next time
 	strategy    *strategy // the smart route's working strategy, if any
 	stats       [numRoutes]routeStats
+	// started, health, healthGood and healthSince back Status.Health.
+	started     time.Time
+	health      Health
+	healthGood  time.Time
+	healthSince time.Time
 	feedbackSeq atomic.Uint64
-	tunnelStall *stallState
+	tunnelStall *hold
 	// Bytes per route, counted as they flow: IMAP IDLE connections live for
 	// hours, so totals taken at close would show nothing for them.
 	upBytes   [numRoutes]atomic.Int64
@@ -217,11 +249,12 @@ type routeStats struct {
 }
 
 type probeResult struct {
-	Stalled   bool `json:"stalled,omitempty"`
-	Relays    int  `json:"relays"`
-	RelayOK   int  `json:"relay_ok"`
-	NetworkOK bool `json:"network_ok"` // a target or canary answered directly
-	CanaryOK  bool `json:"canary_ok"`
+	DirectHeld bool `json:"-"`
+	Stalled    bool `json:"stalled,omitempty"`
+	Relays     int  `json:"relays"`
+	RelayOK    int  `json:"relay_ok"`
+	NetworkOK  bool `json:"network_ok"` // a target or canary answered directly
+	CanaryOK   bool `json:"canary_ok"`
 	// Canaries are needed only when no target answered directly.
 	CanaryChecked bool `json:"canary_checked,omitempty"`
 	// SmartChecked: the probe hosts were tried on the smart route (they
@@ -260,8 +293,9 @@ func Start(cfg Config) (*Tunnel, error) {
 		conns:  map[*tracked]struct{}{},
 		relays: map[string]*group{},
 	}
-	t.telegram = newGroup("telegram", kindTelegram, initialRoute(mode))
-	t.other = newGroup("other", kindOther, initialRoute(mode))
+	t.log.now = t.timeNow
+	t.telegram = t.newGroup("telegram", kindTelegram, initialRoute(mode))
+	t.other = t.newGroup("other", kindOther, initialRoute(mode))
 	t.ctx, t.cancel = context.WithCancel(context.Background())
 	var skipped6, skippedPrivate int
 	if cfg.Zone != "" {
@@ -305,8 +339,8 @@ func Start(cfg Config) (*Tunnel, error) {
 	if mode != cfg.Mode && !t.restrict(cfg.Mode) {
 		// The chosen route is no longer installed: back to auto.
 		t.mode = ModeAuto
-		t.telegram = newGroup("telegram", kindTelegram, RouteDirect)
-		t.other = newGroup("other", kindOther, RouteDirect)
+		t.telegram = t.newGroup("telegram", kindTelegram, RouteDirect)
+		t.other = t.newGroup("other", kindOther, RouteDirect)
 	}
 	d := &net.Dialer{Timeout: directDialTimeout}
 	t.ways[RouteDirect] = way{d.DialContext, directDialTimeout}
@@ -316,11 +350,15 @@ func Start(cfg Config) (*Tunnel, error) {
 	t.probeMT = probeMTProto
 	if t.client != nil {
 		t.ways[RouteTunnel] = way{t.client.DialContext, tunnelDialTimeout}
+		probeDial := t.ways[RouteTunnel].dial
+		if p, ok := t.client.(*routePool); ok {
+			probeDial = p.probeDialContext
+		}
 		t.probeTunnel = func(ctx context.Context, hostport, sni string) error {
-			return probeTLSVia(ctx, t.ways[RouteTunnel].dial, hostport, sni)
+			return probeTLSVia(ctx, probeDial, hostport, sni)
 		}
 		t.probeMTTunnel = func(ctx context.Context, hostport string) error {
-			return probeMTProtoVia(ctx, t.ways[RouteTunnel].dial, hostport)
+			return probeMTProtoVia(ctx, probeDial, hostport)
 		}
 		t.established = t.client.Established
 	}
@@ -343,6 +381,7 @@ func Start(cfg Config) (*Tunnel, error) {
 		return nil, errors.New("my route points at this proxy")
 	}
 	t.ln = ln
+	t.started = t.timeNow()
 	t.useProbeTargets()
 	if t.client == nil {
 		t.log.add("started: mode=%s, no tunnel (no link)", cfg.Mode)
@@ -362,6 +401,8 @@ func Start(cfg Config) (*Tunnel, error) {
 	}
 	if pool, ok := t.client.(*routePool); ok {
 		pool.log = t.log
+		pool.now = t.timeNow
+		pool.memoryConfig = func() Config { return t.cfg }
 		if len(rawConfig.Subscriptions) > 0 {
 			pool.onFailure = t.requestSubscriptionRefresh
 		}
@@ -398,7 +439,7 @@ func (t *Tunnel) warmTunnel() {
 	}
 	if selected != nil && target == "" && len(t.cfg.Canaries) > 0 {
 		target = t.cfg.Canaries[0]
-		selected = newGroup("", kindRelay, RouteTunnel)
+		selected = t.newGroup("", kindRelay, RouteTunnel)
 	}
 	t.mu.Unlock()
 	if target == "" || t.probeTunnel == nil || t.client == nil {
@@ -447,7 +488,7 @@ func (t *Tunnel) relayLocked(host string) *group {
 	if g := t.relays[host]; g != nil {
 		return g
 	}
-	g := newGroup(host, kindRelay, initialRoute(t.mode))
+	g := t.newGroup(host, kindRelay, initialRoute(t.mode))
 	g.seen = true
 	if t.mode == ModeAuto {
 		g.route = t.autoRouteLocked(g)
@@ -532,6 +573,11 @@ func (t *Tunnel) autoRouteLocked(g *group) Route {
 	if t.mode != ModeAuto || g.kind == kindOther {
 		return RouteDirect
 	}
+	if route, held := t.restoreGroupHoldLocked(g); held {
+		g.state, g.failStreak = "blocked", blockedAfter
+		rememberTunnel(t.cfg, g.name, route == RouteTunnel, t.timeNow())
+		return route
+	}
 	if t.previous == nil {
 		last := previousNetwork(t.cfg)
 		t.previous = &last
@@ -568,20 +614,19 @@ func initialRoute(mode string) Route {
 	return RouteDirect
 }
 
-// learnDNSEgress records which resolver really answers on an intercepting
-// network, for the report.
+// learnDNSEgress checks whether the intercepting resolver can be identified.
 func (t *Tunnel) learnDNSEgress() {
 	ctx, cancel := context.WithTimeout(t.ctx, 4*time.Second)
 	defer cancel()
-	ip, err := dnsWhoami(ctx, "77.88.8.8:53")
+	_, err := dnsWhoami(ctx, "77.88.8.8:53")
 	if err != nil {
 		t.log.add("DNS interceptor not identified: %v", err)
 		return
 	}
 	t.mu.Lock()
-	t.dnsEgress = ip.String()
+	t.dnsEgress = reporttext.Address
 	t.mu.Unlock()
-	t.log.add("DNS queries on this network are answered via %s", ip)
+	t.log.add("DNS queries on this network are answered via %s", reporttext.Address)
 }
 
 // RouteGen counts route changes, so an embedding app can make its clients
@@ -762,10 +807,11 @@ func (t *Tunnel) setRouteLocked(g *group, r Route, reason string) {
 	}
 	old := g.route
 	g.route = r
+	t.rememberGroupHoldLocked(g)
 	if g.kind != kindOther && (old == RouteTunnel || r == RouteTunnel) {
 		rememberTunnel(t.cfg, g.name, r == RouteTunnel, t.timeNow())
 	}
-	g.routeSince = time.Now()
+	g.routeSince = t.timeNow()
 	g.tunnelFails = 0
 	t.routeGen.Add(1)
 	name := g.name
@@ -863,7 +909,12 @@ func (t *Tunnel) handle(c net.Conn) {
 	}
 	c.SetDeadline(time.Time{})
 
-	tr := &tracked{group: g, route: route, local: c, remote: remote, opened: time.Now()}
+	trackedRemote := remote
+	if tc, ok := remote.(*trialConn); ok {
+		tc.local = c
+		trackedRemote = tc.Conn.(*responseWatch).Conn
+	}
+	tr := &tracked{group: g, route: route, local: c, remote: trackedRemote, opened: time.Now()}
 	t.mu.Lock()
 	if t.ctx.Err() != nil {
 		t.mu.Unlock()
@@ -884,14 +935,16 @@ func (t *Tunnel) handle(c net.Conn) {
 	if route == RouteTunnel {
 		key = addr
 	}
-	remote = watchResponses(raw, func() {
-		poolFeedback(raw, false)
-		t.connectionFeedback(g, route, key, false)
-	}, func(first bool) {
-		poolFeedback(raw, true, first)
-		t.connectionFeedback(g, route, key, true, first)
-		c.Close()
-	})
+	if _, trial := raw.(*trialConn); !trial {
+		remote = watchResponses(raw, func() {
+			poolFeedback(raw, false)
+			t.connectionFeedbackVia(g, route, key, connectionRoute(raw, route), false)
+		}, func(first bool) {
+			poolFeedback(raw, true, first)
+			t.connectionFeedbackVia(g, route, key, connectionRoute(raw, route), true, first)
+			c.Close()
+		})
+	}
 	defer remote.Close()
 	var wg sync.WaitGroup
 	wg.Add(2)
@@ -925,6 +978,9 @@ func (t *Tunnel) learn(g *group, addr string) {
 	g.used = now
 	switch g.kind {
 	case kindRelay:
+		if g.hostSeq == 0 {
+			t.kickProbe()
+		}
 		g.hostSeq++
 		g.hosts[g.name] = hostSeen{at: now, seq: g.hostSeq}
 		g.ports[g.name] = probePort(addr)
@@ -955,6 +1011,7 @@ var errNoIPv6Route = errors.New("no IPv6 route available")
 // through to the next usable route for this connection and triggers a probe.
 // The error of the last route tried is returned for the caller to count.
 func (t *Tunnel) dial(g *group, addr string) (net.Conn, Route, error) {
+	t.tick(t.timeNow())
 	ipv6 := isIPv6Address(addr)
 	localIPv6 := !ipv6 || t.hasIPv6Route()
 	usable := func(r Route) bool {
@@ -991,11 +1048,16 @@ func (t *Tunnel) dial(g *group, addr string) (net.Conn, Route, error) {
 			return nil, RouteDirect, errNoIPv6Route
 		}
 	}
+	trial := t.startTrialLocked(g, usable, route)
+	if trial != nil {
+		route = trial.route
+	}
 	t.mu.Unlock()
 	tried := map[Route]bool{}
 	for r := route; ; {
 		tried[r] = true
 		t.mu.Lock()
+		t.tickLocked(t.timeNow())
 		w := t.ways[r]
 		if !usable(r) {
 			w = way{}
@@ -1015,8 +1077,16 @@ func (t *Tunnel) dial(g *group, addr string) (net.Conn, Route, error) {
 				}
 			}
 		}
+		if trial != nil && r == trial.route {
+			next = trial.fallback
+			w.timeout = min(w.timeout, defaultFirstResponseTimeout)
+		}
 		t.mu.Unlock()
 		if w.dial == nil { // the smart route went away since the route was chosen
+			if trial != nil && r == trial.route {
+				trial.released.Store(true)
+				trial = nil
+			}
 			if next == r {
 				return nil, r, errors.New(r.String() + " route not available")
 			}
@@ -1024,10 +1094,34 @@ func (t *Tunnel) dial(g *group, addr string) (net.Conn, Route, error) {
 			continue
 		}
 		ctx, cancel := context.WithTimeout(t.ctx, w.timeout)
+		observed := false
+		if r == RouteTunnel {
+			ctx = context.WithValue(ctx, connectionObserverKey{}, func(via string) {
+				observed = true
+				t.recordConnection(g, "refused", via)
+			})
+		}
 		c, err := w.dial(ctx, "tcp", addr)
 		cancel()
 		if err == nil {
+			if trial != nil && r == trial.route {
+				return t.watchTrial(c, trial), r, nil
+			}
 			return c, r, nil
+		}
+		trialFailed := false
+		if trial != nil && r == trial.route {
+			var timeout net.Error
+			if errors.Is(err, context.DeadlineExceeded) || errors.As(err, &timeout) && timeout.Timeout() {
+				t.finishTrial(trial, true)
+				trialFailed = true
+			} else {
+				trial.released.Store(true)
+			}
+			trial = nil
+		}
+		if !observed && !trialFailed {
+			t.recordConnection(g, "refused", r.String())
 		}
 		if next == r {
 			t.requestSubscriptionRefresh()
@@ -1038,7 +1132,9 @@ func (t *Tunnel) dial(g *group, addr string) (net.Conn, Route, error) {
 			return nil, r, err
 		}
 		t.mu.Lock()
-		t.stats[r].Fails++
+		if !trialFailed {
+			t.stats[r].Fails++
+		}
 		t.mu.Unlock()
 		t.log.add("%s dial %s failed (%v); trying %s", r, addr, err, next)
 		r = next
@@ -1128,7 +1224,8 @@ func (t *Tunnel) monitor() {
 		case <-time.After(t.nextProbeIn()):
 		}
 		t.mu.Lock()
-		mode, since := t.mode, time.Since(t.lastProbe)
+		t.tickLocked(t.timeNow())
+		mode, since := t.mode, t.timeNow().Sub(t.lastProbe)
 		t.mu.Unlock()
 		if mode != ModeAuto {
 			continue
@@ -1149,7 +1246,7 @@ func (t *Tunnel) monitor() {
 func (t *Tunnel) check() {
 	res := t.probe()
 	t.mu.Lock()
-	t.lastProbe = time.Now()
+	t.lastProbe = t.timeNow()
 	t.mu.Unlock()
 	for g, r := range res {
 		if r.Relays > 0 {
@@ -1176,6 +1273,8 @@ func (t *Tunnel) nextProbeIn() time.Duration {
 
 func (gs *group) probeIn() time.Duration {
 	switch {
+	case gs.probeBlind:
+		return 5 * time.Minute
 	case gs.state == "offline":
 		return 30 * time.Second
 	case gs.route != RouteDirect:
@@ -1251,6 +1350,10 @@ func (t *Tunnel) probeHost(ctx context.Context, g *group, viaTunnel bool, hostpo
 func (t *Tunnel) probe() map[*group]probeResult {
 	t.mu.Lock()
 	groups := t.groupsLocked()
+	now := t.timeNow()
+	groups = slices.DeleteFunc(groups, func(g *group) bool {
+		return g != nil && g.probeBlind && !g.lastProbe.IsZero() && now.Sub(g.lastProbe) < g.probeIn()
+	})
 	auto := t.mode == ModeAuto
 	t.mu.Unlock()
 	res := make(map[*group]probeResult, len(groups))
@@ -1440,24 +1543,34 @@ func (t *Tunnel) confirmViaTunnel(g *group, res probeResult) probeResult {
 func (t *Tunnel) applyProbe(g *group, res probeResult) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
+	t.tickGroupLocked(g, t.timeNow())
 	gs := g
 	probeResult := res
-	if t.groupStalledLocked(g, RouteDirect) {
-		res.RelayOK = 0
-		res.NetworkOK = true
-	}
+	res.DirectHeld = t.groupStalledLocked(g, RouteDirect)
 	if t.groupStalledLocked(g, RouteSmart) {
 		res.SmartOK = false
 	}
 	first := gs.lastProbe.IsZero()
 	gs.lastProbe = t.timeNow()
-	gs.lastResult = res
+	gs.lastResult = probeResult
+	t.logDisagreementLocked(gs)
 	healthy := gs.tunnelFails == 0 && (t.client == nil || t.client.Established())
 	failStreak := gs.failStreak
 	if first && res.RelayOK == 0 && res.TunnelOK {
 		failStreak = max(failStreak, blockedAfter-1)
 	}
+	recentReply := !gs.lastDirectConn.IsZero() && gs.lastDirectResult.Outcome == "ok" &&
+		t.timeNow().Sub(gs.lastDirectConn) < time.Minute
+	if recentReply {
+		failStreak = 0
+	}
 	route, fail, ok, state := decide(gs.route, res, failStreak, gs.okStreak, healthy)
+	if recentReply {
+		fail = 0
+		if res.RelayOK == 0 && !res.DirectHeld && (gs.route == RouteDirect || gs.route == RouteSmart) {
+			route = gs.route
+		}
+	}
 	if g.kind == kindTelegram && route == RouteSmart {
 		route = RouteTunnel
 	}
@@ -1477,7 +1590,22 @@ func (t *Tunnel) applyProbe(g *group, res probeResult) {
 		}
 		t.log.add("%s state %s -> %s (probe hosts %d/%d ok%s)", g.name, gs.state, state, res.RelayOK, res.Relays, via)
 	}
+	if res.DirectHeld && res.RelayOK > 0 {
+		ok = gs.okStreak + 1
+	}
+	if res.RelayOK > 0 && gs.failedTrials > 0 {
+		gs.goodSinceTrial = true
+	}
 	gs.failStreak, gs.okStreak, gs.state = fail, ok, state
+	t.tickGroupLocked(g, t.timeNow())
+	if route == RouteDirect && t.hasTrialHoldLocked(g) {
+		route = gs.route
+	}
+	if route == RouteSmart && gs.route != RouteSmart {
+		if h := g.stalls[RouteSmart]; h != nil && (h.state == Held || h.state == Trial) {
+			route = gs.route
+		}
+	}
 	if t.mode != ModeAuto || g.kind == kindOther {
 		return
 	}
@@ -1487,8 +1615,23 @@ func (t *Tunnel) applyProbe(g *group, res probeResult) {
 	case state == "blocked" && route == RouteTunnel && probeResult.RelayOK == 0 && !probeResult.SmartOK &&
 		(probeResult.NetworkOK || probeResult.TunnelOK) && !(probeResult.TunnelChecked && !probeResult.TunnelOK):
 		rememberBlockedAt(t.cfg, g.name, true, t.timeNow())
-	case state == "direct" && route == RouteDirect:
+	case state == "direct" && route == RouteDirect && t.cleanMemoryAllowedLocked(g):
 		rememberBlockedAt(t.cfg, g.name, false, t.timeNow())
+	}
+}
+
+func (t *Tunnel) cleanMemoryAllowedLocked(g *group) bool {
+	if h := g.stalls[RouteDirect]; h != nil && h.state != Open {
+		return false
+	}
+	if g.lastDirectConn.IsZero() || t.timeNow().Sub(g.lastDirectConn) >= 10*time.Minute {
+		return true
+	}
+	switch g.lastDirectResult.Outcome {
+	case "stall", "later", "refused":
+		return false
+	default:
+		return true
 	}
 }
 
@@ -1515,6 +1658,9 @@ func decide(route Route, res probeResult, failStreak, okStreak int, tunnelHealth
 	case res.Relays == 0:
 		return route, failStreak, okStreak, "unknown"
 	case res.RelayOK > 0:
+		if res.DirectHeld {
+			return route, 0, 0, "direct"
+		}
 		okStreak++
 		// Leaving smart or a working tunnel waits for recoveredAfter good
 		// probes (no flapping); a failing tunnel is left after the first.
@@ -1716,27 +1862,33 @@ type Status struct {
 	// one row per resolver path (which resolvers carry the tunnel here).
 	Session bool `json:"session"`
 	// DNSIntercepted: this network redirects port 53; DNSEgress: who
-	// actually resolves for it (whoami.akamai.net), when learned.
+	// resolves for it, with the address masked.
 	DNSIntercepted bool            `json:"dns_intercepted"`
 	DNSEgress      string          `json:"dns_egress,omitempty"`
 	Paths          []soar.PathStat `json:"paths"`
 	Events         []Event         `json:"events"`
-	// Groups has each group's verdict, by relay host name or "telegram". The
+	// Groups has each group's verdict, by relay host name, "telegram" or "other". The
 	// top-level route, state and last probe are the most recently used
 	// relay's, or Telegram's when there are no relays.
 	Groups map[string]GroupStatus `json:"groups"`
+	// Started is when the router started; Health is the plain verdict for the windows.
+	Started time.Time `json:"started"`
+	Health  Health    `json:"health"`
 }
 
 // GroupStatus is one group's part of Status.
 type GroupStatus struct {
-	Kind       string      `json:"kind"` // relay or telegram
-	Route      string      `json:"route"`
-	Via        string      `json:"via,omitempty"`
-	RouteSince time.Time   `json:"route_since"`
-	State      string      `json:"state"`
-	LastProbe  time.Time   `json:"last_probe"`
-	LastResult probeResult `json:"last_result"`
-	Targets    []string    `json:"targets"` // what the next probe checks
+	Kind           string            `json:"kind"` // relay, telegram or other
+	Route          string            `json:"route"`
+	Via            string            `json:"via,omitempty"`
+	RouteSince     time.Time         `json:"route_since"`
+	State          string            `json:"state"`
+	LastProbe      time.Time         `json:"last_probe"`
+	LastResult     probeResult       `json:"last_result"`
+	LastConn       *time.Time        `json:"last_conn,omitempty"`
+	LastConnResult *connectionResult `json:"last_conn_result,omitempty"`
+	Targets        []string          `json:"targets"` // what the next probe checks
+	active         bool
 }
 
 // Status returns a snapshot with the last n events.
@@ -1786,18 +1938,26 @@ func (t *Tunnel) Status(n int) Status {
 		Groups:         map[string]GroupStatus{},
 	}
 	for _, gs := range t.groupsLocked() {
-		if gs.kind == kindOther {
+		if gs.kind == kindOther && gs.lastConn.IsZero() {
 			continue
 		}
+		var lastConn *time.Time
+		var lastConnResult *connectionResult
+		if !gs.lastConn.IsZero() {
+			stamp, result := gs.lastConn.UTC(), gs.lastConnResult
+			lastConn, lastConnResult = &stamp, &result
+		}
 		s.Groups[gs.name] = GroupStatus{
-			Kind:       gs.kind.String(),
-			Route:      gs.route.String(),
-			Via:        gs.viaLocked(),
-			RouteSince: gs.routeSince.UTC(),
-			State:      gs.state,
-			LastProbe:  gs.lastProbe.UTC(),
-			LastResult: gs.lastResult,
-			Targets:    append([]string{}, t.targetsLocked(gs)...),
+			Kind:           gs.kind.String(),
+			Route:          gs.route.String(),
+			Via:            gs.viaLocked(),
+			RouteSince:     gs.routeSince.UTC(),
+			State:          gs.state,
+			LastProbe:      gs.lastProbe.UTC(),
+			LastResult:     gs.lastResult,
+			LastConn:       lastConn,
+			LastConnResult: lastConnResult,
+			Targets:        append([]string{}, t.targetsLocked(gs)...),
 		}
 	}
 	for r := Route(0); r < numRoutes; r++ {
@@ -1810,6 +1970,10 @@ func (t *Tunnel) Status(n int) Status {
 	sort.Strings(s.Relays)
 	for c := range t.conns {
 		s.Active[c.route.String()]++
+		if g, ok := s.Groups[c.group.name]; ok {
+			g.active = true
+			s.Groups[c.group.name] = g
+		}
 	}
 	s.Tunnels = []RouteState{}
 	if p, ok := t.client.(*routePool); ok {
@@ -1831,7 +1995,26 @@ func (t *Tunnel) Status(n int) Status {
 		}
 	}
 	s.Events = t.log.last(n)
+	s.Started = t.started.UTC()
+	s.Health = t.settleHealthLocked(health(s, t.timeNow()), t.timeNow())
 	return s
+}
+
+// settleHealthLocked keeps a working verdict for 10 s before a problem shows,
+// and stamps the time the verdict last changed.
+func (t *Tunnel) settleHealthLocked(h Health, now time.Time) Health {
+	good := func(x Health) bool { return x.State == "working" || x.State == "limited" }
+	if good(h) {
+		t.healthGood = now
+	} else if h.State == "problem" && good(t.health) && now.Sub(t.healthGood) < 10*time.Second {
+		h = t.health
+	}
+	if h.State != t.health.State || h.Reason != t.health.Reason || t.health.Since.IsZero() {
+		t.healthSince = now
+	}
+	h.Since = t.healthSince.UTC()
+	t.health = h
+	return h
 }
 
 func (t *Tunnel) routeStatsLocked(r Route) routeStats {
@@ -1903,11 +2086,32 @@ func (t *Tunnel) groupStalledLocked(g *group, r Route) bool {
 	if r == RouteTunnel {
 		h = t.tunnelStall
 	}
-	return h.blocked(t.timeNow(), t.log, r.String())
+	return h.blocked()
 }
 func (t *Tunnel) connectionFeedback(g *group, r Route, key string, stalled bool, first ...bool) {
+	t.connectionFeedbackVia(g, r, key, r.String(), stalled, first...)
+}
+
+func (t *Tunnel) connectionFeedbackVia(g *group, r Route, key, via string, stalled bool, first ...bool) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
+	defer t.rememberGroupHoldLocked(g)
+	t.tickGroupLocked(g, t.timeNow())
+	outcome := "ok"
+	if stalled {
+		outcome = "stall"
+		if len(first) > 0 && !first[0] {
+			outcome = "later"
+		}
+	}
+	t.recordConnectionLocked(g, outcome, via)
+	if !stalled {
+		if r == RouteTunnel {
+			g.tunnelFails = 0
+		} else {
+			g.failStreak = 0
+		}
+	}
 	h := g.stalls[r]
 	if r == RouteTunnel {
 		// Pool routes keep their own evidence.
@@ -1921,21 +2125,25 @@ func (t *Tunnel) connectionFeedback(g *group, r Route, key string, stalled bool,
 		h = t.tunnelStall
 	}
 	if h == nil {
-		h = &stallState{}
+		h = &hold{}
 		if r == RouteTunnel {
 			t.tunnelStall = h
 		} else {
 			g.stalls[r] = h
 		}
 	}
+	h.groupHold = g.kind != kindOther && r != RouteTunnel
 	if !stalled {
-		h.recovered(t.log, r.String())
+		if r != RouteTunnel && h.state != Open {
+			g.okStreak = 0
+		}
+		h.onReply(t.log, holdUnit(g, r))
 		return
 	}
 	t.stats[r].Fails++
 	t.stats[r].Stalls++
 	isFirst := len(first) == 0 || first[0]
-	corroborated := h.record(t.timeNow(), t.log, r.String(), isFirst, key, r == RouteTunnel && strings.HasPrefix(t.only, "route:"))
+	corroborated := h.onStall(t.timeNow(), t.log, holdUnit(g, r), isFirst, key, r == RouteTunnel && strings.HasPrefix(t.only, "route:"))
 	if !isFirst {
 		return
 	}
@@ -1954,4 +2162,74 @@ func (t *Tunnel) connectionFeedback(g *group, r Route, key string, stalled bool,
 			t.kickProbe()
 		}
 	}
+}
+
+func (t *Tunnel) newGroup(name string, kind groupKind, route Route) *group {
+	g := newGroup(name, kind, route, t.timeNow)
+	t.loadGroupHoldLocked(g)
+	return g
+}
+
+func holdUnit(g *group, r Route) string {
+	if r == RouteTunnel {
+		return r.String()
+	}
+	return g.historyUnit() + " " + r.String()
+}
+
+func (t *Tunnel) tick(now time.Time) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.tickLocked(now)
+}
+
+func (t *Tunnel) tickGroupLocked(g *group, now time.Time) {
+	if g == nil {
+		return
+	}
+	defer t.rememberGroupHoldLocked(g)
+	if g.probeBlind && now.Sub(g.probeBlindAt) >= 24*time.Hour {
+		g.probeBlind = false
+		g.failedTrials = 0
+		g.goodSinceTrial = false
+	}
+	for r, h := range g.stalls {
+		if h == nil {
+			continue
+		}
+		h.groupHold = g.kind != kindOther && Route(r) != RouteTunnel
+		h.tick(now, t.log, holdUnit(g, Route(r)))
+		if h.groupHold && h.state == Held && !now.Before(h.until) &&
+			(Route(r) == RouteSmart || g.okStreak >= recoveredAfter || g.probeBlind) && t.mode == ModeAuto && !strings.HasPrefix(t.only, "route:") {
+			expired := h.until
+			h.until = time.Time{}
+			h.trialUntil = now.Add(groupTrialWindow)
+			h.state = Trial
+			t.log.addAt(expired, "%s", historyLine(historyTransition{prefix: "unblocked", unit: holdUnit(g, Route(r)), reason: "cooldown ended, trial next"}))
+		}
+		if h.state == Trial && !h.trialUntil.IsZero() && !now.Before(h.trialUntil) {
+			if g.trial != nil && g.trial.hold == h {
+				g.trial.released.Store(true)
+				g.trial = nil
+			}
+			h.holdForStep(now)
+		}
+	}
+}
+
+func (t *Tunnel) tickLocked(now time.Time) {
+	for _, g := range t.groupsLocked() {
+		t.tickGroupLocked(g, now)
+	}
+	t.tunnelStall.tick(now, t.log, RouteTunnel.String())
+	if p, ok := t.client.(*routePool); ok {
+		p.tick(now)
+	}
+}
+
+func (g *group) historyUnit() string {
+	if g.kind == kindRelay {
+		return fmt.Sprintf("relay-%d", g.ordinal)
+	}
+	return g.kind.String()
 }

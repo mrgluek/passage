@@ -181,11 +181,7 @@ func main() {
 					printed = e.Time
 				}
 			}
-			groups := map[string]any{}
-			for name, g := range s.Groups {
-				groups[name] = map[string]any{"route": g.Route, "state": g.State, "targets": g.Targets}
-			}
-			line, _ := json.Marshal(map[string]any{"route": s.Route, "state": s.State, "groups": groups, "active": s.Active, "stats": s.Stats})
+			line := statusJSON(s)
 			fmt.Fprintf(os.Stderr, "%s status %s session=%v\n", time.Now().Format("15:04:05"), line, s.Session)
 			if *paths {
 				for _, p := range s.Paths {
@@ -246,4 +242,22 @@ func loadSubscriptions(path string) (tunnel.Config, bool, error) {
 		return tunnel.Config{}, true, err
 	}
 	return normalized, true, nil
+}
+
+func statusJSON(s tunnel.Status) []byte {
+	groups := map[string]any{}
+	for name, g := range s.Groups {
+		row := map[string]any{"route": g.Route, "state": g.State, "targets": g.Targets}
+		if g.LastConn != nil {
+			row["last_conn"] = g.LastConn
+			row["last_conn_result"] = g.LastConnResult
+		}
+		groups[name] = row
+	}
+	status := map[string]any{"route": s.Route, "state": s.State, "groups": groups, "active": s.Active, "stats": s.Stats}
+	if len(s.Subscriptions) > 0 {
+		status["subscriptions"] = s.Subscriptions
+	}
+	line, _ := json.Marshal(status)
+	return line
 }

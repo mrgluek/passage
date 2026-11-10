@@ -51,7 +51,7 @@ func ImportLink(existing Config, text string, replaceIDs bool) (ImportResult, er
 	}
 	if invite, e := links.DecodeInvite([]byte(text), trusted); e == nil {
 		result.Config, result.Signature, result.Mode = existing, invite.Signature, "subscribe"
-		result.Subscription = &SubscriptionDescription{invite.Invite.Name, len(invite.Invite.Sources), invite.Invite.Seed != nil}
+		result.Subscription = &SubscriptionDescription{subscriptionDisplayName(invite.Invite.Name), len(invite.Invite.Sources), invite.Invite.Seed != nil}
 		for _, sub := range existing.Subscriptions {
 			if sub.ID == hex.EncodeToString(invite.Invite.ID) && !bytes.Equal(sub.Signer, invite.Invite.Signer) {
 				result.Collision = true
@@ -110,6 +110,9 @@ func ImportLink(existing Config, text string, replaceIDs bool) (ImportResult, er
 		result.Config.RouteEdits = nil
 	} else {
 		result.Config.RouteEdits = MinimalEdits(installed, result.Config.RouteEdits)
+	}
+	if decoded.Signature == "trusted_author" && len(decoded.Bundle.Canaries) > 0 {
+		result.Config.Canaries = slices.Clone(decoded.Bundle.Canaries)
 	}
 	if decoded.Signature == "trusted_author" && len(decoded.Bundle.Updates) > 0 {
 		result.Config.UpdateSources = decoded.Bundle.Updates

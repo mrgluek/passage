@@ -81,23 +81,8 @@ func (i Invite) Validate() error {
 	if i.V != 2 || i.Kind != "sub" || len(i.ID) != 16 || len(i.ReadKey) != 32 || len(i.Signer) != 32 || len(i.Name) > 128 || !utf8.ValidString(i.Name) || len(i.Sources) < 1 || len(i.Sources) > MaxSubSources || len(i.Required) != 1 || i.Required[0] != "sub" {
 		return errors.New("invalid subscription invite")
 	}
-	for _, s := range i.Sources {
-		u, e := url.Parse(s)
-		if e != nil || len(s) > 2048 || u.Scheme != "https" || u.Host == "" || u.User != nil || u.ForceQuery || u.RawQuery != "" || strings.Contains(s, "#") || strings.Contains(s, "\\") || u.Opaque != "" {
-			return errors.New("invalid subscription source")
-		}
-		h := u.Hostname()
-		if net.ParseIP(h) == nil && (strings.HasPrefix(u.Host, "[") || !validSubDNS(h)) {
-			return errors.New("invalid subscription host")
-		}
-		if strings.HasSuffix(u.Host, ":") {
-			return errors.New("invalid subscription port")
-		}
-		if u.Port() != "" {
-			if e := validateHostPort(u.Host, false); e != nil {
-				return e
-			}
-		}
+	if err := ValidateSources(i.Sources); err != nil {
+		return err
 	}
 	if i.Seed != nil {
 		if _, err := OpenSubFile(i.Seed, i.ID, i.ReadKey, ed25519.PublicKey(i.Signer)); err != nil {
@@ -292,4 +277,30 @@ func DeriveReadKey(signer crypto.Signer, id []byte) ([]byte, error) {
 	key := make([]byte, 32)
 	_, err = io.ReadFull(hkdf.New(sha256.New, a, id, []byte("passage-sub-read-v1")), key)
 	return key, err
+}
+
+// ValidateSources checks optional subscription file base addresses.
+func ValidateSources(sources []string) error {
+	if len(sources) > MaxSubSources {
+		return errors.New("too many subscription sources")
+	}
+	for _, s := range sources {
+		u, e := url.Parse(s)
+		if e != nil || len(s) > 2048 || u.Scheme != "https" || u.Host == "" || u.User != nil || u.ForceQuery || u.RawQuery != "" || strings.Contains(s, "#") || strings.Contains(s, "\\") || u.Opaque != "" {
+			return errors.New("invalid subscription source")
+		}
+		h := u.Hostname()
+		if net.ParseIP(h) == nil && (strings.HasPrefix(u.Host, "[") || !validSubDNS(h)) {
+			return errors.New("invalid subscription host")
+		}
+		if strings.HasSuffix(u.Host, ":") {
+			return errors.New("invalid subscription port")
+		}
+		if u.Port() != "" {
+			if e := validateHostPort(u.Host, false); e != nil {
+				return e
+			}
+		}
+	}
+	return nil
 }

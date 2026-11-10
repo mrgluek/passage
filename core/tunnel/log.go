@@ -2,8 +2,11 @@ package tunnel
 
 import (
 	"fmt"
+	"maps"
 	"sync"
 	"time"
+
+	"github.com/mrgluek/passage/core/internal/reporttext"
 )
 
 // Event is one diagnostics line. Events never carry message content; only
@@ -19,15 +22,26 @@ type eventLog struct {
 	buf         []Event
 	next        int
 	full        bool
-	stallLogged map[string]time.Time
+	stallLogged map[*hold]time.Time
+	now         func() time.Time
 }
 
-func newEventLog(n int) *eventLog { return &eventLog{buf: make([]Event, n)} }
+func newEventLog(n int, clock ...func() time.Time) *eventLog {
+	now := time.Now
+	if len(clock) > 0 {
+		now = clock[0]
+	}
+	return &eventLog{buf: make([]Event, n), now: now}
+}
 
 func (l *eventLog) add(format string, args ...any) {
+	l.addAt(l.now(), format, args...)
+}
+
+func (l *eventLog) addAt(now time.Time, format string, args ...any) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	l.buf[l.next] = Event{Time: time.Now().UTC(), Msg: fmt.Sprintf(format, args...)}
+	l.buf[l.next] = Event{Time: now.UTC(), Msg: reporttext.LocalEndpoints(fmt.Sprintf(format, args...))}
 	l.next = (l.next + 1) % len(l.buf)
 	if l.next == 0 {
 		l.full = true
@@ -56,16 +70,41 @@ func (l *eventLog) last(n int) []Event {
 	return out
 }
 
-func (l *eventLog) stalled(now time.Time, route, kind string, delay time.Duration, count int64) {
+func (l *eventLog) stalled(now time.Time, identity *hold, route, kind string, delay time.Duration, count int64) {
 	l.mu.Lock()
-	if last, ok := l.stallLogged[route]; ok && now.Sub(last) < 30*time.Second {
+	if last, ok := l.stallLogged[identity]; ok && now.Sub(last) < 30*time.Second {
 		l.mu.Unlock()
 		return
 	}
 	if l.stallLogged == nil {
-		l.stallLogged = make(map[string]time.Time)
+		l.stallLogged = make(map[*hold]time.Time)
 	}
-	l.stallLogged[route] = now
+	maps.DeleteFunc(l.stallLogged, func(_ *hold, at time.Time) bool { return now.Sub(at) >= 30*time.Second })
+	l.stallLogged[identity] = now
 	l.mu.Unlock()
-	l.add("stalled: %s (%s), blocked for %d min, count=%d", route, kind, int(delay/time.Minute), count)
+	l.addAt(now, "%s", historyLine(historyTransition{prefix: "stalled", unit: route, reason: kind, delay: delay, count: count}))
+}
+
+type historyTransition struct {
+	prefix, unit, reason  string
+	delay                 time.Duration
+	count                 int64
+	probe, outcome, route string
+}
+
+func historyLine(e historyTransition) string {
+	switch e.prefix {
+	case "stalled":
+		return fmt.Sprintf("stalled: %s (%s), paused for %d min, count=%d", e.unit, e.reason, int(e.delay/time.Minute), e.count)
+	case "unblocked":
+		return fmt.Sprintf("resumed: %s (%s)", e.unit, e.reason)
+	case "disagree":
+		line := fmt.Sprintf("disagree: %s probe=%s conn=%s via %s", e.unit, e.probe, e.outcome, e.route)
+		if e.reason != "" {
+			line += ", " + e.reason
+		}
+		return line
+	default:
+		panic("unknown history transition")
+	}
 }
