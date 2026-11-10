@@ -65,7 +65,7 @@ func (a *App) previewImport(text string) (invitePreview, error) {
 		if d.HasSeed {
 			seed = a.t.f("sub_seed")
 		}
-		body := d.Name + "\n" + a.t.quantity("sub_addresses", int64(d.Sources), d.Sources) + "\n" + seed + "\n\n" + signer
+		body := signer + "\n\n" + d.Name + "\n" + a.t.quantity("sub_addresses", int64(d.Sources), d.Sources) + "\n" + seed
 		if r.Collision {
 			body += "\n\n" + a.t.f("sub_collision")
 		}
@@ -184,7 +184,7 @@ func (a *App) subscriptionRowsLocked() []subscriptionRow {
 		if sub.Closed {
 			detail, result, busy = a.t.f("sub_closed"), "", false
 		}
-		rows = append(rows, subscriptionRow{sub.Closed, sub.ID, sub.Name, detail, result, busy})
+		rows = append(rows, subscriptionRow{sub.Closed, sub.ID, sub.DisplayName(), detail, result, busy})
 	}
 	return rows
 }

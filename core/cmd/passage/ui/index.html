@@ -8,18 +8,60 @@
 :root {
   --bg: #ffffff; --fg: #1b1c1e; --muted: #5f6368; --accent: #185FA5; --on-accent: #ffffff;
   --shade: rgba(0,0,0,.055); --line: rgba(0,0,0,.12); --warn: #a4372a;
+  --page: #e5e5e1; --card: #f2f2ee; --border: rgba(0,0,0,.10);
+  --dot-off: #9aa0a6; --dot-on: #8fb59a; --dot-bright: #2ecc40; --dot-error: #d98f86; --dot-warn: #e0c070; --hint: rgba(95,99,104,.7);
 }
 @media (prefers-color-scheme: dark) {
   :root { --bg: #1d1e20; --fg: #e8e9eb; --muted: #a0a4a8; --accent: #85B7EB; --on-accent: #0d2440;
-    --shade: rgba(255,255,255,.07); --line: rgba(255,255,255,.14); --warn: #f08b7e; }
+    --shade: rgba(255,255,255,.07); --line: rgba(255,255,255,.14); --warn: #f08b7e;
+    --page: #151617; --card: #232527; --border: rgba(255,255,255,.10);
+    --dot-off: #6f757b; --dot-on: #7fa48a; --dot-bright: #3ddc58; --dot-error: #c9786f; --dot-warn: #c4a455; --hint: rgba(160,164,168,.6); }
 }
 * { box-sizing: border-box; }
-html, body { margin: 0; background: var(--bg); color: var(--fg); }
+html, body { margin: 0; background: var(--page); color: var(--fg); }
 body { font: 14px/1.45 "Segoe UI", system-ui, sans-serif; user-select: none; }
 header { position: sticky; top: 0; z-index: 2; display: flex; align-items: center; gap: 4px;
-  padding: 8px 8px 8px 16px; background: var(--bg); border-bottom: 1px solid var(--line); }
+  padding: 8px 8px 8px 16px; background: var(--card); border-bottom: 1px solid var(--border); }
 header h1 { flex: 1; margin: 0; font-size: 16px; font-weight: 600; }
-main { padding: 4px 16px 24px; max-width: 720px; }
+main { padding: 14px 16px 24px; max-width: 720px; margin: 0 auto; }
+.card { background: var(--card); border: 1px solid var(--border); border-radius: 16px; padding: 18px 20px; margin: 0 0 14px; }
+.card h2, .card h3 { margin: 0 0 8px; font-size: 16px; font-weight: 600; color: var(--muted); }
+.card > h2:not(:first-child) { margin-top: 18px; }
+.ctitle { font-size: 20px; font-weight: 600; color: var(--muted); }
+.titleRow { display: flex; align-items: center; gap: 10px; margin-bottom: 6px; }
+.dot { width: 14px; height: 14px; border-radius: 50%; background: var(--dot-off); flex: none; }
+.dot.on { background: var(--dot-on); }
+.dot.error { background: var(--dot-error); }
+.dot.warn { background: var(--dot-warn); }
+.dot.flow { animation: flow 1.8s ease-in-out infinite; }
+@keyframes flow { 0%, 100% { background: var(--dot-on); } 50% { background: var(--dot-bright); } }
+@media (prefers-reduced-motion: reduce) { .dot.flow { animation: none; } }
+button.wide { display: block; width: 100%; padding: 11px 14px; margin: 12px 0 4px; border-radius: 22px; }
+button.textbtn { display: block; margin: 10px auto 0; border: none; padding: 8px 14px; }
+.steps { margin: 0 0 6px; }
+.step { display: flex; align-items: center; gap: 12px; min-height: 40px; padding: 4px 0; }
+.step .num { width: 22px; flex: none; text-align: center; font-variant-numeric: tabular-nums; }
+.step.done { color: var(--muted); }
+.step.current { font-weight: 600; }
+.step.tap { cursor: pointer; }
+.step .chev { margin-left: auto; color: var(--accent); }
+.tick { width: 22px; height: 22px; flex: none; fill: #2e7d4f; }
+.tabs { display: flex; border: 1px solid var(--accent); border-radius: 20px; padding: 2px; margin: 10px 0 12px; }
+.tabs div { flex: 1; text-align: center; padding: 7px 2px; border-radius: 18px; color: var(--accent); cursor: pointer;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: 13px; }
+.tabs div.on { background: var(--accent); color: var(--on-accent); font-weight: 600; cursor: default; }
+.tabpane p { margin: 8px 0; }
+.tabpane button.wide { margin: 10px 0 8px; }
+.dl { color: var(--muted); font-size: 13px; margin: 6px 0; }
+.waiting { color: var(--muted); font-size: 13px; margin: 12px 0 0; }
+.values .v span:last-child { font: 13px Consolas, "SF Mono", monospace; }
+.values .v { align-items: center; }
+.values .v .showpw { margin-left: 8px; color: var(--accent); cursor: pointer; flex: none; }
+.drow { display: flex; align-items: center; gap: 8px; cursor: pointer; margin-top: 18px; padding: 4px 0; }
+.drow .grow div:first-child { color: var(--accent); font-size: 15px; }
+.drow .chev { color: var(--accent); font-size: 20px; }
+input[type=text]::placeholder, textarea::placeholder { color: var(--hint); opacity: 1; }
+.hint { margin: 6px 0; }
 h2 { margin: 20px 0 4px; font-size: 14px; font-weight: 600; }
 .hint { color: var(--muted); font-size: 13px; margin: 2px 0; white-space: pre-line; }
 #updateStatus { margin: 8px 0 0; }
@@ -63,7 +105,8 @@ textarea { min-height: 72px; resize: vertical; }
 label.check { display: flex; gap: 8px; align-items: center; margin: 6px 0; cursor: pointer; }
 a { color: var(--accent); cursor: pointer; text-decoration: underline; }
 .rrow { display: flex; align-items: center; gap: 8px; padding: 3px 0; }
-.rrow.off .rname { color: var(--muted); }
+.rrow.off .rname, .rrow.off .rmark { color: var(--muted); }
+.rmark { color: var(--accent); width: 1em; text-align: center; }
 .rrow .rname { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .rrow button { margin: 0; padding: 1px 10px; }
 .rrow input[type=text] { width: 64px; text-align: center; font: inherit; padding: 2px 4px; }
@@ -91,39 +134,59 @@ a { color: var(--accent); cursor: pointer; text-decoration: underline; }
 
 <main id="home">
   <button id="updateNotice" class="primary hidden"></button>
-  <div class="state" id="head"></div>
-  <div id="line"></div>
-  <button id="startHint" class="primary hidden"></button>
-  <div id="noLink" class="hidden">
-    <p class="hint" data-t="no_link"></p>
-    <button data-t="open_settings" id="openSettings"></button>
-  </div>
-  <div id="homeRoutes"></div>
-  <div id="connectBox">
-  <h2 data-t="connect_label"></h2>
-  <p class="hint" data-t="connect_help"></p>
-  <div class="row" style="margin-top:8px">
-    <div class="grow">
-      <div class="values" id="values"></div>
+  <section class="card" id="statusCard">
+    <div class="titleRow"><span class="dot" id="dot"></span><span class="ctitle" id="sTitle"></span></div>
+    <p class="hint" id="sReason"></p>
+    <p class="hint warn hidden" id="sError"></p>
+    <button class="primary wide hidden" id="sMain"></button>
+    <button class="textbtn hidden" id="sSecond"></button>
+  </section>
+  <section class="card" id="setupCard">
+    <h3 id="setupHead"></h3>
+    <div class="steps" id="steps"></div>
+    <div id="appBlock">
+      <div class="tabs" id="tabs"></div>
+      <div class="tabpane" id="tabpane"></div>
+      <p class="waiting" id="waiting"></p>
+      <button class="textbtn hidden" id="hideTabs"></button>
     </div>
-    <div>
-      <button class="icon" id="copyLink"><svg viewBox="0 0 24 24"><path d="M16,1L4,1c-1.1,0 -2,0.9 -2,2v14h2L4,3h12L16,1zM19,5L8,5c-1.1,0 -2,0.9 -2,2v14c0,1.1 0.9,2 2,2h11c1.1,0 2,-0.9 2,-2L21,7c0,-1.1 -0.9,-2 -2,-2zM19,21L8,21L8,7h11v14z"/></svg></button><br>
-      <button class="icon" id="copyTg"><svg viewBox="0 0 24 24"><path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"/></svg></button>
-    </div>
-  </div>
-  </div>
-  <div class="row" style="margin-top:14px">
-    <h2 class="grow" style="margin:0" data-t="status_label"></h2>
-    <button class="icon" id="report"><svg viewBox="0 0 24 24"><path d="M20,8h-2.81c-0.45,-0.78 -1.07,-1.45 -1.82,-1.96L17,4.41 15.59,3l-2.17,2.17C12.96,5.06 12.49,5 12,5c-0.49,0 -0.96,0.06 -1.41,0.17L8.41,3 7,4.41l1.62,1.63C7.88,6.55 7.26,7.22 6.81,8L4,8v2h2.09c-0.05,0.33 -0.09,0.66 -0.09,1v1L4,12v2h2v1c0,0.34 0.04,0.67 0.09,1L4,16v2h2.81c1.04,1.79 2.97,3 5.19,3s4.15,-1.21 5.19,-3L20,18v-2h-2.09c0.05,-0.33 0.09,-0.66 0.09,-1v-1h2v-2h-2v-1c0,-0.34 -0.04,-0.67 -0.09,-1L20,10L20,8zM14,16h-4v-2h4v2zM14,12h-4v-2h4v2z"/></svg></button>
-  </div>
-  <pre id="status"></pre>
+    <button class="textbtn hidden" id="connectAnother"></button>
+  </section>
+  <section class="card" id="helpCard">
+    <h3 data-t="h_help"></h3>
+    <p class="hint" data-t="h_report_what"></p>
+    <button class="textbtn" id="reportInfoBtn" data-t="h_report_link"></button>
+    <p class="hint hidden" id="reportInfo" data-t="h_report_not"></p>
+    <button class="wide" id="report" data-t="h_report_btn"></button>
+    <div class="drow" id="detailsRow"><div class="grow"><div data-t="h_details"></div><div class="hint" data-t="h_details_sub"></div></div><span class="chev">&rsaquo;</span></div>
+  </section>
+</main>
+
+<main id="details" class="hidden">
+  <section class="card">
+    <h3 data-t="route_label"></h3>
+    <div id="homeRoutes"></div>
+    <p class="hint" data-t="route_hint"></p>
+  </section>
+  <section class="card">
+    <h3 data-t="h_connections"></h3>
+    <div id="line"></div>
+    <button id="checkNow" data-t="h_check_now"></button>
+  </section>
+  <section class="card">
+    <h3 data-t="h_status_history"></h3>
+    <pre id="status"></pre>
+    <button id="copyStatus" data-t="h_copy_status"></button>
+  </section>
 </main>
 
 <main id="settings" class="hidden">
-  <h2 data-t="route_label" style="margin-top:8px"></h2>
+  <section class="card">
+  <h2 data-t="route_label"></h2>
   <div id="settingsRoutes"></div>
   <p class="hint" data-t="route_hint"></p>
-
+  </section>
+  <section class="card">
   <h2 data-t="my_route_label"></h2>
   <div class="row">
     <input type="text" id="my" class="grow" spellcheck="false">
@@ -131,14 +194,16 @@ a { color: var(--accent); cursor: pointer; text-decoration: underline; }
   </div>
   <button id="saveMy" data-t="save"></button>
   <p class="hint" data-t="my_route_help"></p>
-
+  </section>
+  <section class="card">
   <h2 data-t="saved_routes_label"></h2>
   <p class="hint" id="savedRoutesEmpty"></p>
   <div id="savedRoutes"></div>
   <button id="editRoutes" class="hidden" data-t="edit_routes"></button>
   <div id="editBar" class="hidden"><button class="primary" id="saveRoutes" data-t="save"></button> <button id="cancelRoutes" data-t="cancel"></button></div>
   <p class="hint hidden" id="routesHint" data-t="routes_edit_hint"></p>
-
+  </section>
+  <section class="card">
   <h2 data-t="link_label"></h2>
   <p class="hint" id="linkInfo"></p>
   <p class="hint warn" id="linkError"></p>
@@ -148,32 +213,40 @@ a { color: var(--accent); cursor: pointer; text-decoration: underline; }
     <button class="primary" id="saveLink" data-t="save"></button>
   </div>
   <p class="hint" data-t="link_file_help"></p>
-
+  </section>
+  <section class="card">
   <h2 data-t="subscriptions"></h2>
   <p class="hint" id="subscriptionsEmpty"></p>
   <div id="subscriptions"></div>
-
+  </section>
+  <section class="card">
   <h2 data-t="access_label"></h2>
   <label class="check"><input type="checkbox" id="auth"><span data-t="auth_switch"></span></label>
   <p class="hint" data-t="auth_help"></p>
   <button id="newAccess" data-t="new_access"></button>
   <p class="hint" data-t="new_access_help"></p>
 
-  <div id="updateSettings" class="hidden"><h2 data-t="updates"></h2><button id="updateCheck" data-t="update_check"></button><p id="updateStatus" aria-live="polite"></p><p id="updateDetail" class="hint hidden"></p><progress id="updateProgress" class="hidden"></progress><div><button id="updateDownload" data-t="update_download"></button><button id="updateCancel" data-t="cancel"></button><button id="updateInstall" data-t="update_install"></button></div><label class="check"><input type="checkbox" id="autoUpdate"><span data-t="update_auto"></span></label><p class="hint" data-t="update_help"></p></div>
+  </section>
+  <section class="card hidden" id="updateSettings"><h2 data-t="updates"></h2><button id="updateCheck" data-t="update_check"></button><p id="updateStatus" aria-live="polite"></p><p id="updateDetail" class="hint hidden"></p><progress id="updateProgress" class="hidden"></progress><div><button id="updateDownload" data-t="update_download"></button><button id="updateCancel" data-t="cancel"></button><button id="updateInstall" data-t="update_install"></button></div><label class="check"><input type="checkbox" id="autoUpdate"><span data-t="update_auto"></span></label><p class="hint" data-t="update_help"></p></section>
+  <section class="card"><h2 data-t="language_label"></h2><div class="segments" id="langSeg"></div></section>
+  <section class="card">
   <h2 data-t="startup_label"></h2>
   <label class="check"><input type="checkbox" id="autostart"><span data-t="autostart"></span></label>
   <p class="hint" data-t="autostart_help"></p>
-
+  </section>
+  <section class="card">
   <h2 data-t="folder_label"></h2>
   <pre id="folder"></pre>
   <button id="openFolder" data-t="open_folder"></button>
   <p class="hint" data-t="folder_help"></p>
-
+  </section>
+  <section class="card">
   <h2 data-t="about_label"></h2>
   <p class="hint" id="about"></p>
   <p class="hint"><span data-t="about_site"></span>: <a id="site"></a></p>
   <p class="hint"><span data-t="about_source"></span>: <a id="source"></a></p>
   <p class="hint"><a id="licenses" data-t="about_licenses"></a></p>
+  </section>
 </main>
 
 <div id="modal" class="hidden"><div>
@@ -335,46 +408,150 @@ function render(v) {
   $("updateDownload").classList.toggle("hidden", !u.version || ["checking", "downloading", "ready", "installing"].includes(u.state));
   $("updateInstall").classList.toggle("hidden", !u.ready);
   $("updateCancel").classList.toggle("hidden", !["checking", "downloading"].includes(u.state));
-  $("head").textContent = v.head;
   $("line").textContent = v.line;
-  $("startHint").textContent = v.start_hint || "";
-  $("startHint").classList.toggle("hidden", !v.start_hint);
-  $("connectBox").classList.toggle("hidden", !!v.start_hint);
   $("startStopPath").setAttribute("d", v.running
     ? "M7,6h10a1,1 0,0 1,1 1v10a1,1 0,0 1,-1 1h-10a1,1 0,0 1,-1 -1v-10a1,1 0,0 1,1 -1z"
     : "M8,5.5v13a1,1 0,0 0,1.5 0.86l10.2,-6.5a1,1 0,0 0,0 -1.72l-10.2,-6.5A1,1 0,0 0,8 5.5z");
   tip("startStop", v.running ? "action_stop" : "action_start");
-  $("noLink").classList.toggle("hidden", v.has_link);
   const routesKey = JSON.stringify([v.routes, v.my, v.mode]);
   if (routesKey !== shownRoutes) {
     shownRoutes = routesKey;
     segments($("homeRoutes"), v);
     segments($("settingsRoutes"), v);
   }
-  const rows = [[t("proxy_host"), v.host], [t("proxy_port"), String(v.port)]];
-  if (v.auth) rows.push([t("proxy_user"), v.user], [t("proxy_pass"), v.pass]);
-  const valuesKey = JSON.stringify(rows);
-  if (valuesKey !== shownValues) {
-    shownValues = valuesKey;
-    const box = $("values");
-    box.innerHTML = "";
-    for (const [label, value] of rows) {
+  renderHome(v);
+  $("status").textContent = v.full;
+}
+
+// ---- The home screen: status, setup steps with app tabs, help.
+const TICK = '<svg class="tick" viewBox="0 0 24 24"><path d="M9 16.2 4.8 12l-1.4 1.4L9 19 21 7l-1.4-1.4z"/></svg>';
+const DOWNLOADS = { delta: "https://download.delta.chat", velta: "https://velta.cc/#download" };
+let tab = 0, tabsOpen = false, showPass = false, flowUntil = 0, lastTraffic = null, shownHome = "";
+function setHidden(id, hidden) { $(id).classList.toggle("hidden", !!hidden); }
+function stepRow(kind, done, current, text, number) {
+  const d = document.createElement("div");
+  d.className = "step" + (done ? " done" : "") + (current ? " current" : "");
+  const n = document.createElement("span");
+  n.className = "num";
+  if (done) n.innerHTML = TICK; else n.textContent = number + ".";
+  const label = document.createElement("span");
+  label.textContent = text;
+  d.append(n, label);
+  return d;
+}
+function renderHome(v) {
+  const hasLink = v.has_link, running = v.running, seen = v.app_seen;
+  if (lastTraffic !== null && v.traffic > lastTraffic) flowUntil = Date.now() + 4000;
+  lastTraffic = v.traffic;
+  const flowing = running && Date.now() < flowUntil;
+  const dot = $("dot");
+  const h = running && v.health && v.health.state ? v.health : null;
+  const hs = h ? h.state : "", hr = h ? h.reason : "";
+  let tone = v.error || (hs === "problem" && hr === "no_route") ? " error" : (hs === "starting" || hs === "problem") ? " warn" : running ? " on" : "";
+  dot.className = "dot" + tone + (flowing && !tone.includes("error") && !tone.includes("warn") ? " flow" : "");
+  let title, reason, main = null, second = null;
+  if (v.error) { title = t("h_title_error"); reason = ""; }
+  else if (!hasLink) { title = t("h_title_nolink"); reason = t("h_reason_nolink"); }
+  else if (!running) { title = t("h_title_off"); reason = t("h_reason_off"); }
+  else if (hs === "starting") { title = t("h_title_connecting"); reason = t("h_reason_connecting"); }
+  else if (hs === "problem") { title = t("h_title_" + hr); reason = t("h_reason_" + hr); }
+  else if (hs === "working" || hs === "limited") { title = t("h_title_working"); reason = t(hs === "limited" ? "h_reason_limited" : "h_reason_ok"); }
+  else { title = t("h_title_on"); reason = t(seen ? "h_reason_ok" : "h_reason_wait"); }
+  if (!hasLink) main = [t("h_add_link"), () => { page("settings"); showLink(true).then(() => $("linkText").focus()); }];
+  else if (!running) main = [t("h_turn_on"), () => call("start").then(refresh, fail)];
+  if (running) second = [t("h_turn_off"), () => call("stop").then(refresh, fail)];
+  else if (!hasLink) second = [t("h_turn_on"), () => call("start").then(refresh, fail)];
+  $("sTitle").textContent = title;
+  $("sReason").textContent = reason;
+  setHidden("sReason", !reason);
+  $("sError").textContent = v.error || "";
+  setHidden("sError", !v.error);
+  setHidden("sMain", !main);
+  if (main) { $("sMain").textContent = main[0]; $("sMain").onclick = main[1]; }
+  setHidden("sSecond", !second);
+  if (second) { $("sSecond").textContent = second[0]; $("sSecond").onclick = second[1]; }
+  const done = hasLink && running && seen;
+  $("setupHead").textContent = t(done ? "h_steps_done" : "h_steps_pending");
+  const key = JSON.stringify([hasLink, running, seen, hs, hr, tab, tabsOpen, showPass, v.host, v.port, v.user, v.pass, v.auth, v.lang, v.proxy_link, v.velta_link]);
+  if (key === shownHome) return;
+  shownHome = key;
+  const steps = $("steps");
+  steps.textContent = "";
+  steps.append(
+    stepRow("link", hasLink, !hasLink, t(hasLink ? "h_step_link_done" : "h_step_link"), 1),
+    stepRow("on", hasLink && running, hasLink && !running, t(hasLink && running ? "h_step_on_done" : "h_step_on"), 2));
+  const app = stepRow("app", seen, hasLink && running && !seen, t(seen ? "h_step_app_done" : "h_step_app"), 3);
+  if (seen) {
+    app.classList.add("tap");
+    const c = document.createElement("span");
+    c.className = "chev";
+    c.textContent = tabsOpen ? "⌃" : "⌄";
+    app.append(c);
+    app.onclick = () => { tabsOpen = !tabsOpen; shownHome = ""; renderHome(last); };
+  }
+  steps.append(app);
+  const open = !seen || tabsOpen;
+  setHidden("appBlock", !open);
+  setHidden("waiting", seen);
+  $("waiting").textContent = t("h_waiting");
+  setHidden("hideTabs", !(seen && tabsOpen));
+  $("hideTabs").textContent = t("h_hide");
+  $("hideTabs").onclick = () => { tabsOpen = false; shownHome = ""; renderHome(last); };
+  setHidden("connectAnother", !(seen && !tabsOpen));
+  $("connectAnother").textContent = t("h_connect_another");
+  $("connectAnother").onclick = () => { tabsOpen = true; shownHome = ""; renderHome(last); };
+  if (open) renderTabs(v);
+}
+function renderTabs(v) {
+  const names = ["tab_delta", "tab_velta", "tab_tg", "tab_other"];
+  const strip = $("tabs");
+  strip.textContent = "";
+  names.forEach((k, i) => {
+    const d = document.createElement("div");
+    d.textContent = t(k);
+    if (i === tab) d.className = "on"; else d.onclick = () => { tab = i; shownHome = ""; renderHome(last); };
+    strip.append(d);
+  });
+  const pane = $("tabpane");
+  pane.textContent = "";
+  const para = text => { const p = document.createElement("p"); p.textContent = text; return p; };
+  const button = (text, fn) => { const b = document.createElement("button"); b.className = "wide"; b.textContent = text; b.onclick = fn; return b; };
+  const download = url => {
+    const p = document.createElement("p"); p.className = "dl";
+    const a = document.createElement("a"); a.textContent = url; a.onclick = () => call("open", url).catch(fail);
+    p.append(t("h_download") + " ", a);
+    return p;
+  };
+  if (tab === 0) pane.append(para(t("tab_delta_text")), button(t("h_copy_link"), () => copy(v.proxy_link, t("proxy_link_copied"))), download(DOWNLOADS.delta));
+  else if (tab === 1) pane.append(para(t("tab_velta_text")), button(t("h_open_velta"), () =>
+    call("openVelta").then(opened => copy(v.velta_link, t(opened ? "velta_link_opened" : "velta_link_copied")), fail)), download(DOWNLOADS.velta));
+  else if (tab === 2) pane.append(para(t("tab_tg_text")), button(t("h_open_tg"), () =>
+    call("openTg").then(opened => copy(v.tg_link, t(opened ? "tg_link_opened" : "tg_link_copied")), fail)));
+  else {
+    pane.append(para(t("tab_other_text")));
+    const box = document.createElement("div");
+    box.className = "values";
+    const rows = [[t("proxy_host"), v.host, v.host], [t("proxy_port"), String(v.port), String(v.port)]];
+    if (v.auth) rows.push([t("proxy_user"), v.user, v.user], [t("proxy_pass"), showPass ? v.pass : "•".repeat(8), v.pass]);
+    for (const [label, shown, value] of rows) {
       const r = document.createElement("div");
       r.className = "v";
       r.innerHTML = "<span></span><span></span>";
       r.children[0].textContent = label;
-      r.children[1].textContent = value;
+      r.children[1].textContent = shown;
       r.onclick = () => copy(value, t("value_copied", label));
-      box.appendChild(r);
+      if (label === t("proxy_pass")) {
+        const sp = document.createElement("span");
+        sp.className = "showpw";
+        sp.textContent = t(showPass ? "h_hide" : "h_show");
+        sp.onclick = e => { e.stopPropagation(); showPass = !showPass; shownHome = ""; renderHome(last); };
+        r.append(sp);
+      }
+      box.append(r);
     }
-    if (!v.auth) {
-      const n = document.createElement("p");
-      n.className = "hint";
-      n.textContent = t("proxy_no_password");
-      box.appendChild(n);
-    }
+    if (!v.auth) { const n = document.createElement("p"); n.className = "hint"; n.textContent = t("proxy_no_password"); box.append(n); }
+    pane.append(box);
   }
-  $("status").textContent = v.full;
 }
 function renderSubscriptions(rows) {
   const box = $("subscriptions");
@@ -411,8 +588,15 @@ function renderRoutes() {
     row.className = "rrow" + (r.on ? "" : " off");
     const name = document.createElement("span");
     name.className = "rname";
-    name.textContent = (r.on ? "[x] " : "[  ] ") + routeText(r);
-    if (!editing) { row.append(name); box.append(row); return; }
+    if (!editing) {
+      const mark = document.createElement("span");
+      mark.className = "rmark";
+      mark.textContent = r.on ? "✓" : "×";
+      name.textContent = routeText(r);
+      row.append(mark, name);
+      box.append(row);
+      return;
+    }
     const on = document.createElement("input");
     on.type = "checkbox"; on.checked = r.on;
     on.onchange = () => { r.on = on.checked; renderRoutes(); };
@@ -453,6 +637,7 @@ function showLink(open) {
   }, fail);
 }
 function showSettings() {
+  renderLang();
   call("settings").then(s => {
     $("autoUpdate").checked = s.auto_update;
     $("auth").checked = s.auth;
@@ -468,10 +653,11 @@ function refreshAutostart() {
 }
 function page(name) {
   $("home").classList.toggle("hidden", name !== "home");
+  $("details").classList.toggle("hidden", name !== "details");
   $("settings").classList.toggle("hidden", name !== "settings");
-  $("backBtn").classList.toggle("hidden", name !== "settings");
-  $("settingsBtn").classList.toggle("hidden", name === "settings");
-  $("title").textContent = name === "settings" ? t("settings") : "Passage " + info.version;
+  $("backBtn").classList.toggle("hidden", name === "home");
+  $("settingsBtn").classList.toggle("hidden", name !== "home");
+  $("title").textContent = name === "settings" ? t("settings") : name === "details" ? t("details_title") : "Passage " + info.version;
   if (name === "settings") showSettings();
   scrollTo(0, 0);
 }
@@ -484,16 +670,16 @@ $("updateInstall").onclick = async () => {
 };
 $("subscriptionNoticeClose").onclick = () => call("dismissSubscriptionNotice").then(refresh, fail);
 $("startStop").onclick = () => call(last && last.running ? "stop" : "start").then(refresh, fail);
-$("startHint").onclick = $("startStop").onclick;
-$("settingsBtn").onclick = $("openSettings").onclick = () => page("settings");
-$("backBtn").onclick = () => page("home");
-$("head").onclick = () => {
+$("settingsBtn").onclick = () => page("settings");
+$("detailsRow").onclick = () => page("details");
+$("reportInfoBtn").onclick = () => $("reportInfo").classList.toggle("hidden");
+$("checkNow").onclick = () => {
   if (!last || !last.running) return toast(t("proxy_stopped"));
   call("recheck").then(refresh);
   setTimeout(refresh, 3100);
 };
-$("copyLink").onclick = () => last && copy(last.proxy_link, t("proxy_link_copied"));
-$("copyTg").onclick = () => last && call("openTg").then(opened => copy(last.tg_link, t(opened ? "tg_link_opened" : "tg_link_copied")), fail);
+$("copyStatus").onclick = () => last && copy(last.full, t("status_copied"));
+$("backBtn").onclick = () => page("home");
 let reporting = false;
 $("report").onclick = () => {
   if (reporting) return;
@@ -547,7 +733,7 @@ document.addEventListener("keydown", e => {
   ($("modalCancel").classList.contains("hidden") ? $("modalOk") : $("modalCancel")).click();
 });
 
-const initialized = call("init").then(i => {
+function applyStrings(i) {
   info = i;
   S = i.strings;
   document.documentElement.lang = i.lang;
@@ -559,12 +745,28 @@ const initialized = call("init").then(i => {
   $("source").textContent = i.source;
   tip("settingsBtn", "settings");
   tip("backBtn", "back");
-  tip("copyLink", "copy_proxy_link");
-  tip("copyTg", "copy_tg_link");
-  tip("report", "send_report");
   tip("myClear", "clear");
+}
+function renderLang() {
+  const box = $("langSeg"), cur = (last && last.lang) || "";
+  box.textContent = "";
+  for (const [val, key] of [["", "lang_system"], ["en", "lang_en"], ["ru", "lang_ru"]]) {
+    const d = document.createElement("div");
+    d.textContent = t(key);
+    if (val === cur) d.className = "on";
+    else d.onclick = () => call("setLanguage", val).then(() => call("init")).then(i => {
+      applyStrings(i);
+      shownHome = shownRoutes = "";
+      showSettings();
+      return refresh();
+    }).then(renderLang, fail);
+    box.append(d);
+  }
+}
+const initialized = call("init").then(i => {
+  applyStrings(i);
   page("home");
-  refresh();
+  refresh().then(renderLang);
   // Only while the window is visible, as the app polls only on screen.
   setInterval(() => { if (!document.hidden) refresh(); }, 2000);
 });

@@ -4,11 +4,11 @@ import (
 	"bufio"
 	"fmt"
 	"os"
-	"regexp"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/mrgluek/passage/core/internal/reporttext"
 	"github.com/mrgluek/passage/core/tunnel"
 )
 
@@ -25,10 +25,11 @@ type appLog struct {
 	path    string
 	version string
 
-	mu     sync.Mutex
-	lines  []string
-	copied time.Time
-	copyMu sync.Mutex
+	mu        sync.Mutex
+	lines     []string
+	copied    map[historyKey]struct{}
+	copyOrder []historyKey
+	copyMu    sync.Mutex
 }
 
 func openLog(path, version string) *appLog {
@@ -36,7 +37,13 @@ func openLog(path, version string) *appLog {
 	if f, err := os.Open(path); err == nil {
 		sc := bufio.NewScanner(f)
 		for sc.Scan() {
-			l.keep(sc.Text())
+			line := sc.Text()
+			fields := strings.SplitN(line, " ", 4)
+			if len(fields) == 4 {
+				fields[3] = neutralHistoryMessage(fields[3])
+				line = strings.Join(fields, " ")
+			}
+			l.keep(line)
 		}
 		f.Close()
 	}
@@ -94,28 +101,49 @@ func (l *appLog) text(n int) string {
 	return b.String()
 }
 
-var (
-	redactURL    = regexp.MustCompile(`[A-Za-z][A-Za-z0-9+.-]*://\S+`)
-	redactSecret = regexp.MustCompile(`(?i)("?(?:key|pass(?:word)?|user(?:name)?|ticket|zone|link)"?\s*[:=]\s*)(?:"[^"]*"|[^\s,}]+)`)
-)
-
-// redact hides what a link carries, as the Android app's Diagnostics.redact.
 func redact(s string) string {
-	s = redactURL.ReplaceAllString(s, "[link]")
-	return redactSecret.ReplaceAllString(s, "${1}[redacted]")
+	return reporttext.Redact(s)
+}
+
+type historyKey struct {
+	time    time.Time
+	message string
+}
+
+func neutralHistoryMessage(message string) string {
+	if rest, ok := strings.CutPrefix(message, "unblocked:"); ok {
+		return "resumed:" + rest
+	}
+	if strings.HasPrefix(message, "stalled:") {
+		return strings.Replace(message, "), blocked for ", "), paused for ", 1)
+	}
+	return message
 }
 
 func (l *appLog) copyStalls(events []tunnel.Event) {
 	l.copyMu.Lock()
 	defer l.copyMu.Unlock()
 	for _, e := range events {
-		if !strings.HasPrefix(e.Msg, "stalled:") && !strings.HasPrefix(e.Msg, "unblocked:") {
+		message := neutralHistoryMessage(e.Msg)
+		if !strings.HasPrefix(message, "stalled:") && !strings.HasPrefix(message, "resumed:") && !strings.HasPrefix(message, "disagree:") {
 			continue
 		}
-		if !e.Time.After(l.copied) {
+		if e.Time.IsZero() {
 			continue
 		}
-		l.addAt(e.Time, e.Msg)
-		l.copied = e.Time
+		key := historyKey{time: e.Time.UTC(), message: e.Msg}
+		if _, ok := l.copied[key]; ok {
+			continue
+		}
+		l.addAt(e.Time, message)
+		if l.copied == nil {
+			l.copied = make(map[historyKey]struct{})
+		}
+		l.copied[key] = struct{}{}
+		l.copyOrder = append(l.copyOrder, key)
+		if len(l.copyOrder) > logKeep {
+			delete(l.copied, l.copyOrder[0])
+			l.copyOrder = l.copyOrder[1:]
+		}
 	}
 }
