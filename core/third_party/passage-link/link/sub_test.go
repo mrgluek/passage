@@ -387,6 +387,11 @@ func TestClosedSub(t *testing.T) {
 		t.Fatal("closed routes accepted")
 	}
 	b.Routes = nil
+	b.Updates = []string{"https://example.org/releases"}
+	if _, err := b.Validate(); err == nil {
+		t.Fatal("closed updates accepted")
+	}
+	b.Updates = nil
 	b.Sub = nil
 	b.Revision = 0
 	if _, err := b.Validate(); err == nil {

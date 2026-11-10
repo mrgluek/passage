@@ -48,8 +48,10 @@ type App struct {
 	iroh    string
 	t       tr
 	lang    string
-	os      platform
-	changed func() // the tray redraws
+	// systemLang is the language the system asked for; lang may differ by choice.
+	systemLang string
+	os         platform
+	changed    func() // the tray redraws
 
 	mu                     sync.Mutex
 	settings               Settings
@@ -73,11 +75,14 @@ type App struct {
 }
 
 func newApp(dir, version, iroh, lang string, os platform) *App {
-	a := &App{dir: dir, version: version, iroh: iroh, lang: lang, t: table(lang), os: os, changed: func() {}}
+	a := &App{dir: dir, version: version, iroh: iroh, lang: lang, systemLang: lang, t: table(lang), os: os, changed: func() {}}
 	a.log = openLog(a.path(logName), version)
 	a.event("app start")
 	s, existed, err := loadSettings(a.path(iniName))
 	a.settings = s
+	if s.Lang != "" {
+		a.lang, a.t = s.Lang, table(s.Lang)
+	}
 	if err != nil {
 		a.event("settings: %v", err)
 	}
@@ -86,6 +91,26 @@ func newApp(dir, version, iroh, lang string, os platform) *App {
 	}
 	a.loadLink()
 	return a
+}
+
+// downloadURLs are the pages where the apps in the setup tabs can be got.
+var downloadURLs = []string{"https://download.delta.chat", "https://velta.cc/#download"}
+
+// setLanguage switches the window's language: "en", "ru", or "" for the system's.
+func (a *App) setLanguage(lang string) error {
+	if lang != "" && lang != "en" && lang != "ru" {
+		return errors.New("unknown language")
+	}
+	a.mu.Lock()
+	a.settings.Lang = lang
+	if lang == "" {
+		lang = a.systemLang
+	}
+	a.lang, a.t = lang, table(lang)
+	a.saveSettings()
+	a.mu.Unlock()
+	a.changed()
+	return nil
 }
 
 func (a *App) path(name string) string { return filepath.Join(a.dir, name) }
@@ -240,7 +265,6 @@ func (a *App) tick() {
 			return
 		}
 	}
-	go a.changed()
 }
 
 func (a *App) run(ctx context.Context) {
@@ -269,6 +293,7 @@ func (a *App) run(ctx context.Context) {
 		case <-tk.C:
 			a.tick()
 			a.updateTick(time.Now())
+			go a.changed()
 		}
 	}
 }
@@ -335,25 +360,43 @@ func (a *App) trayState() trayState {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	st := trayState{Running: a.settings.Running, Mode: a.mode(), Routes: a.routes(), My: a.settings.My != ""}
-	switch {
-	case !st.Running:
-		st.Tooltip = "Passage: " + a.t.f("proxy_stopped")
-	case a.lastErr != "":
-		st.Tooltip = "Passage: " + a.lastErr
-	case a.tun != nil:
-		st.Tooltip = "Passage: " + routesLine(a.t, a.tun.Status(0))
-	default:
-		st.Tooltip = "Passage: " + a.t.f("starting")
-	}
+	st.Tooltip = "Passage: " + a.t.f(a.trayTitleKey())
 	if a.updater.offer != nil {
 		st.Update = a.updater.offer.Version
-		st.Tooltip += " · " + a.t.f("update_available", st.Update)
-	}
-	// The notification area cuts tooltips at 127 characters.
-	if r := []rune(st.Tooltip); len(r) > 120 {
-		st.Tooltip = string(r[:119]) + "…"
 	}
 	return st
+}
+
+func (a *App) trayTitleKey() string {
+	switch {
+	case a.lastErr != "":
+		return "h_title_error"
+	case !a.hasLink():
+		return "h_title_nolink"
+	case !a.settings.Running:
+		return "h_title_off"
+	case a.tun == nil:
+		return "h_title_connecting"
+	}
+	return healthTitleKey(a.tun.Status(0).Health)
+}
+
+func healthTitleKey(health tunnel.Health) string {
+	switch health.State {
+	case "starting":
+		return "h_title_connecting"
+	case "problem":
+		switch health.Reason {
+		case "no_internet", "server_down", "no_route", "slow":
+			return "h_title_" + health.Reason
+		default:
+			return "h_title_slow"
+		}
+	case "working", "limited":
+		return "h_title_working"
+	default:
+		return "h_title_on"
+	}
 }
 
 // view is the home screen's state.
@@ -378,6 +421,16 @@ type view struct {
 	Pass               string            `json:"pass"`
 	ProxyLink          string            `json:"proxy_link"` // socks5://
 	TgLink             string            `json:"tg_link"`    // tg://socks
+	VeltaLink          string            `json:"velta_link"` // velta://proxy/2
+	// Traffic grows while the proxy carries bytes; the window pulses on it.
+	Traffic int64 `json:"traffic"`
+	// AppSeen is true once a chat app has used the proxy.
+	AppSeen bool   `json:"app_seen"`
+	Lang    string `json:"lang"`
+	// Error is why the proxy could not start, if it could not.
+	Error string `json:"error"`
+	// Health is the router's plain verdict, empty while the proxy is stopped.
+	Health tunnel.Health `json:"health"`
 }
 
 // startHint asks to start the proxy when routes exist but it is not running.
@@ -393,7 +446,8 @@ func (a *App) view() view {
 	defer a.mu.Unlock()
 	s := a.settings
 	v := view{Running: s.Running, HasLink: a.hasLink(), Mode: a.mode(), Routes: a.routes(),
-		My: s.My != "", Auth: s.Auth, Host: host, Port: s.Port, ProxyLink: s.socksURL(), TgLink: s.proxyLink("tg://socks")}
+		My: s.My != "", Auth: s.Auth, Host: host, Port: s.Port, ProxyLink: s.socksURL(), TgLink: s.proxyLink("tg://socks"), VeltaLink: s.veltaLink(),
+		AppSeen: s.AppSeen, Lang: s.Lang, Error: a.lastErr}
 	if s.Auth {
 		v.User, v.Pass = s.User, s.Pass
 	}
@@ -414,7 +468,17 @@ func (a *App) view() view {
 			st.Events = st.Events[len(st.Events)-30:]
 		}
 		v.Line = oneLine(a.t, st)
+		v.Health = st.Health
 		full = fullStatus(a.t, st)
+		var conns int64
+		for _, r := range st.Stats {
+			conns += r.Conns
+			v.Traffic += r.Up + r.Down
+		}
+		if conns > 0 && !a.settings.AppSeen {
+			a.settings.AppSeen, v.AppSeen = true, true
+			a.saveSettings()
+		}
 	} else {
 		full = a.t.f("proxy_not_running") + "\n"
 	}
@@ -754,11 +818,16 @@ func (a *App) report() string {
 		"link_error":   redact(a.linkErr),
 	}
 	r["device"] = a.os.device()
-	r["diagnostics"] = map[string]any{"events": a.log.last(logKeep)}
+	history := a.log.last(logKeep)
+	for i, line := range history {
+		history[i] = redact(line)
+	}
+	r["diagnostics"] = map[string]any{"events": history}
 	r["device_network"] = map[string]any{"dns": sysdns.Resolvers()}
 	if test != nil {
 		r["network_test"] = test
 	}
+	maskReportAddresses(r, reportPrefixes())
 	b, _ := json.MarshalIndent(r, "", "  ")
 	return string(b)
 }
@@ -856,12 +925,22 @@ func (a *App) call(method string, arg json.RawMessage) (any, error) {
 		return nil, a.os.copyText(str())
 	case "open":
 		target := str()
-		if target != siteURL && target != sourceURL {
+		if target != siteURL && target != sourceURL && !slices.Contains(downloadURLs, target) {
 			return nil, errors.New("not an allowed link")
 		}
 		return nil, a.os.open(target)
 	case "openFolder":
 		return nil, a.os.open(a.dir)
+	case "openVelta":
+		if !a.os.canOpen("velta") {
+			return false, nil
+		}
+		a.mu.Lock()
+		link := a.settings.veltaLink()
+		a.mu.Unlock()
+		return true, a.os.open(link)
+	case "setLanguage":
+		return nil, a.setLanguage(str())
 	case "openTg":
 		if !a.os.canOpen("tg") {
 			return false, nil

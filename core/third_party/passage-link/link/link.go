@@ -29,6 +29,8 @@ const MaxRoutes = 6
 const MaxUpdates = 4
 const CompactBytes = 1024
 
+var exitPattern = regexp.MustCompile(`^[a-z0-9-]{1,32}$`)
+
 var idPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]{0,47}$`)
 var enc cbor.EncMode
 var dec cbor.DecMode
@@ -51,6 +53,8 @@ func init() {
 }
 
 type Route struct {
+	Exit     string         `json:"exit,omitempty" cbor:"exit,omitempty"`
+	Use      string         `json:"use,omitempty" cbor:"use,omitempty"`
 	ID       string         `json:"id" cbor:"id"`
 	Type     string         `json:"type" cbor:"type"`
 	Wire     string         `json:"wire" cbor:"wire"`
@@ -59,6 +63,8 @@ type Route struct {
 	Params   map[string]any `json:"params" cbor:"params"`
 }
 type Bundle struct {
+	Sources     []string `json:"sources,omitempty" cbor:"sources,omitempty"`
+	Canaries    []string `json:"canaries,omitempty" cbor:"canaries,omitempty"`
 	Closed      bool     `json:"closed,omitempty" cbor:"closed,omitempty"`
 	Revision    uint64   `json:"revision,omitempty" cbor:"revision,omitempty"`
 	Sub         []byte   `json:"sub,omitempty" cbor:"sub,omitempty"`
@@ -90,9 +96,19 @@ type SocksAuth struct {
 	Username string `json:"username"`
 	Password string `json:"password"`
 }
+
+// WSSV1Params is frozen; address overrides require wss-v2.
+type WSSV1Params struct {
+	Endpoint string `json:"endpoint"`
+	Key      []byte `json:"key"`
+}
+
+// WSSParams carries wss-v2 parameters.
 type WSSParams struct {
 	Endpoint string `json:"endpoint"`
 	Key      []byte `json:"key"`
+	DialIP   string `json:"dial_ip,omitempty"`
+	SNI      string `json:"sni,omitempty"`
 }
 
 type HTTPParams struct {
@@ -307,8 +323,14 @@ func validateHostPort(s string, ipOnly bool) error {
 	return nil
 }
 func ValidateRoute(r Route) (bool, error) {
+	if r.Exit != "" && !exitPattern.MatchString(r.Exit) {
+		return false, errors.New("invalid exit label")
+	}
 	if !ValidID(r.ID) || len(r.Type) > 48 || len(r.Wire) > 96 || r.Type == "" || r.Wire == "" || r.Params == nil {
 		return false, errors.New("invalid route fields")
+	}
+	if r.Use != "" && r.Use != "reserve" {
+		return false, nil
 	}
 	switch r.Type + "/" + r.Wire {
 	case "turn/turn-v1":
@@ -336,7 +358,7 @@ func ValidateRoute(r Route) (bool, error) {
 		if err != nil {
 			return true, err
 		}
-		if len(p.Key) != 32 || len(p.Zone) > 200 || !validZone(p.Zone) || len(p.Resolvers) > 64 || len(p.Canaries) > 8 {
+		if len(p.Key) != 32 || len(p.Zone) > 200 || !validZone(p.Zone) || len(p.Resolvers) > 64 {
 			return true, errors.New("invalid DNS route parameters")
 		}
 		for _, v := range p.Resolvers {
@@ -344,10 +366,8 @@ func ValidateRoute(r Route) (bool, error) {
 				return true, err
 			}
 		}
-		for _, v := range p.Canaries {
-			if err := validateHostPort(v, false); err != nil {
-				return true, err
-			}
+		if err := validateCanaries(p.Canaries, false); err != nil {
+			return true, err
 		}
 	case "http/http-v1":
 		p, err := Params[HTTPParams](r)
@@ -367,8 +387,23 @@ func ValidateRoute(r Route) (bool, error) {
 		copy.Type, copy.Wire = "wss", "wss-v1"
 		copy.Params = map[string]any{"endpoint": "wss://" + strings.TrimPrefix(p.Endpoint, "https://"), "key": p.Key}
 		return ValidateRoute(copy)
-	case "wss/wss-v1":
+	case "wss/wss-v2":
 		p, err := Params[WSSParams](r)
+		if err != nil {
+			return true, err
+		}
+		if p.DialIP != "" && net.ParseIP(p.DialIP) == nil {
+			return true, errors.New("invalid WSS dial IP")
+		}
+		if p.SNI != "" && (len(p.SNI) > 253 || net.ParseIP(p.SNI) != nil || !validZone(p.SNI)) {
+			return true, errors.New("invalid WSS SNI")
+		}
+		copy := r
+		copy.Wire = "wss-v1"
+		copy.Params = map[string]any{"endpoint": p.Endpoint, "key": p.Key}
+		return ValidateRoute(copy)
+	case "wss/wss-v1":
+		p, err := Params[WSSV1Params](r)
 		if err != nil {
 			return true, err
 		}
@@ -440,7 +475,7 @@ func (b Bundle) Validate() ([]string, error) {
 	} else if b.Revision != 0 {
 		return nil, errors.New("revision requires subscription id")
 	}
-	if b.Closed && (b.Sub == nil || b.Mode != "replace" || len(b.Routes) != 0) {
+	if b.Closed && (b.Sub == nil || b.Mode != "replace" || len(b.Routes) != 0 || len(b.Updates) != 0 || len(b.Sources) != 0 || len(b.Canaries) != 0) {
 		return nil, errors.New("invalid closed subscription")
 	}
 	if b.V != 2 || b.Kind != "routes" || b.Mode != "merge" && b.Mode != "replace" || len(b.Name) > 128 || !b.Closed && len(b.Routes) < 1 || len(b.Routes) > limit {
@@ -449,13 +484,14 @@ func (b Bundle) Validate() ([]string, error) {
 	if b.ReviewAfter != 0 && b.ReviewAfter < b.IssuedAt {
 		return nil, errors.New("invalid review date")
 	}
-	if len(b.Updates) > MaxUpdates {
-		return nil, errors.New("too many update addresses")
+	if err := ValidateSources(b.Sources); err != nil {
+		return nil, err
 	}
-	for _, s := range b.Updates {
-		if u, err := url.Parse(s); err != nil || len(s) > 256 || u.Scheme != "https" || u.Host == "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" {
-			return nil, errors.New("invalid update address")
-		}
+	if err := ValidateCanaries(b.Canaries); err != nil {
+		return nil, err
+	}
+	if err := ValidateUpdates(b.Updates); err != nil {
+		return nil, err
 	}
 	ids := map[string]bool{}
 	unsupported := []string{}
@@ -773,4 +809,37 @@ func RouteHash(r Route) string {
 	raw, _ := enc.Marshal(r)
 	sum := sha256.Sum256(raw)
 	return fmt.Sprintf("%x", sum[:])
+}
+
+// ValidateUpdates checks app release addresses.
+func ValidateUpdates(updates []string) error {
+	if len(updates) > MaxUpdates {
+		return errors.New("too many update addresses")
+	}
+	for _, s := range updates {
+		if u, err := url.Parse(s); err != nil || len(s) > 256 || u.Scheme != "https" || u.Host == "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" {
+			return errors.New("invalid update address")
+		}
+	}
+	return nil
+}
+
+// ValidateCanaries checks up to eight host:port probe targets.
+func ValidateCanaries(canaries []string) error {
+	return validateCanaries(canaries, true)
+}
+
+func validateCanaries(canaries []string, checkHost bool) error {
+	if len(canaries) > 8 {
+		return errors.New("too many canaries")
+	}
+	for _, v := range canaries {
+		if err := validateHostPort(v, false); err != nil {
+			return err
+		}
+		if host, _, _ := net.SplitHostPort(v); checkHost && net.ParseIP(host) == nil && !validSubDNS(host) {
+			return errors.New("invalid canary host")
+		}
+	}
+	return nil
 }

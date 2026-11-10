@@ -74,3 +74,11 @@ class SubscriptionsTest {
         assertFalse(text.contains("example.org"))
     }
 }
+
+class SubscriptionNameTest {
+    @org.junit.Test fun stripsControlsAndLimitsCodePoints() {
+        val emoji = "\uD83D\uDE42"
+        val name = "Ex\nam\u202eple\u2028\u0000" + emoji.repeat(58)
+        org.junit.Assert.assertEquals("Example" + emoji.repeat(57), Subscriptions.displayName(name))
+    }
+}

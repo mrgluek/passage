@@ -129,7 +129,7 @@ func TestStallBackoffPerNetwork(t *testing.T) {
 	for _, delay := range []time.Duration{2 * time.Minute, 10 * time.Minute, 30 * time.Minute, 30 * time.Minute} {
 		poolStall(t, p, 0, "a")
 		poolStall(t, p, 0, "a")
-		if got := p.stalls["a"][0].Until.Sub(now); got != delay {
+		if got := p.stalls["a"][0].until.Sub(now); got != delay {
 			t.Fatalf("backoff %v want %v", got, delay)
 		}
 		if got := p.order(nil); got[0] != 1 {
@@ -145,7 +145,7 @@ func TestStallBackoffPerNetwork(t *testing.T) {
 	c.feedback(false)
 	poolStall(t, p, 0, "a")
 	poolStall(t, p, 0, "a")
-	if p.stalls["a"][0].Until.Sub(now) != 2*time.Minute {
+	if p.stalls["a"][0].until.Sub(now) != 2*time.Minute {
 		t.Fatal("success did not reset backoff")
 	}
 	poolStall(t, p, 1, "a")
@@ -236,11 +236,17 @@ func TestStalledSOCKSRetryUsesBackup(t *testing.T) {
 					t.Fatal("silent connection survived")
 				}
 			}
-			routeName := kind
+			tt.mu.Lock()
+			routeName := tt.relays["relay.example.org"].historyUnit() + " " + kind
+			tt.mu.Unlock()
 			if kind == "tunnel" {
 				routeName = "a"
 			}
-			expected := "stalled: " + routeName + " (first reply), blocked for 2 min, count=2"
+			reason := "first reply"
+			if kind == "tunnel" {
+				reason = "first reply, 2 destinations"
+			}
+			expected := "stalled: " + routeName + " (" + reason + "), paused for 2 min, count=2"
 			found := 0
 			for _, event := range tt.Status(500).Events {
 				if strings.HasPrefix(event.Msg, "stalled:") {
@@ -539,12 +545,12 @@ func TestStallHistory(t *testing.T) {
 			t.Run(fmt.Sprintf("%s/first=%v", route, first), func(t *testing.T) {
 				log := newEventLog(20)
 				now := time.Unix(1000, 0)
-				state := &stallState{}
+				state := &hold{}
 				feedback := func(stalled, first bool, socket net.Conn) {
 					if stalled {
-						state.record(now, log, route, first, fmt.Sprintf("%p", socket))
+						state.onStall(now, log, route, first, fmt.Sprintf("%p", socket))
 					} else {
-						state.recovered(log, route)
+						state.onReply(log, route)
 					}
 				}
 				force := func() {
@@ -579,18 +585,18 @@ func TestStallHistory(t *testing.T) {
 					kind = "first, single"
 				}
 				want := fmt.Sprintf("%s: connection closed, no reply (%s)", route, kind)
-				if events := log.last(20); len(events) != 1 || events[0].Msg != want || state.blocked(now, log, route) {
+				if events := log.last(20); len(events) != 1 || events[0].Msg != want || state.blocked() {
 					t.Fatalf("events %+v, state %+v", events, state)
 				}
 				if !first {
 					force()
-					if events := log.last(20); len(events) != 2 || events[1].Msg != want || state.Steps != 0 {
+					if events := log.last(20); len(events) != 2 || events[1].Msg != want || state.step != 0 {
 						t.Fatalf("events %+v, state %+v", events, state)
 					}
 					return
 				}
 				force()
-				want = fmt.Sprintf("stalled: %s (first reply), blocked for 2 min, count=2", route)
+				want = fmt.Sprintf("stalled: %s (first reply), paused for 2 min, count=2", route)
 				if events := log.last(20); len(events) != 2 || events[1].Msg != want {
 					t.Fatalf("events %+v, want %s", events, want)
 				}
@@ -600,7 +606,7 @@ func TestStallHistory(t *testing.T) {
 				}
 				now = now.Add(30 * time.Second)
 				force()
-				if events := log.last(20); len(events) != 2 || state.Steps != 1 {
+				if events := log.last(20); len(events) != 2 || state.step != 1 {
 					t.Fatalf("events %+v", events)
 				}
 				a, b := net.Pipe()
@@ -611,7 +617,7 @@ func TestStallHistory(t *testing.T) {
 				}
 				c.Close()
 				events := log.last(20)
-				if len(events) != 3 || events[2].Msg != "unblocked: "+route+" (first reply)" || state.Steps != 0 {
+				if len(events) != 3 || events[2].Msg != "resumed: "+route+" (first reply)" || state.step != 0 {
 					t.Fatalf("events %+v, state %+v", events, state)
 				}
 			})
@@ -630,23 +636,24 @@ func TestPoolStallEvents(t *testing.T) {
 	c.feedback(true, false)
 	poolStall(t, p, 0, "")
 	c.feedback(true, true)
-	if events := log.last(20); len(events) != 3 || events[2].Msg != "stalled: route-a (first reply), blocked for 2 min, count=3" {
+	if events := log.last(20); len(events) != 3 || events[2].Msg != "stalled: route-a (first reply, 2 destinations), paused for 2 min, count=3" {
 		t.Fatalf("events %+v", events)
 	}
 	now = now.Add(10 * time.Minute)
+	p.tick(now)
 	p.mu.Lock()
-	if p.stalledLocked("", 0, now) {
+	if p.stalledLocked("", 0) {
 		t.Error("cooldown did not end")
 	}
-	p.stalledLocked("", 0, now)
+	p.stalledLocked("", 0)
 	p.mu.Unlock()
-	if events := log.last(20); len(events) != 4 || events[3].Msg != "unblocked: route-a (cooldown ended)" {
+	if events := log.last(20); len(events) != 4 || events[3].Msg != "resumed: route-a (cooldown ended)" {
 		t.Fatalf("events %+v", events)
 	}
 	c.feedback(false)
 	poolStall(t, p, 0, "")
 	poolStall(t, p, 0, "")
-	if p.stalls[""][0].Steps != 1 {
+	if p.stalls[""][0].step != 1 {
 		t.Fatal("first reply did not reset step")
 	}
 }
@@ -670,7 +677,7 @@ func TestStallCorroboration(t *testing.T) {
 						tt.connectionFeedback(g, RouteTunnel, key, stalled, first)
 					}
 				}
-				state := func() *stallState {
+				state := func() *hold {
 					if layer == "pool" {
 						return p.stalls["a"][0]
 					}
@@ -682,7 +689,7 @@ func TestStallCorroboration(t *testing.T) {
 				assertOpen := func() {
 					t.Helper()
 					s := state()
-					if s.blocked(now, log, "route-a") || s.Steps != 0 {
+					if s.blocked() || s.step != 0 {
 						t.Fatalf("isolated evidence changed cooldown: %+v", s)
 					}
 				}
@@ -721,12 +728,12 @@ func TestStallCorroboration(t *testing.T) {
 				now = now.Add(60 * time.Second)
 				feedback("b.example.org:443", 0, true, true)
 				s := state()
-				if !s.blocked(now, log, "route-a") || s.Until != now.Add(2*time.Minute) || s.Steps != 1 || s.Count != 2 {
+				if !s.blocked() || s.until != now.Add(2*time.Minute) || s.step != 1 || s.count != 2 {
 					t.Fatalf("distinct stalls: %+v", s)
 				}
-				until := s.Until
+				until := s.until
 				feedback("a.example.org:443", 0, true, false)
-				if s.Until != until || s.Count != 3 {
+				if s.until != until || s.count != 3 {
 					t.Fatalf("later stall changed hold: %+v", s)
 				}
 				if scenario == "recovered" {
@@ -816,7 +823,7 @@ func TestPinnedRouteNeverCoolsDown(t *testing.T) {
 		poolStall(t, p, 0, "")
 	}
 	s := p.stalls[""][0]
-	if s.Steps != 0 || !s.Until.IsZero() || failures != 0 {
+	if s.step != 0 || !s.until.IsZero() || failures != 0 {
 		t.Fatalf("pinned cooldown: %+v, callbacks %d", s, failures)
 	}
 	if got := p.order(nil); len(got) != 1 || got[0] != 0 {
@@ -861,7 +868,7 @@ func TestLegacyTunnelStallCooldown(t *testing.T) {
 			}
 			tt.connectionFeedback(g, RouteTunnel, "a.example.org:443", true)
 			tt.connectionFeedback(g, RouteTunnel, "a.example.org:443", true)
-			if tt.tunnelStall.Steps != 0 {
+			if tt.tunnelStall.step != 0 {
 				t.Fatal("same destination cooled down tunnel")
 			}
 			tt.connectionFeedback(g, RouteTunnel, "b.example.org:443", true)
@@ -874,11 +881,11 @@ func TestLegacyTunnelStallCooldown(t *testing.T) {
 			if r != want {
 				t.Fatalf("dial route %v, want %v", r, want)
 			}
-			if pinned && tt.tunnelStall.Steps != 0 {
+			if pinned && tt.tunnelStall.step != 0 {
 				t.Fatal("pinned legacy route cooled down")
 			}
 			tt.connectionFeedback(g, RouteTunnel, "c.example.org:443", false)
-			if tt.tunnelStall.Steps != 0 || !tt.tunnelStall.Until.IsZero() {
+			if tt.tunnelStall.step != 0 || !tt.tunnelStall.until.IsZero() {
 				t.Fatal("route reply did not clear cooldown")
 			}
 		})
@@ -889,10 +896,10 @@ func TestLegacyTunnelStallCooldown(t *testing.T) {
 // group keeps using its current route, and a failed dial still falls through
 // to the other held route.
 func TestDialUsesHeldRoutesAsLastResort(t *testing.T) {
-	hold := func(tt *Tunnel, g *group) {
+	holdRoutes := func(tt *Tunnel, g *group) {
 		until := time.Now().Add(time.Hour)
-		g.stalls[RouteDirect] = &stallState{Until: until, Steps: 1}
-		tt.tunnelStall = &stallState{Until: until, Steps: 1}
+		g.stalls[RouteDirect] = &hold{state: Held, until: until, step: 1}
+		tt.tunnelStall = &hold{state: Held, until: until, step: 1}
 	}
 	for _, current := range []Route{RouteDirect, RouteTunnel} {
 		t.Run(current.String(), func(t *testing.T) {
@@ -901,7 +908,7 @@ func TestDialUsesHeldRoutesAsLastResort(t *testing.T) {
 			g := tt.testGroup("relay.example.org:443")
 			g.route = current
 			tt.mu.Lock()
-			hold(tt, g)
+			holdRoutes(tt, g)
 			tt.mu.Unlock()
 			c, r, err := tt.dial(g, "relay.example.org:443")
 			if err != nil {
@@ -919,7 +926,7 @@ func TestDialUsesHeldRoutesAsLastResort(t *testing.T) {
 		g := tt.testGroup("relay.example.org:443")
 		g.route = RouteDirect
 		tt.mu.Lock()
-		g.stalls[RouteDirect] = &stallState{Until: time.Now().Add(time.Hour), Steps: 1}
+		g.stalls[RouteDirect] = &hold{state: Held, until: time.Now().Add(time.Hour), step: 1}
 		tt.mu.Unlock()
 		c, r, err := tt.dial(g, "relay.example.org:443")
 		if err != nil {
@@ -936,7 +943,7 @@ func TestDialUsesHeldRoutesAsLastResort(t *testing.T) {
 		g := tt.testGroup("relay.example.org:443")
 		g.route = RouteTunnel
 		tt.mu.Lock()
-		hold(tt, g)
+		holdRoutes(tt, g)
 		tt.mu.Unlock()
 		c, r, err := tt.dial(g, "relay.example.org:443")
 		if err != nil {
@@ -986,7 +993,7 @@ func TestStallHoldDoesNotEscalateOrRememberBlocked(t *testing.T) {
 	for i := range 20 {
 		tt.connectionFeedback(g, RouteDirect, fmt.Sprint(i), true)
 	}
-	if g.stalls[RouteDirect].Steps != 1 {
+	if g.stalls[RouteDirect].step != 1 {
 		t.Fatal("parallel stalls escalated hold")
 	}
 	for range blockedAfter + 1 {

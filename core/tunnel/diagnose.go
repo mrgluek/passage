@@ -145,6 +145,7 @@ func (t *Tunnel) Diagnose(ctx context.Context) Diagnosis {
 			cctx, cancel := context.WithTimeout(ctx, 15*time.Second)
 			defer cancel()
 			d.Checks[i] = checkRoute(cctx, w.name, w.server, w.dial, data)
+			d.Checks[i].Exit = w.exit
 		}()
 	}
 	wg.Wait()

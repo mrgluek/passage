@@ -13,7 +13,16 @@ import (
 
 // SaveSubscriptionState writes private subscription routes and metadata atomically.
 func SaveSubscriptionState(path string, cfg Config) error {
-	state := Config{Subscriptions: cfg.Subscriptions, UpdateSources: cfg.UpdateSources}
+	state := Config{Subscriptions: slices.Clone(cfg.Subscriptions), UpdateSources: cfg.UpdateSources}
+	for i := range state.Subscriptions {
+		state.Subscriptions[i].SourceStats = state.Subscriptions[i].retainedSourceStats()
+	}
+	for _, sub := range cfg.Subscriptions {
+		if len(sub.Canaries) > 0 {
+			state.Canaries = slices.Clone(cfg.Canaries)
+			break
+		}
+	}
 	owned := map[string]bool{}
 	for _, sub := range cfg.Subscriptions {
 		for _, id := range sub.RouteIDs {
@@ -122,10 +131,19 @@ func RestoreSubscriptionState(cfg Config, path string) (Config, error) {
 				routes = append(routes, r)
 				saved.RouteIDs = append(saved.RouteIDs, r.ID)
 			}
-			if !slices.Equal(saved.Sources, sub.Sources) || !bytes.Equal(saved.ReadKey, sub.ReadKey) {
+			sources := slices.Clone(sub.Sources)
+			if trusted {
+				sources = mergeSubscriptionSources(saved.BundleSources, sub.originalSources())
+			}
+			if !slices.Equal(saved.Sources, sources) || !bytes.Equal(saved.ReadKey, sub.ReadKey) {
 				saved.ETag, saved.ETagSource = "", ""
 			}
-			saved.Name, saved.Sources, saved.ReadKey = sub.Name, slices.Clone(sub.Sources), slices.Clone(sub.ReadKey)
+			saved.Name, saved.Sources, saved.ReadKey = sub.Name, sources, slices.Clone(sub.ReadKey)
+			saved.InviteSources = slices.Clone(sub.originalSources())
+			if !trusted {
+				saved.BundleSources, saved.Canaries = nil, nil
+			}
+			saved.SourceStats = saved.retainedSourceStats()
 			cfg.Subscriptions[j] = saved
 			cfg.Routes = links.Sorted(routes)
 			if cfg.RouteEdits == nil {
@@ -135,6 +153,9 @@ func RestoreSubscriptionState(cfg Config, path string) (Config, error) {
 				if edit, ok := stored.RouteEdits[id]; ok {
 					cfg.RouteEdits[id] = edit
 				}
+			}
+			if trusted && len(saved.Canaries) > 0 && len(stored.Canaries) > 0 {
+				cfg.Canaries = slices.Clone(stored.Canaries)
 			}
 			if keys, e := authorKeys(); e == nil && len(keys) > 0 && bytes.Equal(saved.Signer, keys[0]) && len(stored.UpdateSources) > 0 {
 				cfg.UpdateSources = slices.Clone(stored.UpdateSources)

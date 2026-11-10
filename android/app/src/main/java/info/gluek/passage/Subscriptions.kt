@@ -5,6 +5,21 @@ import org.json.JSONObject
 
 /** Subscription display uses only public metadata. */
 object Subscriptions {
+    fun displayName(name: String): String = buildString {
+        var offset = 0
+        var count = 0
+        while (offset < name.length && count < 64) {
+            val codePoint = name.codePointAt(offset)
+            offset += Character.charCount(codePoint)
+            when (Character.getType(codePoint)) {
+                Character.CONTROL.toInt(), Character.FORMAT.toInt(),
+                Character.LINE_SEPARATOR.toInt(), Character.PARAGRAPH_SEPARATOR.toInt() -> continue
+            }
+            appendCodePoint(codePoint)
+            count++
+        }
+    }.trim()
+
     fun inviteSignerResources(signature: String): List<Int> =
         if (signature == "trusted_author") listOf(R.string.sub_trusted, R.string.sub_takeover)
         else listOf(R.string.sub_unknown)
@@ -17,7 +32,7 @@ object Subscriptions {
     fun owner(config: JSONObject, id: String): String = rows(config).firstOrNull { sub ->
         val ids = sub.optJSONArray("route_ids")
         ids != null && (0 until ids.length()).any { ids.optString(it) == id }
-    }?.optString("name").orEmpty()
+    }?.optString("name")?.let(::displayName).orEmpty()
 
     fun routeIds(config: JSONObject): Set<String> {
         val routes = config.optJSONArray("routes") ?: return emptySet()

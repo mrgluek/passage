@@ -10,6 +10,7 @@ import (
 	"slices"
 	"strings"
 	"time"
+	"unicode"
 	"unicode/utf8"
 
 	links "github.com/mrgluek/passage-link/link"
@@ -20,30 +21,54 @@ var subscriptionTestHTTP bool
 
 // Subscription holds private subscription state; only SubscriptionStatus is public.
 type Subscription struct {
-	Closed     bool     `json:"closed,omitempty"`
-	ID         string   `json:"id"`
-	Name       string   `json:"name"`
-	Signer     []byte   `json:"signer"`
-	Sources    []string `json:"sources"`
-	ReadKey    []byte   `json:"read_key"`
-	Revision   uint64   `json:"revision"`
-	ETag       string   `json:"etag,omitempty"`
-	ETagSource string   `json:"etag_source,omitempty"`
-	RouteIDs   []string `json:"route_ids,omitempty"`
-	LastOK     int64    `json:"last_ok"`
-	LastTry    int64    `json:"last_try"`
-	LastError  string   `json:"last_error,omitempty"`
+	SourceStats   map[string]SubscriptionSourceStats `json:"source_stats,omitempty"`
+	Closed        bool                               `json:"closed,omitempty"`
+	ID            string                             `json:"id"`
+	Name          string                             `json:"name"`
+	Signer        []byte                             `json:"signer"`
+	Sources       []string                           `json:"sources"`
+	InviteSources []string                           `json:"invite_sources,omitempty"`
+	BundleSources []string                           `json:"bundle_sources,omitempty"`
+	Canaries      []string                           `json:"canaries,omitempty"`
+	ReadKey       []byte                             `json:"read_key"`
+	Revision      uint64                             `json:"revision"`
+	ETag          string                             `json:"etag,omitempty"`
+	ETagSource    string                             `json:"etag_source,omitempty"`
+	RouteIDs      []string                           `json:"route_ids,omitempty"`
+	LastOK        int64                              `json:"last_ok"`
+	LastTry       int64                              `json:"last_try"`
+	LastError     string                             `json:"last_error,omitempty"`
+}
+
+// DisplayName returns the subscription name as a single line of up to 64 characters.
+func (s Subscription) DisplayName() string { return subscriptionDisplayName(s.Name) }
+
+func subscriptionDisplayName(raw string) string {
+	var name strings.Builder
+	count := 0
+	for _, r := range raw {
+		if unicode.In(r, unicode.Cc, unicode.Cf, unicode.Zl, unicode.Zp) {
+			continue
+		}
+		name.WriteRune(r)
+		count++
+		if count == 64 {
+			break
+		}
+	}
+	return strings.TrimSpace(name.String())
 }
 
 type SubscriptionStatus struct {
-	Closed    bool   `json:"closed,omitempty"`
-	ID        string `json:"id"`
-	Name      string `json:"name"`
-	Revision  uint64 `json:"revision"`
-	Routes    int    `json:"routes"`
-	LastOK    int64  `json:"last_ok"`
-	LastTry   int64  `json:"last_try"`
-	LastError string `json:"last_error,omitempty"`
+	Sources   []SubscriptionSourceStatus `json:"sources,omitempty"`
+	Closed    bool                       `json:"closed,omitempty"`
+	ID        string                     `json:"id"`
+	Name      string                     `json:"name"`
+	Revision  uint64                     `json:"revision"`
+	Routes    int                        `json:"routes"`
+	LastOK    int64                      `json:"last_ok"`
+	LastTry   int64                      `json:"last_try"`
+	LastError string                     `json:"last_error,omitempty"`
 }
 
 type SubscriptionDescription struct {
@@ -73,13 +98,35 @@ func (s Subscription) validate() error {
 	if err != nil || hex.EncodeToString(id) != s.ID {
 		return errors.New("invalid subscription id")
 	}
-	sources := slices.Clone(s.Sources)
-	if subscriptionTestHTTP {
-		for j, source := range sources {
-			sources[j] = strings.Replace(source, "http://", "https://", 1)
+	if len(s.Sources) < 1 || len(s.Sources) > 8 {
+		return errors.New("invalid subscription sources")
+	}
+	if err := links.ValidateCanaries(s.Canaries); err != nil {
+		return err
+	}
+	sourcesForValidation := func(list []string) []string {
+		if !subscriptionTestHTTP {
+			return list
+		}
+		list = slices.Clone(list)
+		for j, source := range list {
+			list[j] = strings.Replace(source, "http://", "https://", 1)
+		}
+		return list
+	}
+	if err := links.ValidateSources(sourcesForValidation(s.BundleSources)); err != nil {
+		return err
+	}
+	if err := links.ValidateSources(sourcesForValidation(s.InviteSources)); err != nil {
+		return err
+	}
+	sources := sourcesForValidation(s.Sources)
+	for start := 0; start < len(sources); start += links.MaxSubSources {
+		if err := links.ValidateSources(sources[start:min(start+links.MaxSubSources, len(sources))]); err != nil {
+			return err
 		}
 	}
-	return (links.Invite{V: 2, Kind: "sub", ID: id, Name: s.Name, Signer: s.Signer, Sources: sources, ReadKey: s.ReadKey, Required: []string{"sub"}}).Validate()
+	return (links.Invite{V: 2, Kind: "sub", ID: id, Name: s.Name, Signer: s.Signer, Sources: sources[:min(len(sources), links.MaxSubSources)], ReadKey: s.ReadKey, Required: []string{"sub"}}).Validate()
 }
 
 // ApplySubFile applies an already opened bundle, preserving other owners and local edits.
@@ -125,7 +172,12 @@ func ApplySubFile(cfg Config, sub Subscription, bundle links.Bundle) (Config, er
 		return cfg, err
 	}
 	trustedAuthor := len(trusted) > 0 && bytes.Equal(sub.Signer, trusted[0])
-	sub.RouteIDs = slices.Clone(cfg.Subscriptions[index].RouteIDs)
+	current := cfg.Subscriptions[index]
+	sub.Sources = slices.Clone(current.Sources)
+	sub.InviteSources = slices.Clone(current.InviteSources)
+	sub.BundleSources = slices.Clone(current.BundleSources)
+	sub.Canaries = slices.Clone(current.Canaries)
+	sub.RouteIDs = slices.Clone(current.RouteIDs)
 	if len(cfg.Routes) == 0 && cfg.Zone != "" {
 		cfg.Routes = legacyRoutes(cfg)
 	}
@@ -185,6 +237,22 @@ func ApplySubFile(cfg Config, sub Subscription, bundle links.Bundle) (Config, er
 	}
 	cfg.Routes = links.Sorted(routes)
 	cfg.RouteEdits = MinimalEdits(cfg.Routes, cfg.RouteEdits)
+	if trustedAuthor {
+		if len(sub.InviteSources) == 0 {
+			sub.InviteSources = slices.Clone(sub.Sources)
+		}
+		sub.BundleSources = slices.Clone(bundle.Sources)
+		sources := mergeSubscriptionSources(sub.BundleSources, sub.InviteSources)
+		if !slices.Equal(sources, sub.Sources) {
+			sub.ETag, sub.ETagSource = "", ""
+		}
+		sub.Sources = sources
+		sub.SourceStats = sub.retainedSourceStats()
+		if len(bundle.Canaries) > 0 {
+			sub.Canaries = slices.Clone(bundle.Canaries)
+			cfg.Canaries = slices.Clone(bundle.Canaries)
+		}
+	}
 	cfg.Subscriptions[index] = sub
 	if trustedAuthor && len(bundle.Updates) > 0 {
 		cfg.UpdateSources = slices.Clone(bundle.Updates)
@@ -203,8 +271,8 @@ func SubscribeLink(cfg Config, text string, replaceSigner bool) (ImportResult, e
 		return ImportResult{}, err
 	}
 	i := decoded.Invite
-	out := ImportResult{SubscriptionID: hex.EncodeToString(i.ID), Config: cfg, Signature: decoded.Signature, Mode: "subscribe", Subscription: &SubscriptionDescription{i.Name, len(i.Sources), i.Seed != nil}}
-	sub := Subscription{ID: hex.EncodeToString(i.ID), Name: i.Name, Signer: slices.Clone(i.Signer), Sources: slices.Clone(i.Sources), ReadKey: slices.Clone(i.ReadKey)}
+	sub := Subscription{ID: hex.EncodeToString(i.ID), Name: i.Name, Signer: slices.Clone(i.Signer), Sources: slices.Clone(i.Sources), InviteSources: slices.Clone(i.Sources), ReadKey: slices.Clone(i.ReadKey)}
+	out := ImportResult{SubscriptionID: hex.EncodeToString(i.ID), Config: cfg, Signature: decoded.Signature, Mode: "subscribe", Subscription: &SubscriptionDescription{sub.DisplayName(), len(i.Sources), i.Seed != nil}}
 	at := slices.IndexFunc(cfg.Subscriptions, func(s Subscription) bool { return s.ID == sub.ID })
 	cfg.Subscriptions = slices.Clone(cfg.Subscriptions)
 	if at >= 0 {
@@ -222,7 +290,17 @@ func SubscribeLink(cfg Config, text string, replaceSigner bool) (ImportResult, e
 		} else {
 			sub.Revision, sub.RouteIDs = old.Revision, slices.Clone(old.RouteIDs)
 			sub.LastOK, sub.LastTry, sub.LastError = old.LastOK, old.LastTry, old.LastError
+			sub.SourceStats = old.SourceStats
+			if decoded.Signature == "trusted_author" {
+				sub.BundleSources = slices.Clone(old.BundleSources)
+				sub.Canaries = slices.Clone(old.Canaries)
+				sub.Sources = mergeSubscriptionSources(sub.BundleSources, sub.InviteSources)
+			}
+			if slices.Equal(sub.Sources, old.Sources) && bytes.Equal(sub.ReadKey, old.ReadKey) {
+				sub.ETag, sub.ETagSource = old.ETag, old.ETagSource
+			}
 		}
+		sub.SourceStats = sub.retainedSourceStats()
 		cfg.Subscriptions[at] = sub
 	} else {
 		cfg.Subscriptions = append(cfg.Subscriptions, sub)
@@ -255,7 +333,7 @@ func SubscribeLink(cfg Config, text string, replaceSigner bool) (ImportResult, e
 func subscriptionStatuses(cfg Config) []SubscriptionStatus {
 	out := make([]SubscriptionStatus, 0, len(cfg.Subscriptions))
 	for _, s := range cfg.Subscriptions {
-		out = append(out, SubscriptionStatus{s.Closed, s.ID[:min(8, len(s.ID))], s.Name, s.Revision, len(s.RouteIDs), s.LastOK, s.LastTry, s.LastError})
+		out = append(out, SubscriptionStatus{Closed: s.Closed, ID: s.ID[:min(8, len(s.ID))], Name: s.DisplayName(), Revision: s.Revision, Routes: len(s.RouteIDs), LastOK: s.LastOK, LastTry: s.LastTry, LastError: s.LastError, Sources: s.sourceStatuses()})
 	}
 	return out
 }
@@ -299,4 +377,30 @@ func RemoveSubscription(cfg Config, id string) (Config, error) {
 		delete(cfg.RouteEdits, rid)
 	}
 	return cfg, nil
+}
+
+func mergeSubscriptionSources(bundle, invite []string) []string {
+	var out []string
+	seen := map[string]bool{}
+	for _, list := range [][]string{bundle, invite} {
+		for _, source := range list {
+			key := strings.TrimRight(source, "/")
+			if parts := strings.SplitN(key, "/", 4); len(parts) >= 3 {
+				parts[0], parts[2] = strings.ToLower(parts[0]), strings.ToLower(parts[2])
+				key = strings.Join(parts, "/")
+			}
+			if len(out) < 8 && !seen[key] {
+				seen[key] = true
+				out = append(out, source)
+			}
+		}
+	}
+	return out
+}
+
+func (s Subscription) originalSources() []string {
+	if len(s.InviteSources) > 0 {
+		return s.InviteSources
+	}
+	return s.Sources
 }

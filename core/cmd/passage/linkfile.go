@@ -119,7 +119,7 @@ func installedRoutes(cfg tunnel.Config) []routeChoice {
 		}
 		for _, sub := range cfg.Subscriptions {
 			if slices.Contains(sub.RouteIDs, id) {
-				label += " · " + sub.Name
+				label += " · " + sub.DisplayName()
 				break
 			}
 		}
@@ -155,7 +155,7 @@ func savedRoutes(cfg tunnel.Config) []savedRoute {
 		owner := ""
 		for _, sub := range cfg.Subscriptions {
 			if slices.Contains(sub.RouteIDs, r.ID) {
-				owner = sub.Name
+				owner = sub.DisplayName()
 				break
 			}
 		}

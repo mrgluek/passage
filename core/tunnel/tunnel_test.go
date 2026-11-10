@@ -1030,6 +1030,7 @@ func resetKnownStrategies() {
 	knownStrategies.blocked = map[string]map[string]time.Time{}
 	knownStrategies.clean = map[string]map[string]time.Time{}
 	knownStrategies.last = lastNetwork{}
+	knownStrategies.holds = map[string]map[string]savedHold{}
 	knownStrategies.loaded = map[string]bool{}
 	knownStrategies.Unlock()
 }

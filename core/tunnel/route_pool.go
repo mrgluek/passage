@@ -40,25 +40,29 @@ const (
 )
 
 type routePool struct {
-	log         *eventLog
-	onFailure   func()
-	clients     []soarClient
-	ipv6        []bool
-	kinds       []string // route type per client, reported as the connection's via
-	ids         []string
-	servers     []routeServer
-	established atomic.Bool
-	mu          sync.Mutex
-	failedUntil map[int]time.Time
-	network     string
-	stalls      map[string]map[int]*stallState
-	refused     map[string]time.Time // "route index|address" -> until
-	only        string               // a route type or route:<id>; empty tries all
-	now         func() time.Time     // for tests; nil = time.Now
+	log          *eventLog
+	onFailure    func()
+	clients      []soarClient
+	ipv6         []bool
+	kinds        []string // route type per client, reported as the connection's via
+	uses         []string
+	exits        []string
+	ids          []string
+	servers      []routeServer
+	established  atomic.Bool
+	mu           sync.Mutex
+	failedUntil  map[int]time.Time
+	cfg          Config
+	memoryConfig func() Config
+	network      string
+	stalls       map[string]map[int]*hold
+	refused      map[string]time.Time // "route index|address" -> until
+	only         string               // a route type or route:<id>; empty tries all
+	now          func() time.Time     // for tests; nil = time.Now
 }
 
 func newRoutePool(cfg Config) (soarClient, error) {
-	p := &routePool{network: networkKey(cfg)}
+	p := &routePool{network: networkKey(cfg), cfg: cfg}
 	routes := links.Sorted(cfg.Routes)
 	if cfg.My != "" {
 		// Before link routes of the same priority.
@@ -124,6 +128,13 @@ func newRoutePool(cfg Config) (soarClient, error) {
 			client = c
 			server = httpServer(params, c)
 		case "wss":
+			if supported, err := links.ValidateRoute(r); err != nil || !supported {
+				p.Close()
+				if err == nil {
+					err = errors.New("unsupported WSS wire")
+				}
+				return nil, err
+			}
 			params, err := links.Params[links.WSSParams](r)
 			if err != nil {
 				p.Close()
@@ -148,16 +159,32 @@ func newRoutePool(cfg Config) (soarClient, error) {
 		p.ipv6 = append(p.ipv6, r.IPv6)
 		p.kinds = append(p.kinds, r.Type)
 		p.ids = append(p.ids, r.ID)
+		p.uses = append(p.uses, r.Use)
+		p.exits = append(p.exits, r.Exit)
 		p.servers = append(p.servers, server)
 	}
 	if len(p.clients) == 0 {
 		return nil, errors.New("no supported routes")
 	}
+	p.restoreHolds()
 	return p, nil
 }
 func (p *routePool) DialContext(ctx context.Context, network, address string) (net.Conn, error) {
+	return p.dialContext(ctx, network, address, false)
+}
+
+func (p *routePool) probeDialContext(ctx context.Context, network, address string) (net.Conn, error) {
+	return p.dialContext(ctx, network, address, true)
+}
+
+func (p *routePool) dialContext(ctx context.Context, network, address string, background bool) (net.Conn, error) {
+	p.tick(p.clock())
 	host, _, _ := net.SplitHostPort(address)
 	order := p.order(net.ParseIP(host))
+	if background {
+		order = slices.DeleteFunc(order, p.reserveRoute)
+	}
+	available := slices.Clone(order)
 	asked := p.withoutRefused(order, address)
 	if len(order) > 0 && len(asked) == 0 {
 		return nil, errDestinationRefused
@@ -172,11 +199,43 @@ func (p *routePool) DialContext(ctx context.Context, network, address string) (n
 		err  error
 	}
 	results := make(chan result, len(order))
-	started, pending := 0, 0
+	started, pending, reservePending := 0, 0, 0
+	canStart := func() bool {
+		if started >= len(order) || reservePending > 0 {
+			return false
+		}
+		p.mu.Lock()
+		defer p.mu.Unlock()
+		now := p.clock()
+		p.tickLocked(now)
+		reserveAllowed := pending == 0
+		for _, i := range available {
+			if !p.reserveRoute(i) && !now.Before(p.failedUntil[i]) && !p.stalledLocked(p.network, i) {
+				reserveAllowed = false
+				break
+			}
+		}
+		for n := started; n < len(order); n++ {
+			i := order[n]
+			if p.reserveRoute(i) && !reserveAllowed {
+				continue
+			}
+			if pending > 0 && p.stalledLocked(p.network, i) {
+				return false
+			}
+			copy(order[started+1:n+1], order[started:n])
+			order[started] = i
+			return true
+		}
+		return false
+	}
 	startNext := func() {
 		n, i := started, order[started]
 		started++
 		pending++
+		if p.reserveRoute(i) {
+			reservePending++
+		}
 		child, cancel := race, context.CancelFunc(func() {})
 		if n < len(order)-1 {
 			child, cancel = context.WithTimeout(race, routeAttemptTimeout)
@@ -197,7 +256,7 @@ func (p *routePool) DialContext(ctx context.Context, network, address string) (n
 			}
 		}(pending)
 	}
-	if len(order) > 0 {
+	if canStart() {
 		startNext()
 	}
 	stagger := time.NewTimer(routeStagger)
@@ -206,6 +265,9 @@ func (p *routePool) DialContext(ctx context.Context, network, address string) (n
 		select {
 		case r := <-results:
 			pending--
+			if p.reserveRoute(r.i) {
+				reservePending--
+			}
 			if r.err == nil {
 				p.mu.Lock()
 				allowed := p.matches(r.i, p.only)
@@ -228,24 +290,21 @@ func (p *routePool) DialContext(ctx context.Context, network, address string) (n
 				drain()
 				return nil, ctx.Err()
 			}
+			if observe, ok := ctx.Value(connectionObserverKey{}).(func(string)); ok && !background {
+				observe(p.routeName(r.i))
+			}
 			if errors.Is(r.err, errDestinationRefused) {
 				refusals++
 				p.markRefused(r.i, address, errors.Is(r.err, errDestinationUnreachable))
 			} else {
 				p.mark(r.i, true)
 			}
-			p.mu.Lock()
-			cooling := started < len(order) && p.stalledLocked(p.network, order[started], p.clock())
-			p.mu.Unlock()
-			if started < len(order) && (!cooling || pending == 0) {
+			if canStart() {
 				startNext()
 				stagger.Reset(routeStagger)
 			}
 		case <-stagger.C:
-			p.mu.Lock()
-			cooling := started < len(order) && p.stalledLocked(p.network, order[started], p.clock())
-			p.mu.Unlock()
-			if started < len(order) && !cooling {
+			if canStart() {
 				startNext()
 				stagger.Reset(routeStagger)
 			}
@@ -255,7 +314,7 @@ func (p *routePool) DialContext(ctx context.Context, network, address string) (n
 			return nil, ctx.Err()
 		}
 	}
-	if refusals > 0 && refusals == started {
+	if refusals == started && (refusals > 0 || len(order) < len(available)) {
 		return nil, errDestinationRefused
 	}
 	p.established.Store(false)
@@ -308,21 +367,26 @@ func (p *routePool) order(ip net.IP) []int {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	now := p.clock()
-	var ready, cooling, stalled []int
+	p.tickLocked(now)
+	var ready, reserve, cooling, stalled []int
 	for i := range p.clients {
 		if ip != nil && ip.To4() == nil && !p.ipv6[i] || !p.matches(i, p.only) {
 			continue
 		}
-		if p.stalledLocked(p.network, i, now) {
+		if p.stalledLocked(p.network, i) {
 			stalled = append(stalled, i)
 		} else if now.Before(p.failedUntil[i]) {
 			cooling = append(cooling, i)
+		} else if p.reserveRoute(i) {
+			reserve = append(reserve, i)
 		} else {
 			ready = append(ready, i)
 		}
 	}
-	return append(append(ready, cooling...), stalled...)
+	return append(append(append(ready, reserve...), cooling...), stalled...)
 }
+
+func (p *routePool) reserveRoute(i int) bool { return i < len(p.uses) && p.uses[i] == "reserve" }
 
 // matches is called with p.mu held.
 func (p *routePool) matches(i int, selection string) bool {
@@ -372,6 +436,8 @@ const (
 
 // RouteState is one configured tunnel route in Status.
 type RouteState struct {
+	Exit   string `json:"exit,omitempty"`
+	Use    string `json:"use,omitempty"`
 	ID     string `json:"id"`
 	Type   string `json:"type"`
 	State  string `json:"state"`
@@ -386,15 +452,21 @@ func (p *routePool) states() []RouteState {
 	out := make([]RouteState, len(p.clients))
 	for i, c := range p.clients {
 		out[i].State = routeIdle
+		if i < len(p.exits) {
+			out[i].Exit = p.exits[i]
+		}
+		if i < len(p.uses) {
+			out[i].Use = p.uses[i]
+		}
 		switch {
-		case now.Before(p.failedUntil[i]) || p.stalledLocked(p.network, i, now):
+		case now.Before(p.failedUntil[i]) || p.stalledLocked(p.network, i):
 			out[i].State = routeFailed
 		case c.Established():
 			out[i].State = routeUp
 		}
 		if h := p.stalls[p.network][i]; h != nil {
-			out[i].Stalls = h.Count
-			if now.Before(h.Until) {
+			out[i].Stalls = h.count
+			if h.blocked() {
 				out[i].Reason = "stalled"
 			}
 		}
@@ -407,6 +479,7 @@ func (p *routePool) states() []RouteState {
 
 // tunnelWay is one tunnel route as a column of the network test.
 type tunnelWay struct {
+	exit   string
 	name   string
 	dial   dialFunc
 	ipv6   bool
@@ -426,6 +499,9 @@ func (p *routePool) ways() []tunnelWay {
 			name = p.ids[i]
 		}
 		out[i] = tunnelWay{name: name, dial: c.DialContext, ipv6: p.ipv6[i]}
+		if i < len(p.exits) {
+			out[i].exit = p.exits[i]
+		}
 		if i < len(p.servers) {
 			out[i].server = p.servers[i]
 		}
@@ -554,25 +630,27 @@ func (c *poolConn) feedback(stalled bool, first ...bool) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	if p.stalls == nil {
-		p.stalls = map[string]map[int]*stallState{}
+		p.stalls = map[string]map[int]*hold{}
 	}
 	if p.stalls[c.network] == nil {
-		p.stalls[c.network] = map[int]*stallState{}
+		p.stalls[c.network] = map[int]*hold{}
 	}
 	h := p.stalls[c.network][c.index]
 	if h == nil {
-		h = &stallState{}
+		h = &hold{}
 		p.stalls[c.network][c.index] = h
 	}
+	defer func() { p.rememberHoldLocked(c.index, h, p.clock()) }()
 	if stalled {
 		pinned := strings.HasPrefix(p.only, "route:")
-		corroborated := h.record(p.clock(), p.log, p.routeName(c.index), len(first) == 0 || first[0], c.address, pinned)
+		corroborated := h.onStallReason(p.clock(), p.log, p.routeName(c.index), "first reply, 2 destinations", len(first) == 0 || first[0], c.address, pinned)
 		if pinned || !corroborated {
 			return
 		}
+		p.tickLocked(p.clock())
 		all := len(p.clients) > 0
 		for i := range p.clients {
-			if p.matches(i, p.only) && !p.stalledLocked(p.network, i, p.clock()) && !p.clock().Before(p.failedUntil[i]) {
+			if p.matches(i, p.only) && !p.stalledLocked(p.network, i) && !p.clock().Before(p.failedUntil[i]) {
 				all = false
 				break
 			}
@@ -581,7 +659,7 @@ func (c *poolConn) feedback(stalled bool, first ...bool) {
 			p.onFailure()
 		}
 	} else {
-		h.recovered(p.log, p.routeName(c.index))
+		h.onReply(p.log, p.routeName(c.index))
 		delete(p.failedUntil, c.index)
 	}
 }
@@ -591,9 +669,9 @@ func (c *poolConn) CloseWrite() error {
 	}
 	return c.Conn.Close()
 }
-func (p *routePool) stalledLocked(network string, i int, now time.Time) bool {
+func (p *routePool) stalledLocked(network string, i int) bool {
 	h := p.stalls[network][i]
-	return h.blocked(now, p.log, p.routeName(i))
+	return h.blocked()
 }
 func poolFeedback(c net.Conn, stalled bool, first ...bool) {
 	if v, ok := c.(viaConn); ok {
@@ -605,8 +683,33 @@ func poolFeedback(c net.Conn, stalled bool, first ...bool) {
 }
 
 func (p *routePool) routeName(i int) string {
-	if i < len(p.ids) {
-		return p.ids[i]
+	if i >= len(p.ids) {
+		return "tunnel"
 	}
-	return "tunnel"
+	if i < len(p.exits) {
+		return routeDisplayName(p.ids[i], p.exits[i])
+	}
+	return p.ids[i]
+}
+
+func routeDisplayName(id, exit string) string {
+	if exit != "" {
+		return id + " (exit=" + exit + ")"
+	}
+	return id
+}
+
+func (p *routePool) tick(now time.Time) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.tickLocked(now)
+}
+
+func (p *routePool) tickLocked(now time.Time) {
+	for _, holds := range p.stalls {
+		for i, h := range holds {
+			h.tick(now, p.log, p.routeName(i))
+			p.rememberHoldLocked(i, h, now)
+		}
+	}
 }

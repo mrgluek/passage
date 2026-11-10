@@ -3,8 +3,29 @@
     <style name="Theme.Passage" parent="android:style/Theme.DeviceDefault.Light.DarkActionBar">
         <item name="android:colorAccent">@color/accent</item>
         <item name="android:textColorLink">@color/accent</item>
+        <item name="android:windowBackground">@color/page_background</item>
+        <item name="android:colorBackground">@color/page_background</item>
+        <item name="android:textColorPrimary">@color/text</item>
+        <item name="android:textColorSecondary">@color/muted</item>
+        <item name="android:textColorHint">@color/muted</item>
     </style>
-    <color name="accent">#1565C0</color>
+    <color name="page_background">#E4E4E0</color>
+    <color name="card">#F2F2EE</color>
+    <color name="text">#3D403F</color>
+    <color name="muted">#585D59</color>
+    <color name="accent">#456575</color>
     <color name="on_accent">#FFFFFF</color>
-    <color name="value_background">#14000000</color>
+    <color name="ok">#32633C</color>
+    <color name="warn">#805900</color>
+    <color name="problem">#983F3A</color>
+    <color name="card_border">#CECFCA</color>
+    <color name="value_background">#DADCD7</color>
+    <color name="notice_background">#D5DFE1</color>
+    <color name="proxy_on_dot">#7F9F87</color>
+    <color name="proxy_off_dot">#8A8F8B</color>
+    <color name="proxy_on_dot_soft">#A2B9A7</color>
+    <color name="proxy_warn_dot">#C0AA74</color>
+    <color name="proxy_problem_dot">#B5817D</color>
+    <color name="proxy_traffic_dot">#2ECC40</color>
+    <color name="input_hint">#606961</color>
 </resources>

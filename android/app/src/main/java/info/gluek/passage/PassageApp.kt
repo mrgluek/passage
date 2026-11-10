@@ -1,12 +1,16 @@
 package info.gluek.passage
 
 import android.app.Application
+import android.content.Context
 import android.os.Process
 import kotlin.system.exitProcess
 
 class PassageApp : Application() {
+    override fun attachBaseContext(base: Context) = super.attachBaseContext(AppLanguage.wrap(base))
+
     override fun onCreate() {
         super.onCreate()
+        AppLanguage.applyPlatform(this)
         Diagnostics.init(this)
         val previous = Thread.getDefaultUncaughtExceptionHandler()
         Thread.setDefaultUncaughtExceptionHandler { thread, error ->

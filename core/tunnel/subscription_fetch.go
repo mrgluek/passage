@@ -11,6 +11,7 @@ import (
 	"net/url"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	links "github.com/mrgluek/passage-link/link"
@@ -50,6 +51,7 @@ func (r *SubscriptionRefresher) Refresh(ctx context.Context, cfg Config, dialers
 		if ctx.Err() != nil {
 			break
 		}
+		sub.SourceStats = sub.retainedSourceStats()
 		sub.LastTry = time.Now().Unix()
 		sub.LastError = "network"
 		key := networkKey(cfg) + ":" + sub.ID
@@ -67,6 +69,7 @@ func (r *SubscriptionRefresher) Refresh(ctx context.Context, cfg Config, dialers
 			directTimeout = 40 * time.Second
 		}
 		type response struct {
+			stats      subscriptionFetchStats
 			pair       subscriptionPair
 			blob       []byte
 			etag, code string
@@ -86,17 +89,42 @@ func (r *SubscriptionRefresher) Refresh(ctx context.Context, cfg Config, dialers
 			fetching := sub
 			for _, pair := range pairs {
 				workers.Go(func() {
-					blob, etag, code := fetchSubscription(attempt, fetching, pair.source, dials[pair.dial])
-					results <- response{pair, blob, etag, code}
+					var stats subscriptionFetchStats
+					start := time.Now()
+					blob, etag, code := fetchSubscriptionWithStats(attempt, fetching, pair.source, dials[pair.dial], &stats)
+					stats.elapsed = time.Since(start)
+					results <- response{stats, pair, blob, etag, code}
 				})
 			}
+			accept := func(result response) {
+				sub.LastError = result.code
+				sub.LastOK = time.Now().Unix()
+				sub.ETag, sub.ETagSource = result.etag, result.pair.source
+				if r.last == nil {
+					r.last = map[string]subscriptionPair{}
+				}
+				if len(r.last) >= 128 {
+					clear(r.last)
+				}
+				r.last[key] = result.pair
+				succeeded = true
+			}
+			var unchanged *response
 			for range pairs {
 				result := <-results
-				pair, blob, etag, code := result.pair, result.blob, result.etag, result.code
+				pair, blob, code := result.pair, result.blob, result.code
+				if succeeded && result.stats.failure == "canceled" {
+					result.stats.failure = ""
+				}
+				sub.recordSourceFetch(pair.source, result.stats)
+				if succeeded {
+					continue
+				}
 				if code == "" {
 					id, _ := hex.DecodeString(sub.ID)
 					opened, err := links.OpenSubFile(blob, id, sub.ReadKey, ed25519.PublicKey(sub.Signer))
 					if err != nil {
+						sub.recordSourceFetch(pair.source, subscriptionFetchStats{failure: "bad"})
 						sub.LastError = subscriptionError(err)
 						continue
 					}
@@ -104,11 +132,14 @@ func (r *SubscriptionRefresher) Refresh(ctx context.Context, cfg Config, dialers
 					if errors.Is(err, links.ErrNotNewer) {
 						code = "unchanged"
 					} else if err != nil {
+						sub.recordSourceFetch(pair.source, subscriptionFetchStats{failure: "bad"})
 						sub.LastError = subscriptionError(err)
 						continue
 					} else {
 						out.Config = candidate
+						stats := sub.SourceStats
 						sub = candidate.Subscriptions[index]
+						sub.SourceStats = stats
 						out.Changed = true
 					}
 				}
@@ -116,24 +147,24 @@ func (r *SubscriptionRefresher) Refresh(ctx context.Context, cfg Config, dialers
 					sub.LastError = code
 					continue
 				}
+				sub.recordSourceOK(pair.source, pair.dial < len(dialers), result.stats.elapsed)
+				result.code = code
 				if code == "unchanged" {
-					sub.LastError = "unchanged"
+					if unchanged == nil {
+						unchanged = &result
+					}
+					continue
 				}
-				sub.LastOK = time.Now().Unix()
-				sub.ETag, sub.ETagSource = etag, pair.source
-				if r.last == nil {
-					r.last = map[string]subscriptionPair{}
-				}
-				if len(r.last) >= 128 {
-					clear(r.last)
-				}
-				r.last[key] = pair
-				succeeded = true
-				break
+				accept(result)
+				cancel()
+			}
+			if !succeeded && unchanged != nil {
+				accept(*unchanged)
 			}
 			cancel()
 			workers.Wait()
 		}
+		sub.SourceStats = sub.retainedSourceStats()
 		out.Config.Subscriptions[index] = sub
 	}
 	return out
@@ -156,29 +187,47 @@ func subscriptionPairs(sources []string, first, end int, last subscriptionPair) 
 }
 
 func fetchSubscription(ctx context.Context, sub Subscription, source string, dial SubscriptionDial) ([]byte, string, string) {
+	return fetchSubscriptionWithStats(ctx, sub, source, dial, &subscriptionFetchStats{})
+}
+
+func fetchSubscriptionWithStats(ctx context.Context, sub Subscription, source string, dial SubscriptionDial, stats *subscriptionFetchStats) ([]byte, string, string) {
 	u, err := url.Parse(source)
 	if err != nil || u.Host == "" || (u.Scheme != "https" && !(subscriptionTestHTTP && u.Scheme == "http")) || u.User != nil || u.RawQuery != "" || u.ForceQuery || strings.Contains(source, "#") || strings.Contains(source, "\\") {
+		stats.failure = "http"
 		return nil, "", "http"
 	}
 	id, err := hex.DecodeString(sub.ID)
 	if err != nil || len(id) != 16 {
+		stats.failure = "bad"
 		return nil, "", "decrypt"
 	}
 	address := strings.TrimRight(source, "/") + "/" + sub.ID + ".bin"
 	attempt, cancel := context.WithTimeout(ctx, 40*time.Second)
 	defer cancel()
-	transport := &http.Transport{DialContext: dial, DisableCompression: true}
+	var answered atomic.Bool
+	defer func() { stats.answered = stats.answered || answered.Load() }()
+	transport := &http.Transport{DialContext: func(ctx context.Context, network, address string) (net.Conn, error) {
+		conn, err := dial(ctx, network, address)
+		if err != nil {
+			return nil, err
+		}
+		return &subscriptionResponseConn{Conn: conn, answered: &answered}, nil
+	}, DisableCompression: true}
 	defer transport.CloseIdleConnections()
 	client := &http.Client{Transport: transport, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
 	req, err := http.NewRequestWithContext(attempt, http.MethodGet, address, nil)
 	if err != nil {
+		stats.failure = "http"
 		return nil, "", "http"
 	}
 	if sub.ETag != "" && sub.ETagSource == source {
 		req.Header.Set("If-None-Match", sub.ETag)
 	}
+	stats.started = true
 	resp, err := client.Do(req)
+	stats.answered = resp != nil
 	if err != nil {
+		stats.failure = subscriptionNetworkFailure(err)
 		return nil, "", "network"
 	}
 	defer resp.Body.Close()
@@ -188,6 +237,7 @@ func fetchSubscription(ctx context.Context, sub Subscription, source string, dia
 	}
 	if resp.StatusCode == http.StatusNotModified {
 		if sub.ETag == "" || sub.ETagSource != source || sub.Revision == 0 {
+			stats.failure = "http"
 			return nil, "", "http"
 		}
 		if etag == "" {
@@ -196,18 +246,46 @@ func fetchSubscription(ctx context.Context, sub Subscription, source string, dia
 		return nil, etag, "unchanged"
 	}
 	if resp.StatusCode != http.StatusOK {
+		stats.failure = "http"
 		return nil, "", "http"
 	}
 	limit := int64(links.MaxSubFileBytes + links.SubFileOverhead)
 	if resp.ContentLength > limit {
+		stats.failure = "bad"
 		return nil, "", "size"
 	}
 	raw, err := io.ReadAll(io.LimitReader(resp.Body, limit+1))
 	if err != nil {
+		stats.failure = subscriptionNetworkFailure(err)
 		return nil, "", "network"
 	}
 	if int64(len(raw)) > limit {
+		stats.failure = "bad"
 		return nil, "", "size"
 	}
 	return raw, etag, ""
+}
+
+func subscriptionNetworkFailure(err error) string {
+	if errors.Is(err, context.Canceled) {
+		return "canceled"
+	}
+	var timeout net.Error
+	if errors.Is(err, context.DeadlineExceeded) || errors.As(err, &timeout) && timeout.Timeout() {
+		return "timeout"
+	}
+	return "net"
+}
+
+type subscriptionResponseConn struct {
+	net.Conn
+	answered *atomic.Bool
+}
+
+func (c *subscriptionResponseConn) Read(p []byte) (int, error) {
+	n, err := c.Conn.Read(p)
+	if n > 0 {
+		c.answered.Store(true)
+	}
+	return n, err
 }

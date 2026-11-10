@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.8.0
+
+- A new home screen in four steps: add your link, turn the proxy on, add it to
+  your chat app, and send a report if something is wrong. Tabs for Delta Chat,
+  Velta, Telegram and other apps each show what to paste or tap.
+- The status says in plain words whether Passage works, is connecting, or has a
+  problem; the dot pulses while traffic flows. The notification says the same.
+- A Details screen with routes, connections and the app log. The report is
+  shared as one file, and it no longer includes your own network addresses.
+- Language choice in Settings: System, English or Russian. Settings are grouped
+  in cards, and the saved routes are shown as plain ticks until you edit them.
+- Steadier route switching, also after the app restarts, and a subscription is
+  now read from several sources at once.
+- Subscription names and tg:// or velta:// links are handled more carefully.
+
 ## 0.7.2
 
 - Steadier route switching: a slow connection that is simply idle no longer

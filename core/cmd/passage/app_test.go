@@ -4,6 +4,7 @@ import (
 	"crypto/ed25519"
 	"encoding/base64"
 	"encoding/json"
+	"net/netip"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -13,7 +14,63 @@ import (
 
 	links "github.com/mrgluek/passage-link/link"
 	"github.com/mrgluek/passage/core/tunnel"
+	"github.com/mrgluek/passage/core/update"
 )
+
+func TestTrayState(t *testing.T) {
+	a := &App{t: table("en")}
+	a.updater.offer = &update.Offer{Version: "1.2.3"}
+	check := func(title string) {
+		t.Helper()
+		st := a.trayState()
+		if st.Tooltip != "Passage: "+title || st.Running != a.settings.Running || st.Update != "1.2.3" {
+			t.Fatalf("tray state = %+v, want title %q", st, title)
+		}
+	}
+	check("Add your link")
+	a.settings.Running = true
+	check("Add your link")
+	a.lastErr = "start failed: test error"
+	check("Couldn't turn on")
+	a.lastErr = ""
+	a.linkCfg.Subscriptions = []tunnel.Subscription{{ID: "example"}}
+	check("Connecting…")
+	router, err := tunnel.Start(tunnel.Config{Mode: tunnel.ModeOff})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(router.Close)
+	a.tun = router
+	check("Connecting…")
+	a.settings.Running = false
+	check("Proxy is off")
+	a.t = table("ru")
+	check("Прокси выключен")
+}
+
+func TestTrayHealthTitle(t *testing.T) {
+	for _, tt := range []struct {
+		state, reason, title string
+	}{
+		{"", "", "Proxy is on"},
+		{"ready", "waiting_app", "Proxy is on"},
+		{"starting", "", "Connecting…"},
+		{"working", "", "Working"},
+		{"limited", "reserve", "Working"},
+		{"problem", "no_internet", "No internet"},
+		{"problem", "server_down", "Chat server isn't answering"},
+		{"problem", "no_route", "Can't connect"},
+		{"problem", "slow", "Still connecting"},
+		{"problem", "unknown", "Still connecting"},
+	} {
+		t.Run(tt.state+"/"+tt.reason, func(t *testing.T) {
+			h := tunnel.Health{State: tt.state, Reason: tt.reason}
+			if got := tr(table("en")).f(healthTitleKey(h)); got != tt.title {
+				t.Fatalf("title = %q, want %q", got, tt.title)
+			}
+		})
+	}
+}
 
 func testLink(zone string) string {
 	pub, _, _ := ed25519.GenerateKey(nil)
@@ -393,5 +450,35 @@ func TestSettingsEmptySections(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestReportRedactsAddressesAndSecrets(t *testing.T) {
+	got := redact("password: two words\nread udp 192.0.2.4:40112->192.0.2.53:53: i/o timeout\n{\"sources\":[\"https://example.org/a\", \"https://example.org/b\"]}")
+	for _, secret := range []string{"two words", "192.0.2.4", "example.org"} {
+		if strings.Contains(got, secret) {
+			t.Errorf("leaked %s in %q", secret, got)
+		}
+	}
+	if !strings.Contains(got, "[addr]->192.0.2.53:53") {
+		t.Errorf("destination was lost: %q", got)
+	}
+}
+
+func TestReportMasksOwnIPv6Prefix(t *testing.T) {
+	report := map[string]any{
+		"dns_egress":        "192.0.2.4",
+		"network_resolvers": []any{"[2001:db8:10::53]:53", "[2001:db8:20::53]:53"},
+		"device_network":    map[string]any{"dns": []any{"[2001:db8:10::53]:53"}},
+		"events":            []any{map[string]any{"msg": "read udp [2001:db8:10::8]:1234->192.0.2.53:53: timeout; via 2001:db8:10::4: refused; to dns-192.0.2.4.example.org"}},
+	}
+	maskReportAddresses(report, []netip.Prefix{netip.MustParsePrefix("2001:db8:10::/64"), netip.MustParsePrefix("192.0.2.4/32")})
+	got, err := json.Marshal(report)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := `{"device_network":{"dns":["[2001:db8:10::53]:53"]},"dns_egress":"[addr]","events":[{"msg":"read udp [addr]-\u003e192.0.2.53:53: timeout; via [addr]: refused; to dns-192.0.2.4.example.org"}],"network_resolvers":["[addr]","[2001:db8:20::53]:53"]}`
+	if string(got) != want {
+		t.Fatalf("report: %s", got)
 	}
 }

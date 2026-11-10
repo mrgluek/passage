@@ -5,7 +5,6 @@ import android.os.Handler
 import android.os.Looper
 import android.text.format.Formatter
 import android.view.View
-import android.widget.Button
 import android.widget.CheckBox
 import android.widget.LinearLayout
 import android.widget.ProgressBar
@@ -19,11 +18,9 @@ class UpdateSection(private val activity: Activity) {
     private val state = TextView(activity).apply { setPadding(0, Ui.dp(activity, 4), 0, 0) }
     private val detail = Ui.hint(activity, "").apply { setTextIsSelectable(true) }
     private val bar = ProgressBar(activity, null, android.R.attr.progressBarStyleHorizontal).apply { max = 1000 }
-    private val check = Button(activity).apply {
-        setText(R.string.update_check)
-        setOnClickListener { check() }
-    }
-    private val action = Button(activity)
+    private val check = Ui.outlinedButton(activity, activity.getString(R.string.update_check)) { check() }
+    private val action = Ui.outlinedButton(activity, "") {}
+
 
     val view: LinearLayout = LinearLayout(activity).apply {
         orientation = LinearLayout.VERTICAL

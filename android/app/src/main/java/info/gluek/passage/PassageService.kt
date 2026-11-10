@@ -28,6 +28,8 @@ import java.util.concurrent.Executors
  * that failed (port busy, bad network).
  */
 class PassageService : Service() {
+    override fun attachBaseContext(newBase: Context) = super.attachBaseContext(AppLanguage.wrap(newBase))
+
     companion object {
         @Volatile private var instance: PassageService? = null
 
@@ -388,7 +390,9 @@ class PassageService : Service() {
     }
 
     private fun goForeground() {
-        val n = buildNotification(getString(R.string.app_name), getString(R.string.notification_starting))
+        val localized = AppLanguage.localizedContext(this)
+        val connecting = HomeSetup.Plain.CONNECTING
+        val n = buildNotification(localized.getString(connecting.title), localized.getString(connecting.reason(false)))
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
             startForeground(NOTIFICATION_ID, n, ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE)
         } else {
@@ -396,25 +400,22 @@ class PassageService : Service() {
         }
     }
 
-    private fun updateNotification(status: JSONObject? = null, force: Boolean = false) {
+    private fun updateNotification(snapshot: JSONObject? = null, force: Boolean = false) {
         if (!active) return
-        val (title, text) = lastError?.let { getString(R.string.app_name) to it } ?: try {
-            StatusText.notification(this, status ?: Native.status())
-        } catch (e: Throwable) {
-            getString(R.string.app_name) to (e.message ?: e.toString())
-        }
-        val content = title to text
+        val localized = AppLanguage.localizedContext(this)
+        val content = StatusText.notification(localized, snapshot ?: status(), Settings(this).appSeen, fallbackRunning = lastError == null)
         if (!force && content == lastNotification) return
         val nm = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-        nm.notify(NOTIFICATION_ID, buildNotification(title, text))
+        nm.notify(NOTIFICATION_ID, buildNotification(content.first, content.second))
         lastNotification = content
     }
 
     private fun buildNotification(title: String, text: String): Notification {
+        val localized = AppLanguage.localizedContext(this)
         val nm = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
         val b = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             if (nm.getNotificationChannel(CHANNEL) == null) {
-                nm.createNotificationChannel(NotificationChannel(CHANNEL, getString(R.string.notification_channel), NotificationManager.IMPORTANCE_LOW))
+                nm.createNotificationChannel(NotificationChannel(CHANNEL, localized.getString(R.string.notification_channel), NotificationManager.IMPORTANCE_LOW))
             }
             Notification.Builder(this, CHANNEL)
         } else {
@@ -433,7 +434,7 @@ class PassageService : Service() {
             .setOngoing(true)
             .setOnlyAlertOnce(true)
             .setContentIntent(open)
-            .addAction(Notification.Action.Builder(0, getString(R.string.stop), stop).build())
+            .addAction(Notification.Action.Builder(0, localized.getString(R.string.stop), stop).build())
             .build()
     }
 }

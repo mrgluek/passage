@@ -3,6 +3,7 @@ package main
 import (
 	"bufio"
 	"crypto/rand"
+	"encoding/base32"
 	"encoding/hex"
 	"fmt"
 	"math/big"
@@ -41,6 +42,10 @@ type Settings struct {
 	AutoUpdate   bool
 	NextUpdate   time.Time
 	RoutesNotice string
+	// AppSeen is set once a chat app has sent traffic through the proxy.
+	AppSeen bool
+	// Lang is "en" or "ru" when chosen in the settings; empty follows the system.
+	Lang string
 	// Edits are local changes to the link's routes, by route ID.
 	Edits map[string]tunnel.RouteEdit
 }
@@ -88,6 +93,20 @@ func (s Settings) socksURL() string {
 	return fmt.Sprintf("socks5://%s%s:%d", creds, host, s.Port)
 }
 
+// veltaLink is the proxy as a velta://proxy/2 link (see Velta's SOCKS5 proxy
+// link format): the user, password and label are unpadded base32.
+func (s Settings) veltaLink() string {
+	enc := base32.StdEncoding.WithPadding(base32.NoPadding)
+	link := fmt.Sprintf("velta://proxy/2/%s/%d", host, s.Port)
+	if s.Auth && s.User != "" {
+		link += "/U/" + enc.EncodeToString([]byte(s.User))
+		if s.Pass != "" {
+			link += "/W/" + enc.EncodeToString([]byte(s.Pass))
+		}
+	}
+	return link + "/N/" + enc.EncodeToString([]byte("Passage"))
+}
+
 // loadSettings reads passage.ini; missing keys keep their defaults, and a
 // missing port or credentials get new ones.
 func loadSettings(path string) (Settings, bool, error) {
@@ -100,6 +119,7 @@ func loadSettings(path string) (Settings, bool, error) {
 		return defaultSettings(), false, err
 	}
 	defer f.Close()
+	sawAppSeen := false
 	sc := bufio.NewScanner(f)
 	for sc.Scan() {
 		line := strings.TrimSpace(sc.Text())
@@ -143,7 +163,17 @@ func loadSettings(path string) (Settings, bool, error) {
 			s.NextUpdate, _ = time.Parse(time.RFC3339, v)
 		case "running":
 			s.Running = v != "false" && v != "0"
+		case "app_seen":
+			s.AppSeen, sawAppSeen = v == "true" || v == "1", true
+		case "lang":
+			if v == "en" || v == "ru" {
+				s.Lang = v
+			}
 		}
+	}
+	// Settings written before this key existed: a proxy that was running was in use.
+	if !sawAppSeen && s.Running {
+		s.AppSeen = true
 	}
 	fresh := defaultSettings()
 	if s.Port == 0 {
@@ -210,7 +240,9 @@ running=%t
 auto_update=%t
 next_update=%s
 routes_notice=%s
-`, s.Port, s.User, s.Pass, s.Auth, s.Mode, s.My, s.Running, s.AutoUpdate, s.NextUpdate.Format(time.RFC3339), s.RoutesNotice)
+app_seen=%t
+lang=%s
+`, s.Port, s.User, s.Pass, s.Auth, s.Mode, s.My, s.Running, s.AutoUpdate, s.NextUpdate.Format(time.RFC3339), s.RoutesNotice, s.AppSeen, s.Lang)
 	text += s.editLines()
 	return writeFile(path, []byte(text))
 }

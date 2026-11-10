@@ -1,6 +1,7 @@
 package info.gluek.passage
 
 import android.app.Activity
+import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageInstaller
 import android.os.Bundle
@@ -11,6 +12,8 @@ import android.widget.Toast
  * the settings screen: the answer names a screen to open.
  */
 class InstallResultActivity : Activity() {
+    override fun attachBaseContext(newBase: Context) = super.attachBaseContext(AppLanguage.wrap(newBase))
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         when (val status = intent.getIntExtra(PackageInstaller.EXTRA_STATUS, PackageInstaller.STATUS_FAILURE)) {

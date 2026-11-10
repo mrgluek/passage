@@ -27,6 +27,7 @@ var knownStrategies = struct {
 	m       map[string]knownStrategy
 	blocked map[string]map[string]time.Time // network -> group -> when
 	clean   map[string]map[string]time.Time
+	holds   map[string]map[string]savedHold
 	last    lastNetwork
 	loaded  map[string]bool // state files already read
 	writers map[string]*knownStateWriter
@@ -245,11 +246,13 @@ func loadKnownLocked(path string) {
 		Strategies map[string]knownStrategy        `json:"strategies"`
 		Blocked    map[string]map[string]time.Time `json:"blocked"`
 		Clean      map[string]map[string]time.Time `json:"clean"`
+		Holds      json.RawMessage                 `json:"holds"`
 		Last       lastNetwork                     `json:"last"`
 	}
 	if json.Unmarshal(b, &f) != nil {
 		return
 	}
+	loadHoldsLocked(f.Holds)
 	for k, v := range f.Strategies {
 		if cur, ok := knownStrategies.m[k]; !ok || v.At.After(cur.At) {
 			knownStrategies.m[k] = v
@@ -305,7 +308,7 @@ func writeKnownState(path string, w *knownStateWriter) {
 			return
 		}
 		w.dirty = false
-		b, err := json.Marshal(map[string]any{"strategies": knownStrategies.m, "blocked": knownStrategies.blocked, "clean": knownStrategies.clean, "last": knownStrategies.last})
+		b, err := json.Marshal(map[string]any{"strategies": knownStrategies.m, "blocked": knownStrategies.blocked, "clean": knownStrategies.clean, "last": knownStrategies.last, "holds": knownStrategies.holds})
 		knownStrategies.Unlock()
 		if err == nil {
 			tmp := path + ".tmp"

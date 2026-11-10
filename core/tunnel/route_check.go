@@ -31,6 +31,7 @@ const (
 // RouteCheck is one route tested stage by stage. It never names the route's
 // server.
 type RouteCheck struct {
+	Exit   string       `json:"exit,omitempty"`
 	Route  string       `json:"route"`
 	Stages []RouteStage `json:"stages"`
 }
@@ -66,7 +67,12 @@ type routeServer struct {
 }
 
 func wssServer(p links.WSSParams, client *WSSClient) routeServer {
-	return sessionServer(urlServer(p.Endpoint), client, func() (*WSSClient, error) { return NewWSSClient(p) })
+	s := urlServer(p.Endpoint)
+	if host, port, err := net.SplitHostPort(s.addr); err == nil {
+		s.addr = net.JoinHostPort(cmp.Or(p.DialIP, host), port)
+		s.name = cmp.Or(p.SNI, host)
+	}
+	return sessionServer(s, client, func() (*WSSClient, error) { return NewWSSClient(p) })
 }
 
 func turnServer(p links.TURNParams, client *WSSClient) routeServer {

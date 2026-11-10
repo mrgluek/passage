@@ -12,6 +12,10 @@ class Settings(context: Context) {
         get() = prefs.getString("theme", "system").takeIf { it in THEMES } ?: "system"
         set(v) = prefs.edit().putString("theme", v.takeIf { it in THEMES } ?: "system").apply()
 
+    var language: String
+        get() = prefs.getString("language", "system").takeIf { it in AppLanguage.choices } ?: "system"
+        set(v) = prefs.edit().putString("language", v.takeIf { it in AppLanguage.choices } ?: "system").apply()
+
     var link: String
         get() = prefs.getString("link", "") ?: ""
         set(v) = prefs.edit().putString("link", v.trim()).apply()
@@ -188,6 +192,18 @@ class Settings(context: Context) {
         set(v) = prefs.edit().putBoolean("running", v).apply()
 
 
+    val hasLink: Boolean
+        get() = link.isNotEmpty() || subscriptions.isNotEmpty() || savedRoutes.isNotEmpty()
+
+    var appSeen: Boolean
+        get() = prefs.getBoolean("app_seen", false)
+        set(v) = prefs.edit().putBoolean("app_seen", v).apply()
+
+    fun migrateAppSeen() {
+        val saved = if (prefs.contains("app_seen")) appSeen else null
+        appSeen = HomeSetup.migrateAppSeen(saved, hasLink, running)
+    }
+
     /** Check for a new version once a day while the proxy runs. */
     var updateChecks: Boolean
         get() = prefs.getBoolean("update_checks", true)
@@ -252,6 +268,8 @@ class Settings(context: Context) {
         return "tg://socks?server=$HOST&port=$port$creds"
     }
 
+    fun veltaLink(): String = veltaLink(HOST, port, if (auth) user else "", if (auth) pass else "")
+
     /** New port, username and password; apps set up with the old ones must be updated. */
     fun newAccess() {
         prefs.edit()
@@ -266,6 +284,41 @@ class Settings(context: Context) {
     }
 
     companion object {
+        fun base32(value: String): String {
+            val alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567"
+            val result = StringBuilder()
+            var buffer = 0
+            var bits = 0
+            for (byte in value.toByteArray(Charsets.UTF_8)) {
+                buffer = (buffer shl 8) or (byte.toInt() and 255)
+                bits += 8
+                while (bits >= 5) {
+                    bits -= 5
+                    result.append(alphabet[(buffer ushr bits) and 31])
+                }
+                buffer = buffer and ((1 shl bits) - 1)
+            }
+            if (bits > 0) result.append(alphabet[(buffer shl (5 - bits)) and 31])
+            return result.toString()
+        }
+
+        fun veltaLink(host: String, port: Int, user: String = "", password: String = "", label: String = "Passage"): String {
+            val normalized = host.lowercase(java.util.Locale.ROOT)
+            require(normalized.isNotEmpty() && normalized.matches(Regex("[a-z0-9.:-]+")))
+            require(port in 1..65535)
+            require(user.codePointCount(0, user.length) <= 128 && password.codePointCount(0, password.length) <= 128)
+            require(password.isEmpty() || user.isNotEmpty())
+            require(label.codePointCount(0, label.length) <= 64 && label.none {
+                it.isISOControl() || it in '\u202a'..'\u202e' || it in '\u2066'..'\u2069' || it == '\u200e' || it == '\u200f'
+            })
+            return buildString {
+                append("velta://proxy/2/").append(normalized).append('/').append(port)
+                if (user.isNotEmpty()) append("/U/").append(base32(user))
+                if (password.isNotEmpty()) append("/W/").append(base32(password))
+                if (label.isNotEmpty()) append("/N/").append(base32(label))
+            }.also { require(it.length < 2048) }
+        }
+
         val configLock = Any()
         val THEMES = listOf("system", "light", "dark")
         const val HOST = "127.0.0.1"
