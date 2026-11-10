@@ -98,6 +98,7 @@ class SettingsActivity : ThemedActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         settings = Settings(this)
+        setTitle(R.string.settings)
         actionBar?.setDisplayHomeAsUpEnabled(true)
         setContentView(buildUi())
         val draft = lastNonConfigurationInstance as? Draft
@@ -169,6 +170,14 @@ class SettingsActivity : ThemedActivity() {
     }
 
     /** A tapped passage:// or https://passage.gluek.info/link#… link goes into the field; Save stores it. */
+    /** Full-width button with room above and below it inside a card. */
+    private fun spaced(button: android.widget.Button): android.widget.Button = button.apply {
+        layoutParams = android.widget.LinearLayout.LayoutParams(-1, -2).apply {
+            topMargin = Ui.dp(this@SettingsActivity, 12)
+            bottomMargin = Ui.dp(this@SettingsActivity, 12)
+        }
+    }
+
     private fun takeLink(intent: Intent?) {
         val data = intent?.takeIf { it.action == Intent.ACTION_VIEW }?.data ?: return
         if (data.scheme == "https" && data.encodedFragment.isNullOrEmpty()) return // /link without fields
@@ -181,19 +190,23 @@ class SettingsActivity : ThemedActivity() {
     private fun buildUi(): View {
         val col = Ui.column(this)
 
-        col.addView(Ui.heading(this, getString(R.string.route_label)))
+        val routeCard = Ui.card(this)
+        col.addView(routeCard)
+        routeCard.addView(Ui.heading(this, getString(R.string.route_label)).apply { setPadding(0, 0, 0, Ui.dp(this@SettingsActivity, 8)) })
         routeBox = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
-        col.addView(routeBox)
-        col.addView(Ui.hint(this, getString(R.string.route_hint)).apply {
+        routeCard.addView(routeBox)
+        routeCard.addView(Ui.hint(this, getString(R.string.route_hint)).apply {
             setPadding(0, Ui.dp(this@SettingsActivity, 6), 0, 0)
         })
 
-        col.addView(Ui.heading(this, getString(R.string.my_route_label)))
+        val myRouteCard = Ui.card(this)
+        col.addView(myRouteCard)
+        myRouteCard.addView(Ui.heading(this, getString(R.string.my_route_label)).apply { setPadding(0, 0, 0, Ui.dp(this@SettingsActivity, 8)) })
         myEdit = EditText(this).apply {
             id = R.id.my_route_edit
             isSaveEnabled = false
-            hint = getString(R.string.my_route_hint)
-            Ui.dimHint(this)
+            setHint(R.string.my_route_hint)
+            setHintTextColor(getColor(R.color.input_hint))
             setText(settings.myRoute)
             isSingleLine = true
             inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS or InputType.TYPE_TEXT_VARIATION_URI
@@ -214,25 +227,20 @@ class SettingsActivity : ThemedActivity() {
                 myClear.visibility = if (s.isNullOrEmpty()) View.INVISIBLE else View.VISIBLE
             }
         })
-        col.addView(LinearLayout(this).apply {
+        myRouteCard.addView(LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
             addView(myEdit, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
             addView(myClear)
         })
-        col.addView(Button(this).apply {
-            text = getString(R.string.save)
-            setOnClickListener { saveMyRoute(myEdit) }
-        })
-        col.addView(Ui.hint(this, getString(R.string.my_route_help)))
+        myRouteCard.addView(spaced(Ui.primaryButton(this, getString(R.string.save)) { saveMyRoute(myEdit) }))
+        myRouteCard.addView(Ui.hint(this, getString(R.string.my_route_help)))
 
-        savedRoutesSection = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-        }
+        savedRoutesSection = Ui.card(this)
         col.addView(savedRoutesSection)
 
         savedRoutesHeading = Ui.heading(this, getString(R.string.saved_routes_label)).apply {
-            setPadding(0, paddingTop, 0, paddingBottom)
+            setPadding(0, 0, 0, paddingBottom)
         }
         savedRoutesSection.addView(savedRoutesHeading)
 
@@ -241,41 +249,32 @@ class SettingsActivity : ThemedActivity() {
         }
         savedRoutesSection.addView(savedRoutesList)
 
-        editRoutesButton = Button(this).apply {
-            text = getString(R.string.edit_routes)
-            setOnClickListener {
-                routeDraft = settings.savedRoutes.map { it.copy() }.toMutableList()
-                editingRoutes = true
-                renderSavedRoutes()
-            }
+        editRoutesButton = Ui.outlinedButton(this, getString(R.string.edit_routes)) {
+            routeDraft = settings.savedRoutes.map { it.copy() }.toMutableList()
+            editingRoutes = true
+            renderSavedRoutes()
         }
-        savedRoutesSection.addView(editRoutesButton)
+        savedRoutesSection.addView(spaced(editRoutesButton))
 
         editRoutesBar = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
-            val saveBtn = Button(this@SettingsActivity).apply {
-                text = getString(R.string.save)
-                setOnClickListener {
-                    val draft = routeDraft
-                    if (draft != null) {
-                        settings.saveRouteEdits(draft)
-                        Toast.makeText(this@SettingsActivity, getString(R.string.saved), Toast.LENGTH_SHORT).show()
-                        restartIfRunning()
-                    }
-                    editingRoutes = false
-                    routeDraft = null
-                    renderSavedRoutes()
-                    showRoutes()
-                    describeLink()
+            val saveBtn = Ui.primaryButton(this@SettingsActivity, getString(R.string.save)) {
+                val draft = routeDraft
+                if (draft != null) {
+                    settings.saveRouteEdits(draft)
+                    Toast.makeText(this@SettingsActivity, getString(R.string.saved), Toast.LENGTH_SHORT).show()
+                    restartIfRunning()
                 }
+                editingRoutes = false
+                routeDraft = null
+                renderSavedRoutes()
+                showRoutes()
+                describeLink()
             }
-            val cancelBtn = Button(this@SettingsActivity).apply {
-                text = getString(android.R.string.cancel)
-                setOnClickListener {
-                    editingRoutes = false
-                    routeDraft = null
-                    renderSavedRoutes()
-                }
+            val cancelBtn = Ui.textButton(this@SettingsActivity, getString(android.R.string.cancel)) {
+                editingRoutes = false
+                routeDraft = null
+                renderSavedRoutes()
             }
             addView(saveBtn, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
             addView(cancelBtn, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
@@ -287,18 +286,17 @@ class SettingsActivity : ThemedActivity() {
         }
         savedRoutesSection.addView(routesEditHint)
 
-        linkHeading = Ui.heading(this, getString(R.string.link_label))
-        col.addView(linkHeading)
+        val linkCard = Ui.card(this)
+        col.addView(linkCard)
+        linkHeading = Ui.heading(this, getString(R.string.link_label)).apply { setPadding(0, 0, 0, Ui.dp(this@SettingsActivity, 8)) }
+        linkCard.addView(linkHeading)
         linkInfo = Ui.hint(this, "")
-        col.addView(linkInfo)
-        changeButton = Button(this).apply {
-            text = getString(R.string.change_link)
-            setOnClickListener { setLinkOpen(true) }
-        }
-        col.addView(changeButton)
+        linkCard.addView(linkInfo)
+        changeButton = Ui.outlinedButton(this, getString(R.string.change_link)) { setLinkOpen(true) }
+        linkCard.addView(spaced(changeButton))
 
         linkBox = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
-        col.addView(linkBox)
+        linkCard.addView(linkBox)
         linkEdit = EditText(this).apply {
             id = R.id.link_edit
             isSaveEnabled = false
@@ -311,17 +309,15 @@ class SettingsActivity : ThemedActivity() {
             textSize = 13f
         }
         linkBox.addView(linkEdit)
-        linkBox.addView(Button(this).apply {
-            text = getString(R.string.save)
-            setOnClickListener { onSave() }
-        })
+        linkBox.addView(spaced(Ui.primaryButton(this, getString(R.string.save)) { onSave() }))
 
-
-        subscriptionsSection = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        subscriptionsSection = Ui.card(this)
         col.addView(subscriptionsSection)
 
-        col.addView(Ui.heading(this, getString(R.string.access_label)))
-        col.addView(CheckBox(this).apply {
+        val accessCard = Ui.card(this)
+        col.addView(accessCard)
+        accessCard.addView(Ui.heading(this, getString(R.string.access_label)).apply { setPadding(0, 0, 0, Ui.dp(this@SettingsActivity, 8)) })
+        accessCard.addView(CheckBox(this).apply {
             text = getString(R.string.auth_switch)
             isChecked = settings.auth
             setOnCheckedChangeListener { _, on ->
@@ -329,19 +325,18 @@ class SettingsActivity : ThemedActivity() {
                 restartIfRunning()
             }
         })
-        col.addView(Ui.hint(this, getString(R.string.auth_help)))
-        col.addView(Button(this).apply {
-            text = getString(R.string.new_access)
-            setOnClickListener {
-                settings.newAccess()
-                restartIfRunning()
-                Toast.makeText(this@SettingsActivity, getString(R.string.new_access_done), Toast.LENGTH_SHORT).show()
-            }
-        })
-        col.addView(Ui.hint(this, getString(R.string.new_access_help)))
+        accessCard.addView(Ui.hint(this, getString(R.string.auth_help)))
+        accessCard.addView(spaced(Ui.outlinedButton(this, getString(R.string.new_access)) {
+            settings.newAccess()
+            restartIfRunning()
+            Toast.makeText(this@SettingsActivity, getString(R.string.new_access_done), Toast.LENGTH_SHORT).show()
+        }))
+        accessCard.addView(Ui.hint(this, getString(R.string.new_access_help)))
 
-        col.addView(Ui.heading(this, getString(R.string.theme_label)))
-        col.addView(Ui.segments(this, listOf(
+        val themeCard = Ui.card(this)
+        col.addView(themeCard)
+        themeCard.addView(Ui.heading(this, getString(R.string.theme_label)).apply { setPadding(0, 0, 0, Ui.dp(this@SettingsActivity, 8)) })
+        themeCard.addView(Ui.segments(this, listOf(
             getString(R.string.theme_system), getString(R.string.theme_light), getString(R.string.theme_dark),
         ), Settings.THEMES.indexOf(settings.theme)) { index ->
             val theme = Settings.THEMES[index]
@@ -351,26 +346,47 @@ class SettingsActivity : ThemedActivity() {
             }
         })
 
+        val languageCard = Ui.card(this)
+        col.addView(languageCard)
+        languageCard.addView(Ui.heading(this, getString(R.string.language_label)).apply {
+            setPadding(0, 0, 0, Ui.dp(this@SettingsActivity, 8))
+        })
+        languageCard.addView(Ui.segments(this, listOf(
+            getString(R.string.language_system), getString(R.string.language_english), getString(R.string.language_russian),
+        ), AppLanguage.choices.indexOf(settings.language)) { index ->
+            val language = AppLanguage.choices[index]
+            if (settings.language != language) {
+                AppLanguage.select(this, language)
+                recreate()
+            }
+        })
+
         updates = UpdateSection(this)
         updates.view.visibility = View.GONE
-        col.addView(updates.view)
+        val updatesCard = Ui.card(this).apply {
+            visibility = View.GONE
+            addView(updates.view)
+        }
+        (updates.view.getChildAt(0) as TextView).setPadding(0, 0, 0, Ui.dp(this, 8))
+        col.addView(updatesCard)
 
-        col.addView(Ui.heading(this, getString(R.string.background_label)))
-        col.addView(Ui.hint(this, getString(R.string.background_help)))
+        val backgroundCard = Ui.card(this)
+        col.addView(backgroundCard)
+        backgroundCard.addView(Ui.heading(this, getString(R.string.background_label)).apply { setPadding(0, 0, 0, Ui.dp(this@SettingsActivity, 8)) })
+        backgroundCard.addView(Ui.hint(this, getString(R.string.background_help)))
         backgroundState = Ui.hint(this, getString(R.string.background_allowed)).apply {
             setPadding(0, Ui.dp(this@SettingsActivity, 8), 0, 0)
         }
-        col.addView(backgroundState)
-        batteryButton = Button(this).apply {
-            text = getString(R.string.battery)
-            setOnClickListener { Ui.askBatteryExemption(this@SettingsActivity) }
-        }
-        col.addView(batteryButton)
+        backgroundCard.addView(backgroundState)
+        batteryButton = Ui.outlinedButton(this, getString(R.string.battery)) { Ui.askBatteryExemption(this) }
+        backgroundCard.addView(spaced(batteryButton))
 
-        col.addView(Ui.heading(this, getString(R.string.about_label)))
+        val aboutCard = Ui.card(this)
+        col.addView(aboutCard)
+        aboutCard.addView(Ui.heading(this, getString(R.string.about_label)).apply { setPadding(0, 0, 0, Ui.dp(this@SettingsActivity, 8)) })
         aboutView = Ui.hint(this, "")
-        col.addView(aboutView)
-        col.addView(Ui.hint(this, getString(R.string.about_cert)).apply {
+        aboutCard.addView(aboutView)
+        aboutCard.addView(Ui.hint(this, getString(R.string.about_cert)).apply {
             setPadding(0, Ui.dp(this@SettingsActivity, 12), 0, 0)
         })
         val certView = Ui.hint(this, certFingerprint()).apply {
@@ -381,16 +397,16 @@ class SettingsActivity : ThemedActivity() {
                     "$packageName\n${certFingerprint()}", getString(R.string.about_cert_copied))
             }
         }
-        col.addView(certView)
-        col.addView(Ui.hint(this, getString(R.string.about_cert_help)))
-        col.addView(Ui.hint(this, getString(R.string.about_site, SITE_URL)).apply {
+        aboutCard.addView(certView)
+        aboutCard.addView(Ui.hint(this, getString(R.string.about_cert_help)))
+        aboutCard.addView(Ui.hint(this, getString(R.string.about_site, SITE_URL)).apply {
             setPadding(0, Ui.dp(this@SettingsActivity, 12), 0, 0)
             Linkify.addLinks(this, Linkify.WEB_URLS)
         })
-        col.addView(Ui.hint(this, getString(R.string.about_source, SOURCE_URL)).apply {
+        aboutCard.addView(Ui.hint(this, getString(R.string.about_source, SOURCE_URL)).apply {
             Linkify.addLinks(this, Linkify.WEB_URLS)
         })
-        col.addView(Ui.hint(this, getString(R.string.about_licenses)).apply {
+        aboutCard.addView(Ui.hint(this, getString(R.string.about_licenses)).apply {
             setPadding(0, Ui.dp(this@SettingsActivity, 12), 0, 0)
             setTextColor(linkTextColors)
             paintFlags = paintFlags or Paint.UNDERLINE_TEXT_FLAG
@@ -404,6 +420,7 @@ class SettingsActivity : ThemedActivity() {
                 aboutView.text = text
                 if (enabled) {
                     updates.view.visibility = View.VISIBLE
+                    updatesCard.visibility = View.VISIBLE
                     updates.resume()
                     if (intent?.action == Updater.ACTION_SHOW) showUpdates()
                 }
@@ -416,78 +433,26 @@ class SettingsActivity : ThemedActivity() {
 
     private fun showUpdates() {
         if (intent?.action == Updater.ACTION_SHOW) intent.action = null
-        scrollView.post { scrollView.smoothScrollTo(0, updates.view.top) }
+        scrollView.post { scrollView.smoothScrollTo(0, (updates.view.parent as View).top) }
     }
 
-    /** Imports the link after confirmation, folds it if valid, and restarts a running proxy. */
     private fun onSave() {
-        val incoming = linkEdit.text.toString().trim()
-        val previous = settings.routesConfig
-        val previousLink = settings.link
-        worker.execute {
-            try {
-                val existing = if (previous.isNotEmpty()) org.json.JSONObject(previous)
-                    else if (previousLink.isNotEmpty()) Native.parse(previousLink) else org.json.JSONObject()
-                fun prepare(replace: Boolean, subscribe: Boolean = false): org.json.JSONObject {
-                    val request = org.json.JSONObject().put("existing", existing).put("link", incoming).put("replace", replace).put("subscribe", subscribe)
-                    return Native.json(Native.importLink(request.toString().toByteArray(Charsets.UTF_8)))
-                }
-                val preview = prepare(false)
-                if (preview.has("error")) throw IllegalArgumentException(preview.optString("error"))
-                runOnUiThread {
-                    if (isFinishing || isDestroyed) return@runOnUiThread
-                    val subscribing = preview.optString("mode") == "subscribe"
-                    val trust = if (preview.optString("signature") == "trusted_author") getString(R.string.import_trusted)
-                        else getString(R.string.import_untrusted)
-                    val collision = if (preview.optBoolean("collision")) "\n" + getString(R.string.import_collision) else ""
-                    val operation = if (incoming.isEmpty()) getString(R.string.import_clear)
-                        else if (preview.optString("mode") == "replace") getString(R.string.import_replace)
-                        else getString(R.string.import_merge)
-                    AlertDialog.Builder(this).setTitle(if (subscribing) R.string.subscribe else R.string.import_title)
-                        .setMessage(if (subscribing) subscriptionPreview(preview) else trust + "\n\n" + operation + collision + "\n" + (preview.optJSONArray("route_ids")?.join(", ") ?: "") + "\n\n" + getString(R.string.import_personal))
-                        .setNegativeButton(android.R.string.cancel, null)
-                        .setPositiveButton(if (subscribing) R.string.subscribe else R.string.save) { _, _ ->
-                            worker.execute {
-                                try {
-                                    if (settings.routesConfig != previous || settings.link != previousLink) throw IllegalStateException("Settings changed; retry import")
-                                    val result = prepare(if (subscribing) preview.optBoolean("collision") else true, subscribing)
-                                    if (result.has("error")) throw IllegalArgumentException(result.optString("error"))
-                                    synchronized(Settings.configLock) {
-                                        if (settings.routesConfig != previous || settings.link != previousLink) throw IllegalStateException("Settings changed; retry import")
-                                        settings.saveRoutes(if (subscribing) previousLink else incoming, result.getJSONObject("config").toString())
-                                    }
-                                    runOnUiThread {
-                                        if (subscribing) refreshSubscriptions(initial = true) else restartIfRunning()
-                                        if (isFinishing || isDestroyed) return@runOnUiThread
-                                        editingRoutes = false
-                                        routeDraft = null
-                                        renderSavedRoutes()
-                                        linkEdit.setText("")
-                                        describeLink(); setLinkOpen(false); showRoutes()
-                                    }
-                                } catch (e: Throwable) { runOnUiThread { Toast.makeText(this, getString(R.string.link_error_toast, e.message), Toast.LENGTH_LONG).show() } }
-                            }
-                        }.show()
-                }
-            } catch (e: Throwable) { runOnUiThread { Toast.makeText(this, getString(R.string.link_error_toast, e.message), Toast.LENGTH_LONG).show() } }
+        LinkImporter.importLink(this, settings, worker, linkEdit.text.toString()) { subscribing ->
+            if (subscribing) refreshSubscriptions(initial = true) else restartIfRunning()
+            if (isFinishing || isDestroyed) return@importLink
+            editingRoutes = false
+            routeDraft = null
+            renderSavedRoutes()
+            linkEdit.setText("")
+            describeLink(); setLinkOpen(false); showRoutes()
         }
-    }
-
-    private fun subscriptionPreview(preview: org.json.JSONObject): String {
-        val sub = preview.getJSONObject("subscription")
-        return listOf(
-            sub.optString("name"),
-            resources.getQuantityString(R.plurals.sub_addresses, sub.optInt("sources"), sub.optInt("sources")),
-            getString(if (sub.optBoolean("has_seed")) R.string.sub_seed else R.string.sub_no_seed),
-            *Subscriptions.inviteSignerResources(preview.optString("signature")).map { getString(it) }.toTypedArray(),
-        ).joinToString("\n") + if (preview.optBoolean("collision")) "\n\n" + getString(R.string.sub_collision) else ""
     }
 
     private fun renderSubscriptions() {
         if (!::subscriptionsSection.isInitialized) return
         val rows = settings.subscriptions
         subscriptionsSection.removeAllViews()
-        subscriptionsSection.addView(Ui.heading(this, getString(R.string.subscriptions)))
+        subscriptionsSection.addView(Ui.heading(this, getString(R.string.subscriptions)).apply { setPadding(0, 0, 0, Ui.dp(this@SettingsActivity, 8)) })
         if (rows.isEmpty()) {
             subscriptionsSection.addView(Ui.hint(this, getString(R.string.subscriptions_empty)))
             return
@@ -496,31 +461,33 @@ class SettingsActivity : ThemedActivity() {
             val id = sub.getString("id")
             val status = if (Subscriptions.isClosed(sub)) sub else subscriptionStatus.firstOrNull { it.optString("id") == id.take(8) } ?: sub
             subscriptionsSection.addView(TextView(this).apply {
-                text = sub.optString("name")
+                text = Subscriptions.displayName(sub.optString("name"))
                 textSize = 16f
             })
             subscriptionsSection.addView(Ui.hint(this, Subscriptions.detail(this, status)))
             if (!Subscriptions.isClosed(status) && (refreshingSubscriptions || refreshResult.isNotEmpty())) {
                 subscriptionsSection.addView(Ui.hint(this, if (refreshingSubscriptions) getString(R.string.sub_refreshing) else refreshResult))
             }
-            val buttons = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
-            val gap = LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT)
-                .apply { marginEnd = Ui.dp(this@SettingsActivity, 12) }
-            if (!Subscriptions.isClosed(status)) buttons.addView(Button(this).apply {
-                text = getString(R.string.sub_refresh)
-                isEnabled = !refreshingSubscriptions && !editingRoutes
-                setOnClickListener { refreshSubscriptions() }
-            }, gap)
-            buttons.addView(Button(this).apply {
-                text = getString(R.string.sub_remove)
-                isEnabled = !refreshingSubscriptions && !editingRoutes
-                setOnClickListener {
-                    AlertDialog.Builder(this@SettingsActivity)
-                        .setMessage(getString(R.string.sub_remove_confirm, sub.optString("name")))
-                        .setNegativeButton(android.R.string.cancel, null)
-                        .setPositiveButton(R.string.sub_remove) { _, _ -> removeSubscription(id) }.show()
+            val buttons = LinearLayout(this).apply {
+                orientation = LinearLayout.HORIZONTAL
+                layoutParams = LinearLayout.LayoutParams(-1, -2).apply {
+                    topMargin = Ui.dp(this@SettingsActivity, 12)
+                    bottomMargin = Ui.dp(this@SettingsActivity, 12)
                 }
-            })
+            }
+            val gap = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+                .apply { marginEnd = Ui.dp(this@SettingsActivity, 12) }
+            if (!Subscriptions.isClosed(status)) buttons.addView(
+                Ui.outlinedButton(this, getString(R.string.sub_refresh)) { refreshSubscriptions() }.apply {
+                    isEnabled = !refreshingSubscriptions && !editingRoutes
+                }, gap
+            )
+            buttons.addView(Ui.outlinedButton(this, getString(R.string.sub_remove)) {
+                AlertDialog.Builder(this@SettingsActivity)
+                    .setMessage(getString(R.string.sub_remove_confirm, Subscriptions.displayName(sub.optString("name"))))
+                    .setNegativeButton(android.R.string.cancel, null)
+                    .setPositiveButton(R.string.sub_remove) { _, _ -> removeSubscription(id) }.showStyled()
+            }.apply { isEnabled = !refreshingSubscriptions && !editingRoutes }, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
             subscriptionsSection.addView(buttons)
         }
     }
@@ -658,7 +625,7 @@ class SettingsActivity : ThemedActivity() {
             .setTitle(R.string.about_licenses)
             .setView(ScrollView(this).apply { addView(view) })
             .setPositiveButton(android.R.string.ok, null)
-            .show()
+            .showStyled()
     }
 
     /** Version and soar version, so a tester can say what they run. */
@@ -705,7 +672,7 @@ class SettingsActivity : ThemedActivity() {
         renderSubscriptions()
         val routes = if (editingRoutes) routeDraft ?: emptyList() else settings.savedRoutes
         savedRoutesSection.visibility = View.VISIBLE
-        linkHeading.setPadding(0, Ui.dp(this, 20), 0, linkHeading.paddingBottom)
+        linkHeading.setPadding(0, 0, 0, linkHeading.paddingBottom)
 
         editRoutesButton.visibility = if (editingRoutes || routes.isEmpty()) View.GONE else View.VISIBLE
         editRoutesBar.visibility = if (editingRoutes) View.VISIBLE else View.GONE
@@ -728,14 +695,17 @@ class SettingsActivity : ThemedActivity() {
             alpha = if (r.on) 1f else 0.5f
         }
         if (!editing) {
-            val check = CheckBox(this).apply {
-                isChecked = r.on
-                isClickable = false
-                isFocusable = false
+            row.addView(android.widget.ImageView(this).apply {
+                setImageResource(if (r.on) R.drawable.ic_check else R.drawable.ic_cross)
+                setColorFilter(if (r.on) Ui.accent(this@SettingsActivity) else getColor(R.color.muted))
+                importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
+                layoutParams = LinearLayout.LayoutParams(Ui.dp(this@SettingsActivity, 18), Ui.dp(this@SettingsActivity, 18))
+                    .apply { marginEnd = Ui.dp(this@SettingsActivity, 8) }
+            })
+            row.addView(TextView(this).apply {
                 text = "${r.priority} ${r.id} (${r.type}${r.subscription.takeIf { it.isNotEmpty() }?.let { " · $it" }.orEmpty()})"
                 textSize = 14f
-            }
-            row.addView(check)
+            })
             return row
         }
 
@@ -758,8 +728,10 @@ class SettingsActivity : ThemedActivity() {
 
         lateinit var numView: TextView
 
-        val minus = Button(this).apply {
-            text = "−"
+        val minus = Ui.outlinedButton(this, "−") {
+            r.priority = (r.priority - 5).coerceIn(0, 65535)
+            numView.text = r.priority.toString()
+        }.apply {
             textSize = 16f
             minWidth = 0
             minimumWidth = 0
@@ -767,10 +739,6 @@ class SettingsActivity : ThemedActivity() {
             minimumHeight = Ui.dp(this@SettingsActivity, 36)
             val padH = Ui.dp(this@SettingsActivity, 10)
             setPadding(padH, 0, padH, 0)
-            setOnClickListener {
-                r.priority = (r.priority - 5).coerceIn(0, 65535)
-                numView.text = r.priority.toString()
-            }
         }
         row.addView(minus)
 
@@ -789,8 +757,10 @@ class SettingsActivity : ThemedActivity() {
         }
         row.addView(numView)
 
-        val plus = Button(this).apply {
-            text = "+"
+        val plus = Ui.outlinedButton(this, "+") {
+            r.priority = (r.priority + 5).coerceIn(0, 65535)
+            numView.text = r.priority.toString()
+        }.apply {
             textSize = 16f
             minWidth = 0
             minimumWidth = 0
@@ -798,10 +768,6 @@ class SettingsActivity : ThemedActivity() {
             minimumHeight = Ui.dp(this@SettingsActivity, 36)
             val padH = Ui.dp(this@SettingsActivity, 10)
             setPadding(padH, 0, padH, 0)
-            setOnClickListener {
-                r.priority = (r.priority + 5).coerceIn(0, 65535)
-                numView.text = r.priority.toString()
-            }
         }
         row.addView(plus)
 
@@ -831,7 +797,7 @@ class SettingsActivity : ThemedActivity() {
                 }
             }
             .setNegativeButton(android.R.string.cancel, null)
-            .show()
+            .showStyled(primary = true)
     }
 
     private fun setLinkOpen(open: Boolean) {

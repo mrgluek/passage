@@ -170,10 +170,11 @@ object Updater {
     }
 
     private fun notify(context: Context, offer: Offer) {
+        val localized = AppLanguage.localizedContext(context)
         val nm = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
         val b = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             if (nm.getNotificationChannel(CHANNEL) == null) {
-                nm.createNotificationChannel(NotificationChannel(CHANNEL, context.getString(R.string.updates_label), NotificationManager.IMPORTANCE_DEFAULT))
+                nm.createNotificationChannel(NotificationChannel(CHANNEL, localized.getString(R.string.updates_label), NotificationManager.IMPORTANCE_DEFAULT))
             }
             Notification.Builder(context, CHANNEL)
         } else {
@@ -185,8 +186,8 @@ object Updater {
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
         )
         nm.notify(NOTIFICATION_ID, b.setSmallIcon(R.drawable.ic_notification)
-            .setContentTitle(context.getString(R.string.update_available, offer.version))
-            .setContentText(context.getString(R.string.update_tap))
+            .setContentTitle(localized.getString(R.string.update_available, offer.version))
+            .setContentText(localized.getString(R.string.update_tap))
             .setContentIntent(open)
             .setAutoCancel(true)
             .build())

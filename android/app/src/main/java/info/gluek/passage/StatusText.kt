@@ -14,10 +14,21 @@ object StatusText {
         return listOfNotNull(routes(c, s), network(c, s), tunnelState(c, s)).joinToString(" · ")
     }
 
-    /** Notification title and text: the routes, then the network and the tunnel. */
-    fun notification(c: Context, s: JSONObject): Pair<String, String> {
-        if (!s.optBoolean("running")) return c.getString(R.string.app_name) to c.getString(R.string.not_running)
-        return routes(c, s) to listOfNotNull(network(c, s), tunnelState(c, s)).joinToString(" · ")
+    fun notification(c: Context, s: JSONObject?, appSeen: Boolean, fallbackRunning: Boolean): Pair<String, String> {
+        val (title, reason) = notificationResources(s, appSeen, fallbackRunning)
+        return c.getString(title) to c.getString(reason)
+    }
+
+    internal fun notificationResources(s: JSONObject?, appSeen: Boolean, fallbackRunning: Boolean): Pair<Int, Int> {
+        val health = s?.optJSONObject("health")
+        val plain = HomeSetup.plain(
+            running = s?.optBoolean("running", fallbackRunning) ?: fallbackRunning,
+            startFailed = false,
+            hasLink = true,
+            health = health?.optString("state").orEmpty(),
+            reason = health?.optString("reason").orEmpty(),
+        )
+        return plain.title to plain.reason(appSeen)
     }
 
     /**
@@ -310,6 +321,7 @@ object StatusText {
         Diagnostics.collectExits(c)
         val r = JSONObject(s.toString())
         r.remove("zone")
+        if (r.optString("dns_egress").isNotEmpty()) r.put("dns_egress", "[addr]")
         r.put("app", JSONObject()
             .put("version", version)
             .put("listen", settings.listen)
@@ -318,15 +330,33 @@ object StatusText {
             .put("last_error", PassageService.lastError?.let(Diagnostics::redact) ?: JSONObject.NULL))
         r.put("device", Diagnostics.device())
         val diagnostics = Diagnostics.snapshot()
+        for (key in listOf("events", "process_exits", "last_crash")) {
+            diagnostics.opt(key)?.let { redactReportValue(it, Diagnostics::redact) }
+        }
         r.put("diagnostics", diagnostics)
         diagnostics.optJSONArray("battery")?.let { r.put("battery_summary", batterySummary(it)) }
+        if (networkTest != null) r.put("network_test", JSONArray(networkTest.trimEnd().lines()))
+        redactReportValue(r) { Diagnostics.reportText(it, net.prefixes) }
         r.put("device_network", JSONObject()
             .put("transport", net.transport)
             .put("dns", JSONArray(net.dns))
             .put("operator", net.operator)
             .put("private_dns", net.privateDns))
-        if (networkTest != null) r.put("network_test", JSONArray(networkTest.trimEnd().lines()))
         return r.toString(2)
+    }
+
+    private fun redactReportValue(value: Any, redact: (String) -> String): Any = when (value) {
+        is String -> redact(value)
+        is JSONObject -> value.apply {
+            keys().forEach { key ->
+                val item = get(key)
+                put(key, redactReportValue(if (key == "msg" && item is String) Diagnostics.redactSecrets(item) else item, redact))
+            }
+        }
+        is JSONArray -> value.apply {
+            for (i in 0 until length()) put(i, redactReportValue(get(i), redact))
+        }
+        else -> value
     }
 
     private fun stateName(c: Context, state: String): String = when (state) {

@@ -8,10 +8,12 @@ import android.os.Bundle
 /** Apply the saved theme before any views or dialogs are created. */
 abstract class ThemedActivity : Activity() {
     private lateinit var appliedTheme: String
+    private lateinit var appliedLanguage: String
 
     override fun attachBaseContext(newBase: Context) {
-        super.attachBaseContext(newBase)
         appliedTheme = Settings(newBase).theme
+        appliedLanguage = Settings(newBase).language
+        super.attachBaseContext(AppLanguage.wrap(newBase))
         val night = when (appliedTheme) {
             "light" -> Configuration.UI_MODE_NIGHT_NO
             "dark" -> Configuration.UI_MODE_NIGHT_YES
@@ -31,6 +33,6 @@ abstract class ThemedActivity : Activity() {
     override fun onResume() {
         super.onResume()
         // The home screen may have been stopped while settings changed.
-        if (appliedTheme != Settings(this).theme) recreate()
+        if (appliedTheme != Settings(this).theme || appliedLanguage != Settings(this).language) recreate()
     }
 }

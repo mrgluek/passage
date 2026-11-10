@@ -10,6 +10,21 @@
     <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
 
+    <queries>
+        <intent>
+            <action android:name="android.intent.action.SEND" />
+            <data android:mimeType="text/plain" />
+        </intent>
+        <intent>
+            <action android:name="android.intent.action.VIEW" />
+            <data android:scheme="tg" />
+        </intent>
+        <intent>
+            <action android:name="android.intent.action.VIEW" />
+            <data android:scheme="velta" />
+        </intent>
+    </queries>
+
     <application
         android:name=".PassageApp"
         android:allowBackup="false"
@@ -54,6 +69,12 @@
                 <data android:scheme="https" android:host="passage.gluek.info" android:path="/link" />
             </intent-filter>
         </activity>
+
+        <activity android:name=".DetailsActivity" android:exported="false"
+            android:label="@string/details_title" android:parentActivityName=".MainActivity" />
+
+        <provider android:name=".ReportFileProvider" android:authorities="${applicationId}.reports"
+            android:exported="false" android:grantUriPermissions="true" />
 
         <activity
             android:name=".InstallResultActivity"

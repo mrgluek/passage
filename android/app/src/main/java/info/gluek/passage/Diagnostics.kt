@@ -9,6 +9,7 @@ import android.util.AtomicFile
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
+import java.net.InetAddress
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -32,7 +33,15 @@ object Diagnostics {
         }
         file = AtomicFile(File(context.filesDir, "diagnostics.json"))
         history = try {
-            JSONObject(file!!.openRead().bufferedReader(Charsets.UTF_8).use { it.readText() })
+            JSONObject(file!!.openRead().bufferedReader(Charsets.UTF_8).use { it.readText() }).also {
+                val events = it.optJSONArray("events") ?: return@also
+                for (i in 0 until events.length()) {
+                    val event = events.optJSONObject(i) ?: continue
+                    val message = event.optString("msg")
+                    val neutral = neutralHistoryMessage(message)
+                    if (neutral != message) event.put("msg", neutral)
+                }
+            }
         } catch (_: Exception) {
             JSONObject()
         }
@@ -50,7 +59,7 @@ object Diagnostics {
             val event = events.getJSONObject(i)
             event.optString("t") to event.optString("msg")
         })
-        for ((time, message) in selected) record(entry(message).put("t", time))
+        for ((time, message) in selected) record(entry(neutralHistoryMessage(message)).put("t", time))
     }
 
     /** A battery sample (PassageService.sampleBattery), kept for the report. */
@@ -164,9 +173,55 @@ object Diagnostics {
         }
     }
 
-    fun redact(text: String): String = text
-        .replace(Regex("[A-Za-z][A-Za-z0-9+.-]*://\\S+"), "[link]")
-        .replace(Regex("(?i)(\"?(?:read_key|signer|key|pass(?:word)?|user(?:name)?|ticket|zone|link)\"?\\s*[:=]\\s*)(?:\"[^\"]*\"|[^\\s,}]+)"), "$1[redacted]")
+    private val link = Regex("""[A-Za-z][A-Za-z0-9+.-]*://[^\s"'<>]+""")
+    private val secret = Regex("""(?i)(\b(?:read_key|signer|key|pass(?:word)?|user(?:name)?|ticket|zone|link|secret|credentials?|token|endpoint|dial_ip|sni|sources)"?[ \t]*[:=][ \t]*)(?:"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|\[[^\]\r\n]*\]|[^\r\n]+)""")
+    private val localEndpoint = Regex("""(?:\[[0-9a-fA-F:.]+(?:%[^\]\s]+)?\]|[0-9]+(?:\.[0-9]+){3}):[0-9]+[ \t]*->""")
+    private val address = Regex("""(?:->[ \t]*)?(?:\[[0-9a-fA-F:.]+(?:%[^\]\s]+)?\](?::[0-9]+)?|[0-9]+(?:\.[0-9]+){3}(?::[0-9]+)?|[0-9a-fA-F]*:[0-9a-fA-F:.]+(?:%[\w.-]+)?)""")
+
+    fun redactSecrets(text: String): String = text.replace(secret, "$1[redacted]").replace(link, "[link]")
+
+    fun redact(text: String): String = reportText(redactSecrets(text), null)
+
+    fun reportText(text: String, prefixes: List<NetInfo.Prefix>?): String {
+        val masked = text.replace(localEndpoint, "[addr]->")
+        return masked.replace(address) { match ->
+            val token = match.value
+            val remote = token.startsWith("->")
+            val before = masked.getOrNull(match.range.first - 1)
+            val after = masked.getOrNull(match.range.last + 1)
+            if (!remote && (isAddressWord(before) || before == '.') || isAddressWord(after) ||
+                after == '.' && isAddressWord(masked.getOrNull(match.range.last + 2))) return@replace token
+            val endpoint = token.removePrefix("->").trim()
+            val host = when {
+                endpoint.startsWith("[") -> endpoint.substringAfter('[').substringBefore(']')
+                endpoint.count { it == ':' } == 1 && '.' in endpoint -> endpoint.substringBefore(':')
+                else -> endpoint
+            }.substringBefore('%')
+            val trimmed = host.trimEnd('.')
+            var suffix = host.substring(trimmed.length)
+            val ip = numericAddress(trimmed) ?: if (trimmed.endsWith(':')) {
+                suffix = ":$suffix"
+                numericAddress(trimmed.dropLast(1))
+            } else null
+            if (ip != null && (prefixes?.any { it.contains(ip) } ?: !remote)) {
+                (if (remote) "->[addr]" else "[addr]") + suffix
+            } else token
+        }
+    }
+
+    private fun isAddressWord(c: Char?): Boolean = c != null && (c.isLetterOrDigit() || c == '_' || c == '-')
+
+    private fun numericAddress(host: String): InetAddress? {
+        if (host.count { it == ':' } >= 2) return runCatching { InetAddress.getByName(host) }.getOrNull()
+        val octets = host.split('.')
+        if (octets.size != 4) return null
+        val bytes = ByteArray(4)
+        for ((i, octet) in octets.withIndex()) {
+            val n = octet.toIntOrNull()?.takeIf { it in 0..255 } ?: return null
+            bytes[i] = n.toByte()
+        }
+        return InetAddress.getByAddress(bytes)
+    }
 
     private fun exitReason(reason: Int): String = when (reason) {
         ApplicationExitInfo.REASON_EXIT_SELF -> "exit self"
