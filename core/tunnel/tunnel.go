@@ -2212,6 +2212,7 @@ func (t *Tunnel) tickGroupLocked(g *group, now time.Time) {
 				g.trial.released.Store(true)
 				g.trial = nil
 			}
+			t.log.addAt(now, "%s", historyLine(historyTransition{prefix: "trial skipped", unit: holdUnit(g, Route(r))}))
 			h.holdForStep(now)
 		}
 	}

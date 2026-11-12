@@ -620,3 +620,24 @@ func TestSmartTrialKeepsTunnelUntilFirstReply(t *testing.T) {
 		})
 	}
 }
+
+func TestTrialWindowLogsSkippedOnce(t *testing.T) {
+	tt, g, now, calls := trialFixture(t)
+	h := g.stalls[RouteDirect]
+	tt.tick(*now)
+	if h.state != Trial {
+		t.Fatalf("state=%v", h.state)
+	}
+	*now = h.trialUntil
+	tt.tick(*now)
+	tt.tick(*now)
+	count := 0
+	for _, event := range tt.log.last(100) {
+		if event.Msg == holdUnit(g, RouteDirect)+": trial skipped, no new connection" {
+			count++
+		}
+	}
+	if count != 1 || *calls != 0 || h.state != Held || h.step != 1 || h.count != 0 || g.failedTrials != 0 {
+		t.Fatalf("events=%v calls=%d hold=%+v failed trials=%d", tt.log.last(100), *calls, h, g.failedTrials)
+	}
+}

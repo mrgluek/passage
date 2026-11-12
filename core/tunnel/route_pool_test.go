@@ -192,3 +192,39 @@ func TestUnreachableDestinationIsSkippedBriefly(t *testing.T) {
 		}
 	}
 }
+
+func TestPinnedRouteDialHealth(t *testing.T) {
+	for _, failure := range []error{context.DeadlineExceeded, errors.New("transport unavailable"), errDestinationRefused, errDestinationUnreachable} {
+		t.Run(failure.Error(), func(t *testing.T) {
+			now := time.Unix(1000, 0)
+			result := failure
+			client := &poolFixture{dial: func(context.Context, string, string) (net.Conn, error) {
+				if result != nil {
+					return nil, result
+				}
+				a, b := net.Pipe()
+				b.Close()
+				return a, nil
+			}}
+			pool := &routePool{clients: []soarClient{client}, ipv6: []bool{false}, kinds: []string{"iroh"}, ids: []string{"a"}, only: "route:a", now: func() time.Time { return now }}
+			pool.DialContext(context.Background(), "tcp", "example.org:443")
+			now = now.Add(routeCooldown + time.Second)
+			want := routeFailed
+			if errors.Is(failure, errDestinationRefused) {
+				want = routeUp
+			}
+			if got := pool.states()[0].State; got != want {
+				t.Fatalf("state=%s want=%s", got, want)
+			}
+			result = nil
+			conn, err := pool.DialContext(context.Background(), "tcp", "example.org:443")
+			if err != nil {
+				t.Fatal(err)
+			}
+			conn.Close()
+			if got := pool.states()[0].State; got != routeUp {
+				t.Fatalf("after success=%s", got)
+			}
+		})
+	}
+}
