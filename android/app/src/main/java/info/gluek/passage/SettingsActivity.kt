@@ -169,7 +169,6 @@ class SettingsActivity : ThemedActivity() {
         return super.onOptionsItemSelected(item)
     }
 
-    /** A tapped passage:// or https://passage.gluek.info/link#… link goes into the field; Save stores it. */
     /** Full-width button with room above and below it inside a card. */
     private fun spaced(button: android.widget.Button): android.widget.Button = button.apply {
         layoutParams = android.widget.LinearLayout.LayoutParams(-1, -2).apply {
@@ -178,6 +177,7 @@ class SettingsActivity : ThemedActivity() {
         }
     }
 
+    /** A tapped passage:// or https://passage.gluek.info/link#… link goes into the field and opens the same confirmation as Save. */
     private fun takeLink(intent: Intent?) {
         val data = intent?.takeIf { it.action == Intent.ACTION_VIEW }?.data ?: return
         if (data.scheme == "https" && data.encodedFragment.isNullOrEmpty()) return // /link without fields
@@ -185,6 +185,7 @@ class SettingsActivity : ThemedActivity() {
         setIntent(Intent(this, SettingsActivity::class.java))
         linkEdit.setText(link)
         setLinkOpen(true)
+        onSave()
     }
 
     private fun buildUi(): View {
