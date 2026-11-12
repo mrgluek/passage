@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.8.1
+
+- A route that stops answering now recovers by itself after an interruption,
+  without stopping and starting the proxy.
+- Clearer route status: a route you pinned by hand shows as pinned, the others
+  as not used, and one that does not reply as not answering.
+- The history notes when a route was restarted or skipped.
+
 ## 0.8.0
 
 - A new home screen in four steps: add your link, turn the proxy on, add it to
