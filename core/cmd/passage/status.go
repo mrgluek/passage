@@ -126,12 +126,20 @@ func tunnelState(t tr, s tunnel.Status) string {
 		if types[r.Type] > 1 {
 			name = r.ID
 		}
-		parts[i] = t.f("tunnel_route", name, routeStateName(t, r.State))
+		parts[i] = t.f("tunnel_route", name, routeStateName(t, r.State, r.ID, s.Mode))
 	}
 	return strings.Join(parts, ", ")
 }
 
-func routeStateName(t tr, state string) string {
+func routeStateName(t tr, state, id, mode string) string {
+	if pinned, ok := strings.CutPrefix(mode, "route:"); ok {
+		if id != pinned {
+			return t.f("route_state_not_used")
+		}
+		if state != "up" && state != "failed" {
+			return t.f("route_state_pinned")
+		}
+	}
 	switch state {
 	case "up":
 		return t.f("route_state_up")

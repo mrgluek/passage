@@ -208,15 +208,21 @@ object StatusText {
         return rows.map { r ->
             val type = r.optString("type")
             val name = if ((types[type] ?: 0) > 1) r.optString("id") else Ui.routeLabel(c, type)
-            name to routeStateName(c, r.optString("state"))
+            name to routeStateName(c, r.optString("state"), r.optString("id"), s.optString("mode"))
         }
     }
 
-    private fun routeStateName(c: Context, state: String): String = when (state) {
-        "up" -> c.getString(R.string.route_state_up)
-        "failed" -> c.getString(R.string.route_state_failed)
-        "idle" -> c.getString(R.string.route_state_idle)
-        else -> state
+    private fun routeStateName(c: Context, state: String, id: String, mode: String): String {
+        if (mode.startsWith("route:")) {
+            if (id != mode.removePrefix("route:")) return c.getString(R.string.route_state_not_used)
+            if (state != "up" && state != "failed") return c.getString(R.string.route_state_pinned)
+        }
+        return when (state) {
+            "up" -> c.getString(R.string.route_state_up)
+            "failed" -> c.getString(R.string.route_state_failed)
+            "idle" -> c.getString(R.string.route_state_idle)
+            else -> state
+        }
     }
 
     fun full(c: Context, s: JSONObject): String {

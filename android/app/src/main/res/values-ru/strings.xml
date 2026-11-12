@@ -102,7 +102,9 @@
     <string name="tunnel_label">туннель: %1$s</string>
     <string name="tunnel_route">%1$s: %2$s</string>
     <string name="route_state_up">подключён</string>
-    <string name="route_state_failed">сбой</string>
+    <string name="route_state_failed">не отвечает</string>
+    <string name="route_state_pinned">закреплён</string>
+    <string name="route_state_not_used">не используется</string>
     <string name="route_state_idle">ожидает</string>
     <string name="status_no_tunnel">Туннель: нет ссылки (добавьте в настройках)</string>
     <string name="notification_route">Маршрут: %1$s</string>

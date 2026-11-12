@@ -87,3 +87,31 @@ func TestStartHint(t *testing.T) {
 		}
 	}
 }
+
+func TestRouteStateWords(t *testing.T) {
+	for _, tc := range []struct {
+		name, mode, id, state, en, ru string
+	}{
+		{"auto up", "auto", "a", "up", "connected", "подключён"},
+		{"auto idle", "auto", "a", "idle", "standby", "ожидает"},
+		{"auto failed", "auto", "a", "failed", "not answering", "не отвечает"},
+		{"pinned up", "route:a", "a", "up", "connected", "подключён"},
+		{"pinned failed", "route:a", "a", "failed", "not answering", "не отвечает"},
+		{"pinned idle", "route:a", "a", "idle", "pinned", "закреплён"},
+		{"other idle", "route:a", "b", "idle", "not used", "не используется"},
+		{"other up", "route:a", "b", "up", "not used", "не используется"},
+		{"other failed", "route:a", "b", "failed", "not used", "не используется"},
+	} {
+		for _, lang := range []string{"en", "ru"} {
+			t.Run(lang+"/"+tc.name, func(t *testing.T) {
+				want := tc.en
+				if lang == "ru" {
+					want = tc.ru
+				}
+				if got := routeStateName(tr(table(lang)), tc.state, tc.id, tc.mode); got != want {
+					t.Fatalf("got %q, want %q", got, want)
+				}
+			})
+		}
+	}
+}

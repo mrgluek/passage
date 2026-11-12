@@ -148,7 +148,12 @@ func newRoutePool(cfg Config) (soarClient, error) {
 			client = c
 			server = wssServer(params, c)
 		case "iroh":
-			client = &irohClient{route: r, binary: cfg.IrohBinary, dir: cfg.PrivateDir, dns: cfg.SystemResolvers}
+			client = &irohClient{route: r, binary: cfg.IrohBinary, dir: cfg.PrivateDir, dns: cfg.SystemResolvers,
+				now: p.clock, onRestart: func(now time.Time) {
+					if p.log != nil {
+						p.log.addAt(now, "%s", historyLine(historyTransition{prefix: "restarted", unit: "iroh helper", reason: "no answer"}))
+					}
+				}}
 			if params, err := links.Params[links.IrohParams](r); err == nil {
 				server = urlServer(params.Relay)
 			}
@@ -242,6 +247,9 @@ func (p *routePool) dialContext(ctx context.Context, network, address string, ba
 		}
 		go func() {
 			conn, err := p.clients[i].DialContext(child, network, address)
+			if err != nil && !errors.Is(err, context.Canceled) && !errors.Is(err, errDestinationRefused) {
+				p.mark(i, true)
+			}
 			cancel()
 			results <- result{i, conn, err}
 		}()
@@ -296,8 +304,6 @@ func (p *routePool) dialContext(ctx context.Context, network, address string, ba
 			if errors.Is(r.err, errDestinationRefused) {
 				refusals++
 				p.markRefused(r.i, address, errors.Is(r.err, errDestinationUnreachable))
-			} else {
-				p.mark(r.i, true)
 			}
 			if canStart() {
 				startNext()
@@ -458,8 +464,9 @@ func (p *routePool) states() []RouteState {
 		if i < len(p.uses) {
 			out[i].Use = p.uses[i]
 		}
+		pinnedFailure := strings.HasPrefix(p.only, "route:") && p.matches(i, p.only) && !p.failedUntil[i].IsZero()
 		switch {
-		case now.Before(p.failedUntil[i]) || p.stalledLocked(p.network, i):
+		case now.Before(p.failedUntil[i]) || pinnedFailure || p.stalledLocked(p.network, i):
 			out[i].State = routeFailed
 		case c.Established():
 			out[i].State = routeUp
@@ -560,6 +567,11 @@ type irohClient struct {
 	closed      bool
 	generation  uint64
 	ready       atomic.Bool
+	now         func() time.Time
+	onRestart   func(time.Time)
+	start       func(context.Context) (dialFunc, func(), error)
+	failures    int
+	lastRestart time.Time
 }
 
 func (c *irohClient) DialContext(ctx context.Context, n, a string) (net.Conn, error) {
@@ -578,7 +590,13 @@ func (c *irohClient) DialContext(ctx context.Context, n, a string) (net.Conn, er
 			return nil, err
 		}
 		life, cancel := context.WithCancel(context.Background())
-		dial, cleanup, err := startIroh(life, c.route, c.binary, c.dir, c.dns)
+		start := c.start
+		if start == nil {
+			start = func(ctx context.Context) (dialFunc, func(), error) {
+				return startIroh(ctx, c.route, c.binary, c.dir, c.dns)
+			}
+		}
+		dial, cleanup, err := start(life)
 		if err != nil {
 			cancel()
 			c.mu.Unlock()
@@ -592,16 +610,37 @@ func (c *irohClient) DialContext(ctx context.Context, n, a string) (net.Conn, er
 	dial := c.dial
 	c.mu.Unlock()
 	conn, err := dial(ctx, n, a)
-	if errors.Is(err, errIrohExited) {
-		c.mu.Lock()
-		if c.generation == generation && c.cleanup != nil {
-			c.cleanup()
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.generation == generation && c.dial != nil && !c.closed {
+		c.ready.Store(err == nil)
+		restart := false
+		now := time.Now()
+		if c.now != nil {
+			now = c.now()
+		}
+		if err == nil {
+			c.failures = 0
+		} else if !errors.Is(err, errDestinationRefused) && !errors.Is(err, context.Canceled) {
+			c.failures++
+			restart = c.failures >= 3 && (c.lastRestart.IsZero() || now.Sub(c.lastRestart) >= 5*time.Minute)
+		}
+		if errors.Is(err, errIrohExited) || restart {
+			if c.cleanup != nil {
+				c.cleanup()
+			}
 			c.cleanup = nil
 			c.dial = nil
+			c.ready.Store(false)
+			c.failures = 0
+			if restart {
+				c.lastRestart = now
+				if c.onRestart != nil {
+					c.onRestart(now)
+				}
+			}
 		}
-		c.mu.Unlock()
 	}
-	c.ready.Store(err == nil)
 	return conn, err
 }
 func (c *irohClient) Established() bool          { return c.ready.Load() }
@@ -612,7 +651,10 @@ func (c *irohClient) Close() error {
 	c.closed = true
 	if c.cleanup != nil {
 		c.cleanup()
+		c.cleanup = nil
 	}
+	c.dial = nil
+	c.ready.Store(false)
 	return nil
 }
 

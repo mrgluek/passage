@@ -102,7 +102,9 @@
     <string name="tunnel_label">tunnel: %1$s</string>
     <string name="tunnel_route">%1$s: %2$s</string>
     <string name="route_state_up">connected</string>
-    <string name="route_state_failed">failed</string>
+    <string name="route_state_failed">not answering</string>
+    <string name="route_state_pinned">pinned</string>
+    <string name="route_state_not_used">not used</string>
     <string name="route_state_idle">standby</string>
     <string name="status_no_tunnel">Tunnel: no link (add one in settings)</string>
     <string name="notification_route">Route: %1$s</string>

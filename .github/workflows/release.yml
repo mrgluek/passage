@@ -195,3 +195,31 @@ jobs:
     secrets: inherit
     with:
       tag: ${{ github.ref_name }}
+
+  # Tells the announcement topic once the release and the website are live.
+  # A failure here never touches the release itself.
+  notify:
+    needs: [release, website]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    continue-on-error: true
+    steps:
+      # The notes come from the published release and go through a file, never
+      # through ${{ }} inside the script.
+      - name: Send the announcement
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+          RELEASE_URL: ${{ github.server_url }}/${{ github.repository }}/releases/tag/${{ github.ref_name }}
+        run: |
+          {
+            gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json body --jq .body
+            printf '\nRelease: %s\n' "$RELEASE_URL"
+          } > "$RUNNER_TEMP/announce.md"
+          curl --fail --silent --show-error --max-time 30 \
+            -H "Title: Passage ${TAG#v}" \
+            -H "Tags: passage,robot" \
+            -H "Click: $RELEASE_URL" \
+            --data-binary @"$RUNNER_TEMP/announce.md" \
+            https://ntfy.gluek.info/passage_changelog
