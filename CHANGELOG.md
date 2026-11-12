@@ -7,6 +7,8 @@
 - Clearer route status: a route you pinned by hand shows as pinned, the others
   as not used, and one that does not reply as not answering.
 - The history notes when a route was restarted or skipped.
+- Opening a link from a message on Android now asks to apply it right away,
+  instead of leaving it in the field to find Save.
 
 ## 0.8.0
 
