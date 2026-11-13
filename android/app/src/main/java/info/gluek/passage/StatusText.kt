@@ -342,21 +342,21 @@ object StatusText {
         r.put("diagnostics", diagnostics)
         diagnostics.optJSONArray("battery")?.let { r.put("battery_summary", batterySummary(it)) }
         if (networkTest != null) r.put("network_test", JSONArray(networkTest.trimEnd().lines()))
-        redactReportValue(r) { Diagnostics.reportText(it, net.prefixes) }
         r.put("device_network", JSONObject()
             .put("transport", net.transport)
             .put("dns", JSONArray(net.dns))
             .put("operator", net.operator)
             .put("private_dns", net.privateDns))
+        redactReportValue(r) { Diagnostics.reportText(it, net.prefixes) }
         return r.toString(2)
     }
 
-    private fun redactReportValue(value: Any, redact: (String) -> String): Any = when (value) {
-        is String -> redact(value)
+    internal fun redactReportValue(value: Any, redact: (String) -> String): Any = when (value) {
+        is String -> redact(Diagnostics.redactSecrets(value))
         is JSONObject -> value.apply {
             keys().forEach { key ->
                 val item = get(key)
-                put(key, redactReportValue(if (key == "msg" && item is String) Diagnostics.redactSecrets(item) else item, redact))
+                put(key, redactReportValue(item, redact))
             }
         }
         is JSONArray -> value.apply {

@@ -477,8 +477,21 @@ func TestReportMasksOwnIPv6Prefix(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := `{"device_network":{"dns":["[2001:db8:10::53]:53"]},"dns_egress":"[addr]","events":[{"msg":"read udp [addr]-\u003e192.0.2.53:53: timeout; via [addr]: refused; to dns-192.0.2.4.example.org"}],"network_resolvers":["[addr]","[2001:db8:20::53]:53"]}`
+	want := `{"device_network":{"dns":["[addr]"]},"dns_egress":"[addr]","events":[{"msg":"read udp [addr]-\u003e192.0.2.53:53: timeout; via [addr]: refused; to dns-192.0.2.4.example.org"}],"network_resolvers":["[addr]","[2001:db8:20::53]:53"]}`
 	if string(got) != want {
 		t.Fatalf("report: %s", got)
+	}
+}
+
+func TestReportRedactsEveryString(t *testing.T) {
+	report := map[string]any{
+		"error":        "token=private-value",
+		"network_test": []string{"password=private-value"},
+		"nested":       []any{map[string]any{"detail": "key=private-value"}},
+	}
+	maskReportAddresses(report, nil)
+	raw, _ := json.Marshal(report)
+	if strings.Contains(string(raw), "private-value") {
+		t.Fatalf("secret in report: %s", raw)
 	}
 }

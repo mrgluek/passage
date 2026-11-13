@@ -41,7 +41,7 @@ func (l *eventLog) add(format string, args ...any) {
 func (l *eventLog) addAt(now time.Time, format string, args ...any) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	l.buf[l.next] = Event{Time: now.UTC(), Msg: reporttext.LocalEndpoints(fmt.Sprintf(format, args...))}
+	l.buf[l.next] = Event{Time: now.UTC(), Msg: reporttext.LocalEndpoints(reporttext.Secrets(fmt.Sprintf(format, args...)))}
 	l.next = (l.next + 1) % len(l.buf)
 	if l.next == 0 {
 		l.full = true
