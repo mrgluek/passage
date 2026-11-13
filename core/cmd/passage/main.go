@@ -28,6 +28,7 @@ func main() {
 	dir := flag.String("dir", "", "settings folder (default: Application Support on macOS, next to the program elsewhere)")
 	autostart := flag.Bool("autostart", false, "started at sign-in: no window")
 	flag.Parse()
+	startupLink = launchImport(flag.Args())
 	d, err := portableDir(*dir)
 	if err != nil {
 		fatal(err)

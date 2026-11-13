@@ -14,21 +14,39 @@ object StatusText {
         return listOfNotNull(routes(c, s), network(c, s), tunnelState(c, s)).joinToString(" · ")
     }
 
-    fun notification(c: Context, s: JSONObject?, appSeen: Boolean, fallbackRunning: Boolean): Pair<String, String> {
-        val (title, reason) = notificationResources(s, appSeen, fallbackRunning)
-        return c.getString(title) to c.getString(reason)
+    fun notification(c: Context, s: JSONObject?, appSeen: Boolean, fallbackRunning: Boolean, display: StatusChannels.Display = StatusChannels.Display()): Pair<String, String> {
+        val plain = notificationPlain(s, fallbackRunning)
+        val channels = s?.takeIf { it.optBoolean("running") }?.let { channels(c, it, display) }.orEmpty()
+        return c.getString(R.string.status_title, c.getString(plain.title)) to plain.detail(c.getString(plain.reason(appSeen)), channels)
+    }
+
+    fun channels(c: Context, s: JSONObject, display: StatusChannels.Display): String {
+        val groups = s.optJSONObject("groups") ?: JSONObject()
+        val format = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ssXXX", Locale.ROOT)
+        val list = groups.keys().asSequence().mapNotNull { name -> groups.optJSONObject(name)?.let { g ->
+            val stamp = try { format.parse(g.optString("last_conn").replace(Regex("\\.\\d+"), ""))?.time ?: 0L } catch (_: Exception) { 0L }
+            StatusChannels.Group(name, g.optString("kind"), g.optString("route"), g.optString("route_id"), g.optString("via"), stamp, (g.optJSONArray("targets")?.length() ?: 0) > 0)
+        } }.toList()
+        val labels = StatusChannels.Labels(c.getString(R.string.channel_mail), c.getString(R.string.channel_telegram), c.getString(R.string.channel_other),
+            c.getString(R.string.channel_shared), c.getString(R.string.route_direct), c.getString(R.string.channel_smart),
+            listOf(R.string.channel_tunnel, R.string.channel_tunnel_type, R.string.channel_tunnel_id, R.string.channel_tunnel_plain).map { c.getString(it) })
+        return display.sample(list, s.optString("mode"), s.optString("route"), s.optString("via").ifEmpty { onlyType(s) }, labels, System.currentTimeMillis())
     }
 
     internal fun notificationResources(s: JSONObject?, appSeen: Boolean, fallbackRunning: Boolean): Pair<Int, Int> {
+        val plain = notificationPlain(s, fallbackRunning)
+        return plain.title to plain.reason(appSeen)
+    }
+
+    private fun notificationPlain(s: JSONObject?, fallbackRunning: Boolean): HomeSetup.Plain {
         val health = s?.optJSONObject("health")
-        val plain = HomeSetup.plain(
+        return HomeSetup.plain(
             running = s?.optBoolean("running", fallbackRunning) ?: fallbackRunning,
             startFailed = false,
             hasLink = true,
             health = health?.optString("state").orEmpty(),
             reason = health?.optString("reason").orEmpty(),
         )
-        return plain.title to plain.reason(appSeen)
     }
 
     /**
@@ -342,21 +360,21 @@ object StatusText {
         r.put("diagnostics", diagnostics)
         diagnostics.optJSONArray("battery")?.let { r.put("battery_summary", batterySummary(it)) }
         if (networkTest != null) r.put("network_test", JSONArray(networkTest.trimEnd().lines()))
-        redactReportValue(r) { Diagnostics.reportText(it, net.prefixes) }
         r.put("device_network", JSONObject()
             .put("transport", net.transport)
             .put("dns", JSONArray(net.dns))
             .put("operator", net.operator)
             .put("private_dns", net.privateDns))
+        redactReportValue(r) { Diagnostics.reportText(it, net.prefixes) }
         return r.toString(2)
     }
 
-    private fun redactReportValue(value: Any, redact: (String) -> String): Any = when (value) {
-        is String -> redact(value)
+    internal fun redactReportValue(value: Any, redact: (String) -> String): Any = when (value) {
+        is String -> redact(Diagnostics.redactSecrets(value))
         is JSONObject -> value.apply {
             keys().forEach { key ->
                 val item = get(key)
-                put(key, redactReportValue(if (key == "msg" && item is String) Diagnostics.redactSecrets(item) else item, redact))
+                put(key, redactReportValue(item, redact))
             }
         }
         is JSONArray -> value.apply {

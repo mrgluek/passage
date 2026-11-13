@@ -20,14 +20,24 @@ type SubscriptionSourceVia struct {
 	Tunnel uint32 `json:"tunnel,omitempty"`
 }
 
-type SubscriptionSourceStats struct {
+type SubscriptionSourceAttempts struct {
 	Tries    uint32                     `json:"tries,omitempty"`
 	Answered uint32                     `json:"answered,omitempty"`
 	OK       uint32                     `json:"ok,omitempty"`
 	Fail     SubscriptionSourceFailures `json:"fail,omitempty,omitzero"`
-	Via      SubscriptionSourceVia      `json:"via,omitempty,omitzero"`
-	LastOK   int64                      `json:"last_ok,omitempty"`
-	LastMS   int64                      `json:"last_ms,omitempty"`
+}
+
+type SubscriptionSourceStats struct {
+	Tunnel          SubscriptionSourceAttempts `json:"tunnel,omitempty,omitzero"`
+	Direct          SubscriptionSourceAttempts `json:"direct,omitempty,omitzero"`
+	LastDirectCheck int64                      `json:"last_direct_check,omitempty"`
+	Tries           uint32                     `json:"tries,omitempty"`
+	Answered        uint32                     `json:"answered,omitempty"`
+	OK              uint32                     `json:"ok,omitempty"`
+	Fail            SubscriptionSourceFailures `json:"fail,omitempty,omitzero"`
+	Via             SubscriptionSourceVia      `json:"via,omitempty,omitzero"`
+	LastOK          int64                      `json:"last_ok,omitempty"`
+	LastMS          int64                      `json:"last_ms,omitempty"`
 }
 
 type SubscriptionSourceStatus struct {
@@ -36,6 +46,7 @@ type SubscriptionSourceStatus struct {
 }
 
 type subscriptionFetchStats struct {
+	tunnel   bool
 	started  bool
 	answered bool
 	failure  string
@@ -80,7 +91,7 @@ func (s *Subscription) recordSourceFetch(source string, result subscriptionFetch
 		incrementSourceCounter(&stats.Answered)
 	}
 	switch result.failure {
-	case "net", "canceled":
+	case "net":
 		incrementSourceCounter(&stats.Fail.Net)
 	case "timeout":
 		incrementSourceCounter(&stats.Fail.Timeout)
@@ -88,6 +99,26 @@ func (s *Subscription) recordSourceFetch(source string, result subscriptionFetch
 		incrementSourceCounter(&stats.Fail.HTTP)
 	case "bad":
 		incrementSourceCounter(&stats.Fail.Bad)
+	}
+	attempts := &stats.Direct
+	if result.tunnel {
+		attempts = &stats.Tunnel
+	}
+	if result.started {
+		incrementSourceCounter(&attempts.Tries)
+	}
+	if result.answered {
+		incrementSourceCounter(&attempts.Answered)
+	}
+	switch result.failure {
+	case "net":
+		incrementSourceCounter(&attempts.Fail.Net)
+	case "timeout":
+		incrementSourceCounter(&attempts.Fail.Timeout)
+	case "http":
+		incrementSourceCounter(&attempts.Fail.HTTP)
+	case "bad":
+		incrementSourceCounter(&attempts.Fail.Bad)
 	}
 	s.SourceStats[key] = stats
 }
@@ -98,8 +129,10 @@ func (s *Subscription) recordSourceOK(source string, tunnel bool, elapsed time.D
 	incrementSourceCounter(&stats.OK)
 	if tunnel {
 		incrementSourceCounter(&stats.Via.Tunnel)
+		incrementSourceCounter(&stats.Tunnel.OK)
 	} else {
 		incrementSourceCounter(&stats.Via.Direct)
+		incrementSourceCounter(&stats.Direct.OK)
 	}
 	stats.LastOK, stats.LastMS = time.Now().Unix(), elapsed.Milliseconds()
 	s.SourceStats[key] = stats

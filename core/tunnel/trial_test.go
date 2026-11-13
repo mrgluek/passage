@@ -641,3 +641,22 @@ func TestTrialWindowLogsSkippedOnce(t *testing.T) {
 		t.Fatalf("events=%v calls=%d hold=%+v failed trials=%d", tt.log.last(100), *calls, h, g.failedTrials)
 	}
 }
+
+func TestStepDecayClearsFailedTrials(t *testing.T) {
+	tt, g, now, _ := trialFixture(t)
+	h := g.stalls[RouteDirect]
+	h.until, h.trialUntil = time.Time{}, time.Time{}
+	h.stepOnly = true
+	h.at = *now
+	g.failedTrials, g.goodSinceTrial = 1, true
+	*now = now.Add(holdMemory - time.Nanosecond)
+	tt.tick(*now)
+	if g.failedTrials != 1 || !g.goodSinceTrial {
+		t.Fatal("trial history decayed early")
+	}
+	*now = now.Add(time.Nanosecond)
+	tt.tick(*now)
+	if h.step != 0 || g.failedTrials != 0 || g.goodSinceTrial {
+		t.Fatal("step decay retained old failed trials")
+	}
+}

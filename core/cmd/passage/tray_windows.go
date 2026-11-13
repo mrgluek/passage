@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"slices"
+	"strings"
 	"sync"
 	"time"
 
@@ -35,7 +36,10 @@ func runDesktop(dir string, autostart bool) {
 		messageBox(t.f("inside_archive"), windows.MB_OK|windows.MB_ICONWARNING)
 		return
 	}
-	event, first := firstInstance()
+	if err := registerPassageScheme(); err != nil {
+		showError(err.Error())
+	}
+	event, first := firstInstance(startupLink)
 	if !first {
 		return
 	}
@@ -49,8 +53,12 @@ func runDesktop(dir string, autostart bool) {
 	a := newApp(dir, version, irohHelper(), language(uiLanguage()), winPlatform{})
 	winApp = a
 	d := &desktop{app: a, dir: dir}
+	if startupLink != "" {
+		d.imports = append(d.imports, startupLink)
+	}
 	a.changed = d.update
 	ctx, cancel := context.WithCancel(context.Background())
+	go receiveLaunchLinks(ctx, d.importLink)
 	done := make(chan struct{})
 	waited := make(chan struct{})
 	systray.Run(func() {
@@ -74,7 +82,7 @@ func runDesktop(dir string, autostart bool) {
 				}
 			}
 		}()
-		if !autostart {
+		if !autostart || startupLink != "" {
 			d.openWindow()
 		}
 	}, func() {
@@ -96,12 +104,15 @@ type desktop struct {
 	app *App
 	dir string
 
-	mu      sync.Mutex
-	shown   *trayState // what the menu was built for
-	toggle  *systray.MenuItem
-	routes  map[string]*systray.MenuItem
-	view    webview2.WebView
-	opening bool
+	mu       sync.Mutex
+	menuDone chan struct{}
+	shown    *trayState // what the menu was built for
+	toggle   *systray.MenuItem
+	routes   map[string]*systray.MenuItem
+	view     webview2.WebView
+	opening  bool
+	imports  []string
+	ready    bool
 }
 
 // update redraws the icon and tooltip, and rebuilds the menu when the
@@ -116,10 +127,14 @@ func (d *desktop) update() {
 		systray.SetIcon(iconOff)
 	}
 	systray.SetTooltip(st.Tooltip)
-	if d.shown == nil || d.shown.My != st.My || d.shown.Update != st.Update || !slices.Equal(d.shown.Routes, st.Routes) {
+	if w := d.view; w != nil {
+		title := strings.SplitN(st.Tooltip, "\n", 2)[0]
+		w.Dispatch(func() { w.SetTitle(title) })
+	}
+	if d.shown == nil || d.shown.Lang != st.Lang || d.shown.My != st.My || d.shown.Update != st.Update || !slices.Equal(d.shown.Routes, st.Routes) {
 		d.buildMenu(st)
 	}
-	t := d.app.t
+	t := st.Text
 	if st.Running {
 		d.toggle.SetTitle(t.f("action_stop"))
 	} else {
@@ -136,21 +151,27 @@ func (d *desktop) update() {
 }
 
 func (d *desktop) buildMenu(st trayState) {
-	t := d.app.t
+	t := st.Text
+	if d.menuDone != nil {
+		close(d.menuDone)
+	}
+	d.menuDone = make(chan struct{})
+	done := d.menuDone
+	onMenuClick := func(item *systray.MenuItem, f func()) { go listenMenu(done, item.ClickedCh, f) }
 	systray.ResetMenu()
-	onClick(systray.AddMenuItem(t.f("tray_open"), ""), d.openWindow)
+	onMenuClick(systray.AddMenuItem(t.f("tray_open"), ""), d.openWindow)
 	if st.Update != "" {
-		onClick(systray.AddMenuItem(t.f("update_available", st.Update), ""), d.openWindow)
+		onMenuClick(systray.AddMenuItem(t.f("update_available", st.Update), ""), d.openWindow)
 	}
 	systray.AddSeparator()
 	d.toggle = systray.AddMenuItem(t.f("action_start"), "")
-	onClick(d.toggle, func() { d.app.setRunning(!d.app.trayState().Running) })
+	onMenuClick(d.toggle, func() { d.app.setRunning(!d.app.trayState().Running) })
 	route := systray.AddMenuItem(t.f("route_label"), "")
 	d.routes = map[string]*systray.MenuItem{}
 	add := func(mode, label string) {
 		item := route.AddSubMenuItemCheckbox(label, "", false)
 		d.routes[mode] = item
-		onClick(item, func() { d.app.setMode(mode) })
+		onMenuClick(item, func() { d.app.setMode(mode) })
 	}
 	add(tunnel.ModeAuto, t.f("mode_auto"))
 	if st.My {
@@ -161,16 +182,7 @@ func (d *desktop) buildMenu(st trayState) {
 	}
 	add(tunnel.ModeOff, t.f("mode_off"))
 	systray.AddSeparator()
-	onClick(systray.AddMenuItem(t.f("tray_quit"), ""), systray.Quit)
-}
-
-// onClick runs f for each click until the item is removed.
-func onClick(item *systray.MenuItem, f func()) {
-	go func() {
-		for range item.ClickedCh {
-			f()
-		}
-	}()
+	onMenuClick(systray.AddMenuItem(t.f("tray_quit"), ""), systray.Quit)
 }
 
 // openWindow shows the window, creating it on its own thread: closing it
@@ -219,7 +231,7 @@ func (d *desktop) runWindow() {
 		DataPath:  filepath.Join(d.dir, dataName, "webview2"),
 		AutoFocus: true,
 		WindowOptions: webview2.WindowOptions{
-			Title:  "Passage",
+			Title:  d.app.view().Title,
 			Width:  uint(560 * scale),
 			Height: uint(780 * scale),
 			IconId: 1, // the program's icon (go-winres)
@@ -231,7 +243,8 @@ func (d *desktop) runWindow() {
 	d.view = w
 	d.mu.Unlock()
 	if w == nil {
-		if messageBox(d.app.t.f("webview_missing"), windows.MB_YESNO|windows.MB_ICONWARNING) == 6 { // IDYES
+		_, text := d.app.localization()
+		if messageBox(text.f("webview_missing"), windows.MB_YESNO|windows.MB_ICONWARNING) == 6 { // IDYES
 			winPlatform{}.open(webviewDownload)
 		}
 		return
@@ -249,10 +262,17 @@ func (d *desktop) runWindow() {
 			w.Dispatch(func() { w.Eval("window.passageReply(" + jsonInt(id) + "," + string(out) + ")") })
 		}()
 	})
+	w.Bind("passageReady", func() {
+		d.mu.Lock()
+		d.ready = true
+		d.deliverImportsLocked()
+		d.mu.Unlock()
+	})
 	w.SetHtml(indexHTML)
 	w.Run()
 	d.mu.Lock()
 	d.view = nil
+	d.ready = false
 	d.mu.Unlock()
 	w.Destroy()
 }
@@ -260,4 +280,25 @@ func (d *desktop) runWindow() {
 func jsonInt(n int) string {
 	b, _ := json.Marshal(n)
 	return string(b)
+}
+
+func (d *desktop) importLink(text string) {
+	d.mu.Lock()
+	d.imports = append(d.imports, text)
+	d.deliverImportsLocked()
+	d.mu.Unlock()
+	d.openWindow()
+}
+
+func (d *desktop) deliverImportsLocked() {
+	if !d.ready || d.view == nil {
+		return
+	}
+	w := d.view
+	for _, text := range d.imports {
+		data, _ := json.Marshal(text)
+		script := "window.passageImport(" + string(data) + ");"
+		w.Dispatch(func() { w.Eval(script) })
+	}
+	d.imports = nil
 }

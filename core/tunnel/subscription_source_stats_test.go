@@ -5,6 +5,7 @@ import (
 	"encoding/binary"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"math"
 	"net"
 	"net/http"
@@ -115,8 +116,10 @@ func TestSubscriptionSourceStatsSaturate(t *testing.T) {
 	t.Cleanup(func() { subscriptionTestHTTP = false })
 	sub.Sources = []string{server.URL}
 	full := SubscriptionSourceStats{Tries: math.MaxUint32, Answered: math.MaxUint32, OK: math.MaxUint32,
-		Fail: SubscriptionSourceFailures{Net: math.MaxUint32, Timeout: math.MaxUint32, HTTP: math.MaxUint32, Bad: math.MaxUint32},
-		Via:  SubscriptionSourceVia{Direct: math.MaxUint32, Tunnel: math.MaxUint32}}
+		Fail:   SubscriptionSourceFailures{Net: math.MaxUint32, Timeout: math.MaxUint32, HTTP: math.MaxUint32, Bad: math.MaxUint32},
+		Via:    SubscriptionSourceVia{Direct: math.MaxUint32, Tunnel: math.MaxUint32},
+		Direct: SubscriptionSourceAttempts{Tries: math.MaxUint32, Answered: math.MaxUint32, OK: math.MaxUint32, Fail: SubscriptionSourceFailures{Net: math.MaxUint32, Timeout: math.MaxUint32, HTTP: math.MaxUint32, Bad: math.MaxUint32}},
+		Tunnel: SubscriptionSourceAttempts{Tries: math.MaxUint32, Answered: math.MaxUint32, OK: math.MaxUint32, Fail: SubscriptionSourceFailures{Net: math.MaxUint32, Timeout: math.MaxUint32, HTTP: math.MaxUint32, Bad: math.MaxUint32}}}
 	sub.SourceStats = map[string]SubscriptionSourceStats{sourceStatsKey(server.URL): full}
 	cfg := Config{Subscriptions: []Subscription{sub}}
 	ref := SubscriptionRefresher{directTimeout: time.Second}
@@ -149,7 +152,7 @@ func TestSubscriptionSourceStatsPersistenceAndPruning(t *testing.T) {
 	sub, _, _ := subFixture(t)
 	one, two, three := "https://example.org/one", "https://example.org/two", "https://example.org/three"
 	sub.Sources = []string{one, two, three}
-	sub.SourceStats = map[string]SubscriptionSourceStats{sourceStatsKey(one): {Tries: 1, Answered: 2, OK: 3, Fail: SubscriptionSourceFailures{Net: 4, Timeout: 5, HTTP: 6, Bad: 7}, Via: SubscriptionSourceVia{Direct: 8, Tunnel: 9}, LastOK: 100, LastMS: 20}, sourceStatsKey(two): {Tries: 2}, sourceStatsKey(three): {Tries: 3}}
+	sub.SourceStats = map[string]SubscriptionSourceStats{sourceStatsKey(one): {Tries: 1, Answered: 2, OK: 3, Fail: SubscriptionSourceFailures{Net: 4, Timeout: 5, HTTP: 6, Bad: 7}, Via: SubscriptionSourceVia{Direct: 8, Tunnel: 9}, Direct: SubscriptionSourceAttempts{Tries: 10}, Tunnel: SubscriptionSourceAttempts{Tries: 11}, LastDirectCheck: 123, LastOK: 100, LastMS: 20}, sourceStatsKey(two): {Tries: 2}, sourceStatsKey(three): {Tries: 3}}
 	path := filepath.Join(t.TempDir(), "subscriptions.json")
 	if err := SaveSubscriptionState(path, Config{Subscriptions: []Subscription{sub}}); err != nil {
 		t.Fatal(err)
@@ -268,7 +271,7 @@ func TestSubscriptionSourceStatsRaceAndReorder(t *testing.T) {
 	slow := func(ctx context.Context, _, _ string) (net.Conn, error) {
 		close(entered)
 		<-ctx.Done()
-		return nil, ctx.Err()
+		return nil, errors.New("dial stopped")
 	}
 	ref := SubscriptionRefresher{}
 	out := ref.Refresh(context.Background(), Config{Subscriptions: []Subscription{sub}}, []SubscriptionDial{slow, (&net.Dialer{}).DialContext})
@@ -392,5 +395,104 @@ func TestRouterEventMasksLocalEndpoint(t *testing.T) {
 	got := log.last(1)[0].Msg
 	if got != "read udp [addr]->[2001:db8:1::53]:53: i/o timeout" {
 		t.Fatalf("event: %q", got)
+	}
+}
+
+func TestSourceAttemptCounters(t *testing.T) {
+	for _, tunnel := range []bool{false, true} {
+		for _, failure := range []string{"", "net", "timeout", "http", "bad", "canceled"} {
+			t.Run(fmt.Sprintf("%t/%s", tunnel, failure), func(t *testing.T) {
+				sub := Subscription{}
+				sub.recordSourceFetch("https://example.org", subscriptionFetchStats{started: true, answered: true, tunnel: tunnel, failure: failure})
+				stats := sub.SourceStats[sourceStatsKey("https://example.org")]
+				split, other := stats.Direct, stats.Tunnel
+				if tunnel {
+					split, other = other, split
+				}
+				want := SubscriptionSourceFailures{}
+				switch failure {
+				case "net":
+					want.Net = 1
+				case "timeout":
+					want.Timeout = 1
+				case "http":
+					want.HTTP = 1
+				case "bad":
+					want.Bad = 1
+				}
+				if split.Tries != 1 || split.Answered != 1 || split.Fail != want || stats.Fail != want || other != (SubscriptionSourceAttempts{}) {
+					t.Fatalf("counters: %+v", stats)
+				}
+			})
+		}
+	}
+}
+
+func TestFailedTunnelSourceDirectCheck(t *testing.T) {
+	sub, key, bundle := subFixture(t)
+	raw, err := links.SealSubFile(bundle, bundle.Sub, sub.ReadKey, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	newer := bundle
+	newer.Revision++
+	diagnosticRaw, err := links.SealSubFile(newer, newer.Sub, sub.ReadKey, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	subscriptionTestHTTP = true
+	t.Cleanup(func() { subscriptionTestHTTP = false })
+	failed := make(chan struct{}, 4)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasPrefix(r.URL.Path, "/winner/") {
+			<-failed
+		}
+		if strings.HasPrefix(r.URL.Path, "/mirror/") {
+			w.Write(diagnosticRaw)
+		} else {
+			w.Write(raw)
+		}
+	}))
+	defer server.Close()
+	winner, mirror := server.URL+"/winner", server.URL+"/mirror"
+	sub.Sources = []string{winner, mirror}
+	var directCalls atomic.Int32
+	dial := (&net.Dialer{}).DialContext
+	ref := SubscriptionRefresher{directDial: func(ctx context.Context, network, address string) (net.Conn, error) {
+		directCalls.Add(1)
+		return dial(ctx, network, address)
+	}}
+	// Separate hostnames let the tunnel dialer fail one source without changing source order.
+	sub.Sources[1] = "http://example.org/mirror"
+	mirror = sub.Sources[1]
+	ref.directDial = func(ctx context.Context, network, _ string) (net.Conn, error) {
+		directCalls.Add(1)
+		return dial(ctx, network, server.Listener.Addr().String())
+	}
+	tunnelDial := func(ctx context.Context, network, address string) (net.Conn, error) {
+		if strings.HasPrefix(address, "example.org:") {
+			failed <- struct{}{}
+			return nil, errors.New("unavailable")
+		}
+		return dial(ctx, network, address)
+	}
+	cfg := Config{Subscriptions: []Subscription{sub}}
+	for i := range 2 {
+		cfg = ref.Refresh(context.Background(), cfg, []SubscriptionDial{tunnelDial}).Config
+		got := cfg.Subscriptions[0]
+		stats := got.SourceStats[sourceStatsKey(mirror)]
+		if directCalls.Load() != 1 || stats.Direct.Tries != 1 || stats.Direct.OK != 1 || stats.Tunnel.Tries != uint32(i+1) || stats.Tunnel.Fail.Net != uint32(i+1) || stats.LastDirectCheck == 0 {
+			t.Fatalf("refresh %d: %+v calls=%d", i, stats, directCalls.Load())
+		}
+		if got.Revision != bundle.Revision || got.ETagSource != winner || got.LastError != "" && got.LastError != "unchanged" {
+			t.Fatal("diagnostic replaced winner", got.ETagSource, got.LastError)
+		}
+	}
+	stats := cfg.Subscriptions[0].SourceStats[sourceStatsKey(mirror)]
+	stats.LastDirectCheck = time.Now().Add(-25 * time.Hour).Unix()
+	cfg.Subscriptions[0].SourceStats[sourceStatsKey(mirror)] = stats
+	ref.Refresh(context.Background(), cfg, []SubscriptionDial{tunnelDial})
+	if directCalls.Load() != 2 {
+		t.Fatal("daily check did not renew")
 	}
 }

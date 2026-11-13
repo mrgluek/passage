@@ -392,7 +392,7 @@ class PassageService : Service() {
     private fun goForeground() {
         val localized = AppLanguage.localizedContext(this)
         val connecting = HomeSetup.Plain.CONNECTING
-        val n = buildNotification(localized.getString(connecting.title), localized.getString(connecting.reason(false)))
+        val n = buildNotification(localized.getString(R.string.status_title, localized.getString(connecting.title)), localized.getString(connecting.reason(false)))
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
             startForeground(NOTIFICATION_ID, n, ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE)
         } else {
@@ -403,12 +403,14 @@ class PassageService : Service() {
     private fun updateNotification(snapshot: JSONObject? = null, force: Boolean = false) {
         if (!active) return
         val localized = AppLanguage.localizedContext(this)
-        val content = StatusText.notification(localized, snapshot ?: status(), Settings(this).appSeen, fallbackRunning = lastError == null)
+        val content = StatusText.notification(localized, snapshot ?: status(), Settings(this).appSeen, fallbackRunning = lastError == null, display = notificationChannels)
         if (!force && content == lastNotification) return
         val nm = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
         nm.notify(NOTIFICATION_ID, buildNotification(content.first, content.second))
         lastNotification = content
     }
+
+    private val notificationChannels = StatusChannels.Display()
 
     private fun buildNotification(title: String, text: String): Notification {
         val localized = AppLanguage.localizedContext(this)
@@ -430,7 +432,13 @@ class PassageService : Service() {
         @Suppress("DEPRECATION")
         return b.setSmallIcon(R.drawable.ic_notification)
             .setContentTitle(title)
+            .setVisibility(Notification.VISIBILITY_PRIVATE)
+            .setPublicVersion((if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) Notification.Builder(this, CHANNEL) else {
+                @Suppress("DEPRECATION")
+                Notification.Builder(this)
+            }).setSmallIcon(R.drawable.ic_notification).setContentTitle(title).setOngoing(true).setContentIntent(open).build())
             .setContentText(text)
+            .setStyle(Notification.BigTextStyle().bigText(text))
             .setOngoing(true)
             .setOnlyAlertOnce(true)
             .setContentIntent(open)

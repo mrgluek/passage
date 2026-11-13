@@ -3,6 +3,7 @@ package info.gluek.passage
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Test
+import org.json.JSONObject
 
 class ReportPrivacyTest {
     @Test fun reportMasksOwnIpv6Prefix() {
@@ -16,5 +17,19 @@ class ReportPrivacyTest {
         val result = Diagnostics.redact(text)
         assertFalse(result.contains("two words"))
         assertEquals("password: [redacted]\nread udp [addr]->192.0.2.53:53: i/o timeout", result)
+    }
+
+    @Test fun reportRedactsEveryStringAndDeviceDns() {
+        val report = JSONObject("""{"error":"token=private-value","network_test":["password=private-value"],"device_network":{"dns":["2001:db8:10::53"]}}""")
+        val prefix = NetInfo.Prefix(java.net.InetAddress.getByName("2001:db8:10::1"), 64)
+        StatusText.redactReportValue(report) { Diagnostics.reportText(it, listOf(prefix)) }
+        assertFalse(report.toString().contains("private-value"))
+        assertEquals("[addr]", report.getJSONObject("device_network").getJSONArray("dns").getString(0))
+    }
+
+    @Test fun secretsPreserveFollowingFields() {
+        for (text in listOf("""{"token":abc,"status":"ok"}""", """{"token":"two words","status":"ok"}""")) {
+            assertEquals("""{"token":[redacted],"status":"ok"}""", Diagnostics.redactSecrets(text))
+        }
     }
 }

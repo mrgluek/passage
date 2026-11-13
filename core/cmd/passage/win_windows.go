@@ -178,7 +178,7 @@ func showError(text string) { messageBox(text, windows.MB_OK|windows.MB_ICONERRO
 
 // firstInstance claims the per-user "open the window" event. A second
 // start signals it, so the running Passage opens its window, and quits.
-func firstInstance() (windows.Handle, bool) {
+func firstInstance(link string) (windows.Handle, bool) {
 	name, _ := windows.UTF16PtrFromString(`Local\PassageOpenWindow`)
 	h, err := windows.CreateEvent(nil, 0, 0, name)
 	if h == 0 {
@@ -186,6 +186,11 @@ func firstInstance() (windows.Handle, bool) {
 	}
 	if errors.Is(err, windows.ERROR_ALREADY_EXISTS) {
 		allowForeground.Call(0xFFFFFFFF) // ASFW_ANY: the first may raise its window
+		if link != "" {
+			if err := sendLaunchLink(link); err != nil {
+				showError(err.Error())
+			}
+		}
 		windows.SetEvent(h)
 		windows.CloseHandle(h)
 		return 0, false

@@ -11,7 +11,7 @@ const Address = "[addr]"
 
 var (
 	link          = regexp.MustCompile(`[A-Za-z][A-Za-z0-9+.-]*://[^\s"'<>]+`)
-	secret        = regexp.MustCompile(`(?i)(\b(?:read_key|signer|key|pass(?:word)?|user(?:name)?|ticket|zone|link|secret|credentials?|token|endpoint|dial_ip|sni|sources)"?[ \t]*[:=][ \t]*)(?:"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|\[[^\]\r\n]*\]|[^\r\n]+)`)
+	secret        = regexp.MustCompile(`(?i)(\b(?:read_key|signer|key|pass(?:word)?|user(?:name)?|ticket|zone|link|secret|credentials?|token|endpoint|dial_ip|sni|sources)"?[ \t]*[:=][ \t]*)(?:"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|\[[^\]\r\n]*\]|[^,\r\n}\]"\x60]+)`)
 	localEndpoint = regexp.MustCompile(`(?:\[[0-9a-fA-F:.]+(?:%[^\]\s]+)?\]|[0-9]+(?:\.[0-9]+){3}):[0-9]+[ \t]*->`)
 	address       = regexp.MustCompile(`(?:->[ \t]*)?(?:\[[0-9a-fA-F:.]+(?:%[^\]\s]+)?\](?::[0-9]+)?|[0-9]+(?:\.[0-9]+){3}(?::[0-9]+)?|[0-9a-fA-F]*:[0-9a-fA-F:.]+(?:%[\w.-]+)?)`)
 )

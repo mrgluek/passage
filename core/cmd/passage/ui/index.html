@@ -182,28 +182,6 @@ a { color: var(--accent); cursor: pointer; text-decoration: underline; }
 
 <main id="settings" class="hidden">
   <section class="card">
-  <h2 data-t="route_label"></h2>
-  <div id="settingsRoutes"></div>
-  <p class="hint" data-t="route_hint"></p>
-  </section>
-  <section class="card">
-  <h2 data-t="my_route_label"></h2>
-  <div class="row">
-    <input type="text" id="my" class="grow" spellcheck="false">
-    <button class="icon" id="myClear"><svg viewBox="0 0 24 24"><path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg></button>
-  </div>
-  <button id="saveMy" data-t="save"></button>
-  <p class="hint" data-t="my_route_help"></p>
-  </section>
-  <section class="card">
-  <h2 data-t="saved_routes_label"></h2>
-  <p class="hint" id="savedRoutesEmpty"></p>
-  <div id="savedRoutes"></div>
-  <button id="editRoutes" class="hidden" data-t="edit_routes"></button>
-  <div id="editBar" class="hidden"><button class="primary" id="saveRoutes" data-t="save"></button> <button id="cancelRoutes" data-t="cancel"></button></div>
-  <p class="hint hidden" id="routesHint" data-t="routes_edit_hint"></p>
-  </section>
-  <section class="card">
   <h2 data-t="link_label"></h2>
   <p class="hint" id="linkInfo"></p>
   <p class="hint warn" id="linkError"></p>
@@ -218,6 +196,28 @@ a { color: var(--accent); cursor: pointer; text-decoration: underline; }
   <h2 data-t="subscriptions"></h2>
   <p class="hint" id="subscriptionsEmpty"></p>
   <div id="subscriptions"></div>
+  </section>
+  <section class="card">
+  <h2 data-t="saved_routes_label"></h2>
+  <p class="hint" id="savedRoutesEmpty"></p>
+  <div id="savedRoutes"></div>
+  <button id="editRoutes" class="hidden" data-t="edit_routes"></button>
+  <div id="editBar" class="hidden"><button class="primary" id="saveRoutes" data-t="save"></button> <button id="cancelRoutes" data-t="cancel"></button></div>
+  <p class="hint hidden" id="routesHint" data-t="routes_edit_hint"></p>
+  </section>
+  <section class="card">
+  <h2 data-t="route_label"></h2>
+  <div id="settingsRoutes"></div>
+  <p class="hint" data-t="route_hint"></p>
+  </section>
+  <section class="card">
+  <h2 data-t="my_route_label"></h2>
+  <div class="row">
+    <input type="text" id="my" class="grow" spellcheck="false">
+    <button class="icon" id="myClear"><svg viewBox="0 0 24 24"><path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg></button>
+  </div>
+  <button id="saveMy" data-t="save"></button>
+  <p class="hint" data-t="my_route_help"></p>
   </section>
   <section class="card">
   <h2 data-t="access_label"></h2>
@@ -445,9 +445,9 @@ function renderHome(v) {
   lastTraffic = v.traffic;
   const flowing = running && Date.now() < flowUntil;
   const dot = $("dot");
-  const h = running && v.health && v.health.state ? v.health : null;
+  const h = running && hasLink && v.health && v.health.state ? v.health : null;
   const hs = h ? h.state : "", hr = h ? h.reason : "";
-  let tone = v.error || (hs === "problem" && hr === "no_route") ? " error" : (hs === "starting" || hs === "problem") ? " warn" : running ? " on" : "";
+  let tone = v.error || (hs === "problem" && hr === "no_route") ? " error" : (hs === "starting" || hs === "problem") ? " warn" : running && hasLink ? " on" : "";
   dot.className = "dot" + tone + (flowing && !tone.includes("error") && !tone.includes("warn") ? " flow" : "");
   let title, reason, main = null, second = null;
   if (v.error) { title = t("h_title_error"); reason = ""; }
@@ -461,9 +461,10 @@ function renderHome(v) {
   else if (!running) main = [t("h_turn_on"), () => call("start").then(refresh, fail)];
   if (running) second = [t("h_turn_off"), () => call("stop").then(refresh, fail)];
   else if (!hasLink) second = [t("h_turn_on"), () => call("start").then(refresh, fail)];
-  $("sTitle").textContent = title;
-  $("sReason").textContent = reason;
-  setHidden("sReason", !reason);
+  $("sTitle").textContent = v.title;
+  document.title = v.title;
+  $("sReason").textContent = v.channels || reason;
+  setHidden("sReason", !(v.channels || reason));
   $("sError").textContent = v.error || "";
   setHidden("sError", !v.error);
   setHidden("sMain", !main);
@@ -782,6 +783,7 @@ window.passageImport = text => {
     await importLink(text);
   }).catch(fail);
 };
+if (window.passageReady) window.passageReady();
 </script>
 </body>
 </html>

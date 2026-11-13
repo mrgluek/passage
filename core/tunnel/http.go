@@ -13,6 +13,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/http/httptrace"
 	"net/url"
 	"slices"
 	"strconv"
@@ -61,13 +62,13 @@ func NewHTTPClient(params links.HTTPParams) (*WSSClient, error) {
 	}
 	tr.ForceAttemptHTTP2 = true
 	if params.DialIP != "" {
-		tr.DialContext = func(ctx context.Context, network, address string) (net.Conn, error) {
+		tr.DialContext = countingDial(func(ctx context.Context, network, address string) (net.Conn, error) {
 			_, port, err := net.SplitHostPort(address)
 			if err != nil {
 				return nil, err
 			}
 			return (&net.Dialer{}).DialContext(ctx, network, net.JoinHostPort(params.DialIP, port))
-		}
+		})
 	}
 	return c, nil
 }
@@ -97,13 +98,20 @@ func (c *WSSClient) dialHTTPSession(ctx context.Context) (*wssSession, error) {
 	life, cancel := context.WithCancel(c.life)
 	stop := context.AfterFunc(ctx, cancel)
 	defer stop()
-	resp, err := httpRequest(life, c.httpClient, c.params.Endpoint, token, nil)
+	var wire *countingConn
+	trace := httptrace.WithClientTrace(life, &httptrace.ClientTrace{GotConn: func(info httptrace.GotConnInfo) {
+		if secure, ok := info.Conn.(*tls.Conn); ok {
+			wire, _ = secure.NetConn().(*countingConn)
+		}
+	}})
+	resp, err := httpRequest(trace, c.httpClient, c.params.Endpoint, token, nil)
 	if err != nil {
 		cancel()
 		return nil, err
 	}
 	local, bridge := net.Pipe()
 	s := newWSSSession(c.life, nil, &wssRecords{conn: local, seal: wssAEAD(wssKey(c.params.Key, nonce, "c2s"))}, 1, nil, c.forget)
+	s.wire = wire
 	stopSession := context.AfterFunc(s.life, cancel)
 	go func() {
 		defer cancel()

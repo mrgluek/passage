@@ -94,8 +94,9 @@ func turnServer(p links.TURNParams, client *WSSClient) routeServer {
 
 func httpServer(p links.HTTPParams, client *WSSClient) routeServer {
 	s := urlServer(p.Endpoint)
-	if host, port, err := net.SplitHostPort(s.addr); err == nil && p.DialIP != "" {
-		s.addr, s.name = net.JoinHostPort(p.DialIP, port), host
+	if host, port, err := net.SplitHostPort(s.addr); err == nil {
+		s.addr = net.JoinHostPort(cmp.Or(p.DialIP, host), port)
+		s.name = cmp.Or(p.SNI, host)
 	}
 	return sessionServer(s, client, func() (*WSSClient, error) { return NewHTTPClient(p) })
 }

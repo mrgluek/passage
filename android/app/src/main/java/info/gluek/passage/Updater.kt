@@ -13,6 +13,7 @@ import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
 import java.util.Random
+import java.security.MessageDigest
 
 /** Checks for, downloads and installs new versions; the work is in the core. */
 object Updater {
@@ -23,7 +24,7 @@ object Updater {
     private const val CHECK_INTERVAL_MS = 20 * 3_600_000L
     private const val CHECK_JITTER_MS = 8 * 3_600_000L
 
-    data class Offer(val version: String, val name: String, val size: Long)
+    data class Offer(val version: String, val name: String, val size: Long, val sha256: String)
 
     // Survives leaving the screen: a download goes on meanwhile.
     @Volatile var offer: Offer? = null
@@ -85,7 +86,7 @@ object Updater {
         val out = Native.json(Native.updateCheck(request.toString().toByteArray(Charsets.UTF_8)))
         out.optString("error").takeIf { it.isNotEmpty() }?.let { throw IllegalStateException(it) }
         val file = out.optJSONObject("file")
-        val found = file?.let { Offer(out.getString("version"), it.getString("name"), it.getLong("size")) }
+        val found = file?.let { Offer(out.getString("version"), it.getString("name"), it.getLong("size"), it.getString("sha256")) }
         if (found != offer) ready = null
         offer = found
         Settings(context).availableVersion = found?.version ?: ""
@@ -109,10 +110,27 @@ object Updater {
         val dir = directory(context).apply { mkdirs() }
         val dest = File(dir, offer.name)
         dir.listFiles()?.filter { !it.name.startsWith(offer.name) }?.forEach { it.delete() }
-        if (dest.length() == offer.size) return dest
+        if (verified(dest, offer)) return dest
+        dest.delete()
         val out = Native.json(Native.updateDownload(dest.path.toByteArray(Charsets.UTF_8)))
         out.optString("error").takeIf { it.isNotEmpty() }?.let { throw IllegalStateException(it) }
+        check(verified(dest, offer)) { "Invalid update file" }
         return dest
+    }
+
+    internal fun verified(file: File, offer: Offer): Boolean {
+        if (!file.isFile || file.length() != offer.size) return false
+        val digest = MessageDigest.getInstance("SHA-256")
+        file.inputStream().use { input ->
+            val buffer = ByteArray(64 * 1024)
+            while (true) {
+                val n = input.read(buffer)
+                if (n < 0) break
+                digest.update(buffer, 0, n)
+            }
+        }
+        val sum = digest.digest().joinToString("") { "%02x".format(it.toInt() and 0xff) }
+        return sum.equals(offer.sha256, ignoreCase = true)
     }
 
     fun clear(context: Context) {

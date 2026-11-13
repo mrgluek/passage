@@ -14,3 +14,5 @@ void passagePrepare(void);
 int passageWasLoginLaunch(void);
 int passageAutostart(void);
 char *passageSetAutostart(int enabled);
+
+void passageSetTitle(const char *title);

@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.8.2
+
+- The status line shows which way each channel goes, for example "Mail:
+  direct, Tg: via iroh tunnel (berry)", on the home screen, in the
+  notification and in the tray. The notification on the lock screen shows only
+  the title.
+- Without a link the status says "add your link" instead of "connecting", and
+  an unused proxy says "proxy is on" after a few seconds instead of "connecting"
+  for a minute and a half.
+- Windows: a passage:// link opens in the app, also when it is already running.
+- Settings: the link and subscriptions come first.
+- The proxy retries for a few seconds when its port is busy at start.
+- The background check of a subscription no longer counts the sources that lost
+  the race as failures.
+- The language of the Mac menu follows the language setting right away.
+- Fixes from a code review: stricter checks of update keys, DNS data and cached
+  updates, fewer secrets and local addresses in reports, and a few leaks in the
+  tray.
+
 ## 0.8.1
 
 - A route that stops answering now recovers by itself after an interruption,

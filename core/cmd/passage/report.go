@@ -35,10 +35,10 @@ func maskReportAddresses(report map[string]any, prefixes []netip.Prefix) {
 	mask = func(value any) any {
 		switch v := value.(type) {
 		case string:
-			return reporttext.Addresses(v, match)
+			return reporttext.Addresses(reporttext.Secrets(v), match)
 		case []string:
 			for i, item := range v {
-				v[i] = reporttext.Addresses(item, match)
+				v[i] = mask(item).(string)
 			}
 		case []any:
 			for i, item := range v {
@@ -46,19 +46,13 @@ func maskReportAddresses(report map[string]any, prefixes []netip.Prefix) {
 			}
 		case map[string]any:
 			for key, item := range v {
-				if key == "msg" {
-					if message, ok := item.(string); ok {
-						item = reporttext.Secrets(message)
-					}
-				}
+
 				v[key] = mask(item)
 			}
 		}
 		return value
 	}
 	for key, value := range report {
-		if key != "device_network" {
-			report[key] = mask(value)
-		}
+		report[key] = mask(value)
 	}
 }

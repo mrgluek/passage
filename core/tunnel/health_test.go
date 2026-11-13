@@ -32,7 +32,8 @@ func TestHealth(t *testing.T) {
 			"a": {LastProbe: *ago(5*time.Minute + time.Second), LastResult: probeResult{RelayOK: 1}}}}, "working", ""},
 		{"quiet probe past ten minutes", Status{Started: now.Add(-time.Hour), Groups: map[string]GroupStatus{
 			"a": {LastProbe: *ago(11 * time.Minute), LastResult: probeResult{RelayOK: 1}}}}, "working", ""},
-		{"warmup", Status{Started: now.Add(-30 * time.Second)}, "starting", ""},
+		{"just started", Status{Started: now.Add(-2 * time.Second)}, "starting", ""},
+		{"nothing used during warmup", Status{Started: now.Add(-30 * time.Second)}, "ready", "waiting_app"},
 		{"nothing used yet", Status{Started: now.Add(-100 * time.Second)}, "ready", "waiting_app"},
 		{"old failed dials", Status{Started: now.Add(-time.Hour), Mode: ModeAlways,
 			Stats: map[string]routeStats{"tunnel": {Fails: 3}}, Groups: map[string]GroupStatus{
@@ -117,5 +118,39 @@ func TestHealthWithIdleOpenConnection(t *testing.T) {
 				t.Fatalf("health=%+v", h)
 			}
 		})
+	}
+}
+
+func TestHealthSmoothsWorkingToStarting(t *testing.T) {
+	tt := &Tunnel{}
+	now := time.Unix(1000, 0)
+	tt.settleHealthLocked(Health{State: "working"}, now)
+	if h := tt.settleHealthLocked(Health{State: "starting"}, now.Add(9*time.Second)); h.State != "working" {
+		t.Fatal(h)
+	}
+	if h := tt.settleHealthLocked(Health{State: "starting"}, now.Add(10*time.Second)); h.State != "starting" {
+		t.Fatal(h)
+	}
+}
+
+func TestStatusDoesNotSettleHealth(t *testing.T) {
+	now := time.Unix(1000, 0)
+	tt, g := evidenceTunnel(&now)
+	tt.started = now.Add(-time.Minute)
+	tt.recordConnection(g, "ok", "direct")
+	tt.settleHealth()
+	saved, since, good := tt.health, tt.healthSince, tt.healthGood
+	now = now.Add(5 * time.Second)
+	for range 3 {
+		if h := tt.Status(0).Health; h.State != "working" {
+			t.Fatal(h)
+		}
+	}
+	if tt.health != saved || tt.healthSince != since || tt.healthGood != good {
+		t.Fatal("Status mutated health")
+	}
+	tt.settleHealth()
+	if !tt.healthGood.Equal(now) {
+		t.Fatal("explicit settle did not advance health")
 	}
 }

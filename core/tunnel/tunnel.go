@@ -73,6 +73,7 @@ type group struct {
 	used           time.Time // last CONNECT, for dropping the least recently used relay
 	route          Route
 	routeSince     time.Time
+	routeID        string
 	via            string              // route type of the newest open tunnel connection: iroh, soar
 	tunnelFails    int                 // tunnel dial failures since the last reply or route change
 	hosts          map[string]hostSeen // probe host -> last seen in a CONNECT
@@ -230,12 +231,13 @@ type Tunnel struct {
 }
 
 type tracked struct {
-	group  *group
-	route  Route
-	local  net.Conn
-	remote net.Conn
-	via    string // route type, for a tunnel connection
-	opened time.Time
+	group   *group
+	route   Route
+	local   net.Conn
+	remote  net.Conn
+	routeID string
+	via     string // route type, for a tunnel connection
+	opened  time.Time
 }
 
 type routeStats struct {
@@ -368,7 +370,7 @@ func Start(cfg Config) (*Tunnel, error) {
 		rememberTunnel(t.cfg, t.telegram.name, t.telegram.route == RouteTunnel, t.timeNow())
 	}
 
-	ln, err := net.Listen("tcp", cfg.Listen)
+	ln, retried, err := listenProxy(cfg.Listen, 5*time.Second)
 	if err != nil {
 		if t.client != nil {
 			t.client.Close()
@@ -379,6 +381,9 @@ func Start(cfg Config) (*Tunnel, error) {
 		ln.Close()
 		t.client.Close()
 		return nil, errors.New("my route points at this proxy")
+	}
+	if retried {
+		t.log.add("proxy listen: retried busy port")
 	}
 	t.ln = ln
 	t.started = t.timeNow()
@@ -408,9 +413,11 @@ func Start(cfg Config) (*Tunnel, error) {
 		}
 	}
 	t.warmTunnel()
-	t.wg.Add(2)
+	t.settleHealth()
+	t.wg.Add(3)
 	go t.serve()
 	go t.monitor()
+	go t.monitorHealth()
 	if len(rawConfig.Subscriptions) > 0 {
 		t.wg.Add(1)
 		go t.subscriptionLoop()
@@ -785,7 +792,7 @@ func (t *Tunnel) updateViaLocked(g *group) {
 	}
 	g.via = ""
 	if newest != nil {
-		g.via = newest.via
+		g.via, g.routeID = newest.via, newest.routeID
 	}
 }
 
@@ -807,6 +814,7 @@ func (t *Tunnel) setRouteLocked(g *group, r Route, reason string) {
 	}
 	old := g.route
 	g.route = r
+	g.routeID = ""
 	t.rememberGroupHoldLocked(g)
 	if g.kind != kindOther && (old == RouteTunnel || r == RouteTunnel) {
 		rememberTunnel(t.cfg, g.name, r == RouteTunnel, t.timeNow())
@@ -924,7 +932,8 @@ func (t *Tunnel) handle(c net.Conn) {
 	t.stats[route].Conns++
 	if route == RouteTunnel {
 		tr.via = t.viaOf(remote)
-		g.via = tr.via
+		tr.routeID = connRouteID(remote)
+		g.via, g.routeID = tr.via, tr.routeID
 	}
 	t.mu.Unlock()
 
@@ -1881,6 +1890,7 @@ type GroupStatus struct {
 	Kind           string            `json:"kind"` // relay, telegram or other
 	Route          string            `json:"route"`
 	Via            string            `json:"via,omitempty"`
+	RouteID        string            `json:"route_id,omitempty"`
 	RouteSince     time.Time         `json:"route_since"`
 	State          string            `json:"state"`
 	LastProbe      time.Time         `json:"last_probe"`
@@ -1891,10 +1901,24 @@ type GroupStatus struct {
 	active         bool
 }
 
+func (t *Tunnel) groupRouteIDLocked(g *group) string {
+	if g.route != RouteTunnel {
+		return ""
+	}
+	if id, ok := strings.CutPrefix(cmp.Or(t.only, t.mode), "route:"); ok {
+		return id
+	}
+	return g.routeID
+}
+
 // Status returns a snapshot with the last n events.
 func (t *Tunnel) Status(n int) Status {
 	t.mu.Lock()
 	defer t.mu.Unlock()
+	return t.statusLocked(n)
+}
+
+func (t *Tunnel) statusLocked(n int) Status {
 	// Follow the most recently used relay, or Telegram when used alone.
 	mail := t.other
 	for _, g := range t.relays {
@@ -1951,6 +1975,7 @@ func (t *Tunnel) Status(n int) Status {
 			Kind:           gs.kind.String(),
 			Route:          gs.route.String(),
 			Via:            gs.viaLocked(),
+			RouteID:        t.groupRouteIDLocked(gs),
 			RouteSince:     gs.routeSince.UTC(),
 			State:          gs.state,
 			LastProbe:      gs.lastProbe.UTC(),
@@ -1996,24 +2021,52 @@ func (t *Tunnel) Status(n int) Status {
 	}
 	s.Events = t.log.last(n)
 	s.Started = t.started.UTC()
-	s.Health = t.settleHealthLocked(health(s, t.timeNow()), t.timeNow())
+	s.Health = t.healthLocked(health(s, t.timeNow()), t.timeNow())
 	return s
 }
 
-// settleHealthLocked keeps a working verdict for 10 s before a problem shows,
-// and stamps the time the verdict last changed.
-func (t *Tunnel) settleHealthLocked(h Health, now time.Time) Health {
-	good := func(x Health) bool { return x.State == "working" || x.State == "limited" }
-	if good(h) {
-		t.healthGood = now
-	} else if h.State == "problem" && good(t.health) && now.Sub(t.healthGood) < 10*time.Second {
+func (t *Tunnel) monitorHealth() {
+	defer t.wg.Done()
+	ticker := time.NewTicker(time.Second)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-t.ctx.Done():
+			return
+		case <-ticker.C:
+			t.settleHealth()
+		}
+	}
+}
+
+func (t *Tunnel) settleHealth() {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	now := t.timeNow()
+	t.settleHealthLocked(health(t.statusLocked(0), now), now)
+}
+
+func goodHealth(h Health) bool { return h.State == "working" || h.State == "limited" }
+
+// healthLocked keeps a working verdict for 10 s before a setback shows.
+func (t *Tunnel) healthLocked(h Health, now time.Time) Health {
+	if (h.State == "problem" || h.State == "starting") && goodHealth(t.health) && now.Sub(t.healthGood) < 10*time.Second {
 		h = t.health
 	}
 	if h.State != t.health.State || h.Reason != t.health.Reason || t.health.Since.IsZero() {
-		t.healthSince = now
+		h.Since = now.UTC()
+	} else {
+		h.Since = t.healthSince.UTC()
 	}
-	h.Since = t.healthSince.UTC()
-	t.health = h
+	return h
+}
+
+func (t *Tunnel) settleHealthLocked(h Health, now time.Time) Health {
+	if goodHealth(h) {
+		t.healthGood = now
+	}
+	h = t.healthLocked(h, now)
+	t.health, t.healthSince = h, h.Since
 	return h
 }
 
@@ -2198,7 +2251,12 @@ func (t *Tunnel) tickGroupLocked(g *group, now time.Time) {
 			continue
 		}
 		h.groupHold = g.kind != kindOther && Route(r) != RouteTunnel
+		step := h.step
 		h.tick(now, t.log, holdUnit(g, Route(r)))
+		if Route(r) == RouteDirect && step > 0 && h.step == 0 {
+			g.failedTrials = 0
+			g.goodSinceTrial = false
+		}
 		if h.groupHold && h.state == Held && !now.Before(h.until) &&
 			(Route(r) == RouteSmart || g.okStreak >= recoveredAfter || g.probeBlind) && t.mode == ModeAuto && !strings.HasPrefix(t.only, "route:") {
 			expired := h.until

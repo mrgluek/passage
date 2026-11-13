@@ -153,3 +153,29 @@ func TestRoutePoolRemembersRefusals(t *testing.T) {
 		t.Fatalf("err %v, refuser asked %d, other %d", err, asked[0].Load(), asked[1].Load())
 	}
 }
+
+func TestRoutePoolRestrictionStartsRemainingRoute(t *testing.T) {
+	staggerFor(t, time.Hour)
+	a, b := net.Pipe()
+	defer b.Close()
+	discarded := &closeFlag{Conn: a}
+	c, d := net.Pipe()
+	defer d.Close()
+	var pool *routePool
+	first := &poolFixture{dial: func(context.Context, string, string) (net.Conn, error) {
+		pool.restrict("wss")
+		return discarded, nil
+	}}
+	second := &poolFixture{dial: func(context.Context, string, string) (net.Conn, error) { return c, nil }}
+	pool = &routePool{clients: []soarClient{first, second}, ipv6: []bool{false, false}, kinds: []string{"iroh", "wss"}}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	conn, err := pool.DialContext(ctx, "tcp", "example.org:443")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	if !discarded.closed.Load() || connVia(conn) != "wss" {
+		t.Fatal("restricted winner prevented the remaining route")
+	}
+}

@@ -249,3 +249,8 @@ int passageCanOpen(const char *scheme) {
 const char *passageLanguage(void) {
     return NSLocale.preferredLanguages.firstObject.UTF8String;
 }
+
+void passageSetTitle(const char *title) {
+    NSString *text = [NSString stringWithUTF8String:title];
+    dispatch_async(dispatch_get_main_queue(), ^{ passage.window.title = text; });
+}

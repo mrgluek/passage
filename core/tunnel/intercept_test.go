@@ -77,3 +77,21 @@ func TestDotFirst(t *testing.T) {
 		t.Fatalf("got %s", got)
 	}
 }
+
+func TestParseRejectsTruncatedQuestions(t *testing.T) {
+	q, _ := buildQueryA(0x1234, "example.org")
+	q[2] |= 0x80
+	for n := 12; n < len(q); n++ {
+		if _, err := parseResponseA(q[:n], 0x1234); err == nil {
+			t.Fatalf("accepted question truncated at %d", n)
+		}
+	}
+	q = append(q[:12], 0xc0)
+	if _, err := parseResponseA(q, 0x1234); err == nil {
+		t.Fatal("accepted truncated compression pointer")
+	}
+	q = append(q, 12, 0, 1, 0, 1)
+	if _, err := parseResponseA(q, 0x1234); err != nil {
+		t.Fatalf("rejected complete compressed question: %v", err)
+	}
+}

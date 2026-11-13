@@ -83,6 +83,9 @@ func Sign(m Manifest, key ed25519.PrivateKey) ([]byte, error) {
 // Parse returns the manifest in raw if its signature matches key.
 func Parse(raw []byte, key ed25519.PublicKey) (Manifest, error) {
 	var m Manifest
+	if len(key) != ed25519.PublicKeySize {
+		return m, errors.New("invalid manifest public key")
+	}
 	var e envelope
 	if err := json.Unmarshal(raw, &e); err != nil {
 		return m, errors.New("invalid manifest")

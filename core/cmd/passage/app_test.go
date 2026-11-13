@@ -10,6 +10,7 @@ import (
 	"reflect"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 
 	links "github.com/mrgluek/passage-link/link"
@@ -23,45 +24,45 @@ func TestTrayState(t *testing.T) {
 	check := func(title string) {
 		t.Helper()
 		st := a.trayState()
-		if st.Tooltip != "Passage: "+title || st.Running != a.settings.Running || st.Update != "1.2.3" {
+		if strings.SplitN(st.Tooltip, "\n", 2)[0] != "Passage: "+title || st.Running != a.settings.Running || st.Update != "1.2.3" {
 			t.Fatalf("tray state = %+v, want title %q", st, title)
 		}
 	}
-	check("Add your link")
+	check("add your link")
 	a.settings.Running = true
-	check("Add your link")
+	check("add your link")
 	a.lastErr = "start failed: test error"
-	check("Couldn't turn on")
+	check("couldn't turn on")
 	a.lastErr = ""
 	a.linkCfg.Subscriptions = []tunnel.Subscription{{ID: "example"}}
-	check("Connecting…")
+	check("connecting…")
 	router, err := tunnel.Start(tunnel.Config{Mode: tunnel.ModeOff})
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(router.Close)
 	a.tun = router
-	check("Connecting…")
+	check("connecting…")
 	a.settings.Running = false
-	check("Proxy is off")
+	check("proxy is off")
 	a.t = table("ru")
-	check("Прокси выключен")
+	check("прокси выключен")
 }
 
 func TestTrayHealthTitle(t *testing.T) {
 	for _, tt := range []struct {
 		state, reason, title string
 	}{
-		{"", "", "Proxy is on"},
-		{"ready", "waiting_app", "Proxy is on"},
-		{"starting", "", "Connecting…"},
-		{"working", "", "Working"},
-		{"limited", "reserve", "Working"},
-		{"problem", "no_internet", "No internet"},
-		{"problem", "server_down", "Chat server isn't answering"},
-		{"problem", "no_route", "Can't connect"},
-		{"problem", "slow", "Still connecting"},
-		{"problem", "unknown", "Still connecting"},
+		{"", "", "proxy is on"},
+		{"ready", "waiting_app", "proxy is on"},
+		{"starting", "", "connecting…"},
+		{"working", "", "working"},
+		{"limited", "reserve", "working"},
+		{"problem", "no_internet", "no internet"},
+		{"problem", "server_down", "chat server isn't answering"},
+		{"problem", "no_route", "can't connect"},
+		{"problem", "slow", "still connecting"},
+		{"problem", "unknown", "still connecting"},
 	} {
 		t.Run(tt.state+"/"+tt.reason, func(t *testing.T) {
 			h := tunnel.Health{State: tt.state, Reason: tt.reason}
@@ -477,8 +478,54 @@ func TestReportMasksOwnIPv6Prefix(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := `{"device_network":{"dns":["[2001:db8:10::53]:53"]},"dns_egress":"[addr]","events":[{"msg":"read udp [addr]-\u003e192.0.2.53:53: timeout; via [addr]: refused; to dns-192.0.2.4.example.org"}],"network_resolvers":["[addr]","[2001:db8:20::53]:53"]}`
+	want := `{"device_network":{"dns":["[addr]"]},"dns_egress":"[addr]","events":[{"msg":"read udp [addr]-\u003e192.0.2.53:53: timeout; via [addr]: refused; to dns-192.0.2.4.example.org"}],"network_resolvers":["[addr]","[2001:db8:20::53]:53"]}`
 	if string(got) != want {
 		t.Fatalf("report: %s", got)
 	}
+}
+
+func TestReportRedactsEveryString(t *testing.T) {
+	report := map[string]any{
+		"error":        "token=private-value",
+		"network_test": []string{"password=private-value"},
+		"nested":       []any{map[string]any{"detail": "key=private-value"}},
+	}
+	maskReportAddresses(report, nil)
+	raw, _ := json.Marshal(report)
+	if strings.Contains(string(raw), "private-value") {
+		t.Fatalf("secret in report: %s", raw)
+	}
+}
+
+func TestLanguageSnapshotsDuringChanges(t *testing.T) {
+	a := newApp(t.TempDir(), "1.0", "", "en", &fakePlatform{})
+	var wg sync.WaitGroup
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+		for range 30 {
+			a.setLanguage("ru")
+			a.setLanguage("en")
+		}
+	}()
+	go func() {
+		defer wg.Done()
+		for range 100 {
+			payload, err := a.call("init", nil)
+			if err != nil {
+				t.Error(err)
+				return
+			}
+			v := payload.(map[string]any)
+			lang := v["lang"].(string)
+			if v["strings"].(tr).f("action_start") != tr(table(lang)).f("action_start") {
+				t.Error("mixed language snapshot")
+			}
+			st := a.trayState()
+			if st.Text.f("action_start") != tr(table(st.Lang)).f("action_start") {
+				t.Error("mixed tray language")
+			}
+		}
+	}()
+	wg.Wait()
 }

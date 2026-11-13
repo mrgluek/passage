@@ -174,7 +174,7 @@ object Diagnostics {
     }
 
     private val link = Regex("""[A-Za-z][A-Za-z0-9+.-]*://[^\s"'<>]+""")
-    private val secret = Regex("""(?i)(\b(?:read_key|signer|key|pass(?:word)?|user(?:name)?|ticket|zone|link|secret|credentials?|token|endpoint|dial_ip|sni|sources)"?[ \t]*[:=][ \t]*)(?:"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|\[[^\]\r\n]*\]|[^\r\n]+)""")
+    private val secret = Regex("""(?i)(\b(?:read_key|signer|key|pass(?:word)?|user(?:name)?|ticket|zone|link|secret|credentials?|token|endpoint|dial_ip|sni|sources)"?[ \t]*[:=][ \t]*)(?:"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|\[[^\]\r\n]*\]|[^,\r\n}\]"`]+)""")
     private val localEndpoint = Regex("""(?:\[[0-9a-fA-F:.]+(?:%[^\]\s]+)?\]|[0-9]+(?:\.[0-9]+){3}):[0-9]+[ \t]*->""")
     private val address = Regex("""(?:->[ \t]*)?(?:\[[0-9a-fA-F:.]+(?:%[^\]\s]+)?\](?::[0-9]+)?|[0-9]+(?:\.[0-9]+){3}(?::[0-9]+)?|[0-9a-fA-F]*:[0-9a-fA-F:.]+(?:%[\w.-]+)?)""")
 

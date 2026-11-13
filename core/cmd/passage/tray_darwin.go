@@ -93,11 +93,12 @@ func runDesktop(dir string, autostart bool) {
 }
 
 type macDesktop struct {
-	app    *App
-	mu     sync.Mutex
-	shown  *trayState
-	toggle *systray.MenuItem
-	routes map[string]*systray.MenuItem
+	app      *App
+	mu       sync.Mutex
+	menuDone chan struct{}
+	shown    *trayState
+	toggle   *systray.MenuItem
+	routes   map[string]*systray.MenuItem
 }
 
 func (d *macDesktop) update() {
@@ -105,14 +106,17 @@ func (d *macDesktop) update() {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	systray.SetTooltip(st.Tooltip)
-	if d.shown == nil || d.shown.My != st.My || d.shown.Update != st.Update || !slices.Equal(d.shown.Routes, st.Routes) {
+	title := C.CString(strings.SplitN(st.Tooltip, "\n", 2)[0])
+	C.passageSetTitle(title)
+	C.free(unsafe.Pointer(title))
+	if d.shown == nil || d.shown.Lang != st.Lang || d.shown.My != st.My || d.shown.Update != st.Update || !slices.Equal(d.shown.Routes, st.Routes) {
 		d.buildMenu(st)
 	}
 	key := "action_start"
 	if st.Running {
 		key = "action_stop"
 	}
-	d.toggle.SetTitle(d.app.t.f(key))
+	d.toggle.SetTitle(st.Text.f(key))
 	for mode, item := range d.routes {
 		if mode == st.Mode {
 			item.Check()
@@ -124,21 +128,27 @@ func (d *macDesktop) update() {
 }
 
 func (d *macDesktop) buildMenu(st trayState) {
-	t := d.app.t
+	t := st.Text
+	if d.menuDone != nil {
+		close(d.menuDone)
+	}
+	d.menuDone = make(chan struct{})
+	done := d.menuDone
+	onMenuClick := func(item *systray.MenuItem, f func()) { go listenMenu(done, item.ClickedCh, f) }
 	systray.ResetMenu()
-	macOnClick(systray.AddMenuItem(t.f("tray_open"), ""), showMacWindow)
+	onMenuClick(systray.AddMenuItem(t.f("tray_open"), ""), showMacWindow)
 	if st.Update != "" {
-		macOnClick(systray.AddMenuItem(t.f("update_available", st.Update), ""), showMacWindow)
+		onMenuClick(systray.AddMenuItem(t.f("update_available", st.Update), ""), showMacWindow)
 	}
 	systray.AddSeparator()
 	d.toggle = systray.AddMenuItem(t.f("action_start"), "")
-	macOnClick(d.toggle, func() { d.app.setRunning(!d.app.trayState().Running) })
+	onMenuClick(d.toggle, func() { d.app.setRunning(!d.app.trayState().Running) })
 	route := systray.AddMenuItem(t.f("route_label"), "")
 	d.routes = map[string]*systray.MenuItem{}
 	add := func(mode, label string) {
 		item := route.AddSubMenuItemCheckbox(label, "", false)
 		d.routes[mode] = item
-		macOnClick(item, func() { d.app.setMode(mode) })
+		onMenuClick(item, func() { d.app.setMode(mode) })
 	}
 	add(tunnel.ModeAuto, t.f("mode_auto"))
 	if st.My {
@@ -149,21 +159,18 @@ func (d *macDesktop) buildMenu(st trayState) {
 	}
 	add(tunnel.ModeOff, t.f("mode_off"))
 	systray.AddSeparator()
-	macOnClick(systray.AddMenuItem(t.f("tray_quit"), ""), macQuit)
-}
-
-func macOnClick(item *systray.MenuItem, f func()) {
-	go func() {
-		for range item.ClickedCh {
-			f()
-		}
-	}()
+	onMenuClick(systray.AddMenuItem(t.f("tray_quit"), ""), macQuit)
 }
 
 func showMacWindow() {
 	html := C.CString(indexHTML)
 	defer C.free(unsafe.Pointer(html))
 	C.passageShowWindow(html)
+	if macApp != nil {
+		title := C.CString(macApp.view().Title)
+		C.passageSetTitle(title)
+		C.free(unsafe.Pointer(title))
+	}
 }
 
 //export passageQuit
