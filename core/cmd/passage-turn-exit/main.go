@@ -90,7 +90,7 @@ func policy(rules []rule) (func(string, uint16) (net.Conn, byte), error) {
 			}
 		}
 		for _, addr := range ips {
-			conn, err := (&net.Dialer{}).DialContext(ctx, "tcp", net.JoinHostPort(addr.String(), strconv.Itoa(int(port))))
+			conn, err := (&net.Dialer{Timeout: 3 * time.Second}).DialContext(ctx, "tcp", net.JoinHostPort(addr.String(), strconv.Itoa(int(port))))
 			if err == nil {
 				return conn, 0
 			}
