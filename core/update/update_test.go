@@ -308,3 +308,12 @@ func TestCheckPicksNewestSource(t *testing.T) {
 		t.Fatalf("offer %+v, err %v", offer, err)
 	}
 }
+
+func TestParseRejectsInvalidKeyLength(t *testing.T) {
+	r := newRelease(t, "1.2.0", []byte("x"))
+	for _, n := range []int{0, 1, ed25519.PublicKeySize - 1, ed25519.PublicKeySize + 1} {
+		if _, err := Parse(r.body, make(ed25519.PublicKey, n)); err == nil {
+			t.Fatalf("accepted key length %d", n)
+		}
+	}
+}
