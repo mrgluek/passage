@@ -368,7 +368,7 @@ func Start(cfg Config) (*Tunnel, error) {
 		rememberTunnel(t.cfg, t.telegram.name, t.telegram.route == RouteTunnel, t.timeNow())
 	}
 
-	ln, err := net.Listen("tcp", cfg.Listen)
+	ln, retried, err := listenProxy(cfg.Listen, 5*time.Second)
 	if err != nil {
 		if t.client != nil {
 			t.client.Close()
@@ -379,6 +379,9 @@ func Start(cfg Config) (*Tunnel, error) {
 		ln.Close()
 		t.client.Close()
 		return nil, errors.New("my route points at this proxy")
+	}
+	if retried {
+		t.log.add("proxy listen: retried busy port")
 	}
 	t.ln = ln
 	t.started = t.timeNow()
