@@ -447,7 +447,7 @@ function renderHome(v) {
   const dot = $("dot");
   const h = running && hasLink && v.health && v.health.state ? v.health : null;
   const hs = h ? h.state : "", hr = h ? h.reason : "";
-  let tone = v.error || (hs === "problem" && hr === "no_route") ? " error" : (hs === "starting" || hs === "problem") ? " warn" : running ? " on" : "";
+  let tone = v.error || (hs === "problem" && hr === "no_route") ? " error" : (hs === "starting" || hs === "problem") ? " warn" : running && hasLink ? " on" : "";
   dot.className = "dot" + tone + (flowing && !tone.includes("error") && !tone.includes("warn") ? " flow" : "");
   let title, reason, main = null, second = null;
   if (v.error) { title = t("h_title_error"); reason = ""; }
