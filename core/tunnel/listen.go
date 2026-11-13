@@ -3,7 +3,6 @@ package tunnel
 import (
 	"errors"
 	"net"
-	"syscall"
 	"time"
 )
 
@@ -12,7 +11,7 @@ func listenProxy(address string, timeout time.Duration) (net.Listener, bool, err
 	retried := false
 	for {
 		ln, err := net.Listen("tcp", address)
-		if err == nil || !errors.Is(err, syscall.EADDRINUSE) || !time.Now().Before(deadline) {
+		if err == nil || !errors.Is(err, errAddrInUse) || !time.Now().Before(deadline) {
 			return ln, retried, err
 		}
 		retried = true
