@@ -427,8 +427,10 @@ class MainActivity : ThemedActivity() {
         renderSetup()
         if (active) worker.execute {
             var health = "" to ""
+            var channels = ""
             val counters = try {
                 val status = Native.status()
+                channels = StatusText.channels(this, status, homeChannels)
                 status.optJSONObject("health")?.let { health = it.optString("state") to it.optString("reason") }
                 val stats = status.optJSONObject("stats")
                 val routes = stats?.keys()?.asSequence()?.mapNotNull { stats.optJSONObject(it) }?.toList().orEmpty()
@@ -438,6 +440,7 @@ class MainActivity : ThemedActivity() {
                 if (isFinishing || isDestroyed || !PassageService.active) return@runOnUiThread
                 healthState = health.first
                 healthReason = health.second
+                channelLine = channels
                 if (counters != null) {
                     trafficUntil = HomeSetup.trafficDeadline(previousTraffic, counters, SystemClock.elapsedRealtime(), trafficUntil)
                     previousTraffic = counters
@@ -452,6 +455,8 @@ class MainActivity : ThemedActivity() {
         }
     }
 
+    private val homeChannels = StatusChannels.Display()
+    private var channelLine = ""
     @Volatile private var healthState = ""
     @Volatile private var healthReason = ""
 
@@ -459,8 +464,8 @@ class MainActivity : ThemedActivity() {
         val active = PassageService.active
         val error = PassageService.lastError != null
         val plain = HomeSetup.plain(active, error, settings.hasLink, healthState, healthReason)
-        stateView.setText(plain.title)
-        reasonView.setText(plain.reason(settings.appSeen))
+        stateView.text = getString(R.string.status_title, getString(plain.title))
+        reasonView.text = if (active && channelLine.isNotEmpty()) channelLine else getString(plain.reason(settings.appSeen))
         renderDot(HomeSetup.dotFor(plain, SystemClock.elapsedRealtime() < trafficUntil))
     }
 

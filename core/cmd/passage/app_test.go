@@ -24,25 +24,25 @@ func TestTrayState(t *testing.T) {
 	check := func(title string) {
 		t.Helper()
 		st := a.trayState()
-		if st.Tooltip != "Passage: "+title || st.Running != a.settings.Running || st.Update != "1.2.3" {
+		if strings.SplitN(st.Tooltip, "\n", 2)[0] != "Passage: "+title || st.Running != a.settings.Running || st.Update != "1.2.3" {
 			t.Fatalf("tray state = %+v, want title %q", st, title)
 		}
 	}
 	check("Add your link")
 	a.settings.Running = true
-	check("Add your link")
+	check("connecting…")
 	a.lastErr = "start failed: test error"
 	check("Couldn't turn on")
 	a.lastErr = ""
 	a.linkCfg.Subscriptions = []tunnel.Subscription{{ID: "example"}}
-	check("Connecting…")
+	check("connecting…")
 	router, err := tunnel.Start(tunnel.Config{Mode: tunnel.ModeOff})
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(router.Close)
 	a.tun = router
-	check("Connecting…")
+	check("connecting…")
 	a.settings.Running = false
 	check("Proxy is off")
 	a.t = table("ru")
@@ -55,9 +55,9 @@ func TestTrayHealthTitle(t *testing.T) {
 	}{
 		{"", "", "Proxy is on"},
 		{"ready", "waiting_app", "Proxy is on"},
-		{"starting", "", "Connecting…"},
-		{"working", "", "Working"},
-		{"limited", "reserve", "Working"},
+		{"starting", "", "connecting…"},
+		{"working", "", "working"},
+		{"limited", "reserve", "working"},
 		{"problem", "no_internet", "No internet"},
 		{"problem", "server_down", "Chat server isn't answering"},
 		{"problem", "no_route", "Can't connect"},

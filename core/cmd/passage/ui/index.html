@@ -451,7 +451,7 @@ function renderHome(v) {
   dot.className = "dot" + tone + (flowing && !tone.includes("error") && !tone.includes("warn") ? " flow" : "");
   let title, reason, main = null, second = null;
   if (v.error) { title = t("h_title_error"); reason = ""; }
-  else if (!hasLink) { title = t("h_title_nolink"); reason = t("h_reason_nolink"); }
+  else if (!running && !hasLink) { title = t("h_title_nolink"); reason = t("h_reason_nolink"); }
   else if (!running) { title = t("h_title_off"); reason = t("h_reason_off"); }
   else if (hs === "starting") { title = t("h_title_connecting"); reason = t("h_reason_connecting"); }
   else if (hs === "problem") { title = t("h_title_" + hr); reason = t("h_reason_" + hr); }
@@ -461,9 +461,10 @@ function renderHome(v) {
   else if (!running) main = [t("h_turn_on"), () => call("start").then(refresh, fail)];
   if (running) second = [t("h_turn_off"), () => call("stop").then(refresh, fail)];
   else if (!hasLink) second = [t("h_turn_on"), () => call("start").then(refresh, fail)];
-  $("sTitle").textContent = title;
-  $("sReason").textContent = reason;
-  setHidden("sReason", !reason);
+  $("sTitle").textContent = v.title;
+  document.title = v.title;
+  $("sReason").textContent = v.channels || reason;
+  setHidden("sReason", !(v.channels || reason));
   $("sError").textContent = v.error || "";
   setHidden("sError", !v.error);
   setHidden("sMain", !main);

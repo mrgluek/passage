@@ -219,8 +219,8 @@
     <string name="home_setup_reason">Passage needs the link you were sent to start working.</string>
     <string name="home_off_title">Proxy is off</string>
     <string name="home_off_reason">Turn it on to use it in your chat app.</string>
-    <string name="home_working_title">Working</string>
-    <string name="home_connecting_title">Connecting…</string>
+    <string name="home_working_title">working</string>
+    <string name="home_connecting_title">connecting…</string>
     <string name="home_connecting_reason">This can take up to a minute.</string>
     <string name="home_limited_reason">Using a backup route. It may be slower.</string>
     <string name="home_no_internet_title">No internet</string>
@@ -298,4 +298,10 @@
     <string name="home_telegram_open">Copy and open link in Telegram</string>
     <string name="home_other_how">Tap a value to copy it.</string>
     <string name="home_test_report">Test network and send report to the developer</string>
+    <string name="status_title">Passage: %1$s</string>
+    <string name="channel_mail">Mail</string>
+    <string name="channel_telegram">Tg</string>
+    <string name="channel_other">Other</string>
+    <string name="channel_shared">Route</string>
+    <string name="channel_smart">smart</string>
 </resources>

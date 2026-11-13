@@ -106,6 +106,9 @@ func (d *macDesktop) update() {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	systray.SetTooltip(st.Tooltip)
+	title := C.CString(strings.SplitN(st.Tooltip, "\n", 2)[0])
+	C.passageSetTitle(title)
+	C.free(unsafe.Pointer(title))
 	if d.shown == nil || d.shown.Lang != st.Lang || d.shown.My != st.My || d.shown.Update != st.Update || !slices.Equal(d.shown.Routes, st.Routes) {
 		d.buildMenu(st)
 	}
@@ -163,6 +166,11 @@ func showMacWindow() {
 	html := C.CString(indexHTML)
 	defer C.free(unsafe.Pointer(html))
 	C.passageShowWindow(html)
+	if macApp != nil {
+		title := C.CString(macApp.view().Title)
+		C.passageSetTitle(title)
+		C.free(unsafe.Pointer(title))
+	}
 }
 
 //export passageQuit

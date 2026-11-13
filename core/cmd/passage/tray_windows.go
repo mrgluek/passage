@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"slices"
+	"strings"
 	"sync"
 	"time"
 
@@ -117,6 +118,10 @@ func (d *desktop) update() {
 		systray.SetIcon(iconOff)
 	}
 	systray.SetTooltip(st.Tooltip)
+	if w := d.view; w != nil {
+		title := strings.SplitN(st.Tooltip, "\n", 2)[0]
+		w.Dispatch(func() { w.SetTitle(title) })
+	}
 	if d.shown == nil || d.shown.Lang != st.Lang || d.shown.My != st.My || d.shown.Update != st.Update || !slices.Equal(d.shown.Routes, st.Routes) {
 		d.buildMenu(st)
 	}
@@ -217,7 +222,7 @@ func (d *desktop) runWindow() {
 		DataPath:  filepath.Join(d.dir, dataName, "webview2"),
 		AutoFocus: true,
 		WindowOptions: webview2.WindowOptions{
-			Title:  "Passage",
+			Title:  d.app.view().Title,
 			Width:  uint(560 * scale),
 			Height: uint(780 * scale),
 			IconId: 1, // the program's icon (go-winres)

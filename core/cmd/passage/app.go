@@ -53,6 +53,7 @@ type App struct {
 	os         platform
 	changed    func() // the tray redraws
 
+	channels               channelDisplay
 	mu                     sync.Mutex
 	settings               Settings
 	tun                    *tunnel.Tunnel
@@ -311,6 +312,7 @@ func (a *App) setRunning(on bool) {
 	}
 	if !on {
 		a.runningSince = time.Time{}
+		a.channels = channelDisplay{}
 	}
 	a.settings.Running = on
 	a.saveSettings()
@@ -369,6 +371,9 @@ func (a *App) trayState() trayState {
 	defer a.mu.Unlock()
 	st := trayState{Lang: a.lang, Text: a.t, Running: a.settings.Running, Mode: a.mode(), Routes: a.routes(), My: a.settings.My != ""}
 	st.Tooltip = "Passage: " + a.t.f(a.trayTitleKey())
+	if a.tun != nil {
+		st.Tooltip += "\n" + a.channels.sample(a.t, a.tun.Status(0), time.Now())
+	}
 	if a.updater.offer != nil {
 		st.Update = a.updater.offer.Version
 	}
@@ -379,7 +384,7 @@ func (a *App) trayTitleKey() string {
 	switch {
 	case a.lastErr != "":
 		return "h_title_error"
-	case !a.hasLink():
+	case !a.settings.Running && !a.hasLink():
 		return "h_title_nolink"
 	case !a.settings.Running:
 		return "h_title_off"
@@ -414,6 +419,8 @@ type view struct {
 	SubscriptionNotice string            `json:"subscription_notice"`
 	Update             updateView        `json:"update"`
 	Running            bool              `json:"running"`
+	Title              string            `json:"title"`
+	Channels           string            `json:"channels"`
 	Head               string            `json:"head"`
 	Line               string            `json:"line"`
 	Full               string            `json:"full"`
@@ -467,6 +474,7 @@ func (a *App) view() view {
 	default:
 		v.Head = a.t.f("proxy_stopped")
 	}
+	v.Title = "Passage: " + a.t.f(a.trayTitleKey())
 	v.StartHint = startHint(a.t, v.Running, len(v.Routes))
 	var full string
 	if a.tun != nil {
@@ -476,6 +484,7 @@ func (a *App) view() view {
 			st.Events = st.Events[len(st.Events)-30:]
 		}
 		v.Line = oneLine(a.t, st)
+		v.Channels = a.channels.sample(a.t, st, time.Now())
 		v.Health = st.Health
 		full = fullStatus(a.t, st)
 		var conns int64

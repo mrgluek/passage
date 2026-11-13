@@ -14,9 +14,21 @@ object StatusText {
         return listOfNotNull(routes(c, s), network(c, s), tunnelState(c, s)).joinToString(" · ")
     }
 
-    fun notification(c: Context, s: JSONObject?, appSeen: Boolean, fallbackRunning: Boolean): Pair<String, String> {
+    fun notification(c: Context, s: JSONObject?, appSeen: Boolean, fallbackRunning: Boolean, display: StatusChannels.Display = StatusChannels.Display()): Pair<String, String> {
         val (title, reason) = notificationResources(s, appSeen, fallbackRunning)
-        return c.getString(title) to c.getString(reason)
+        return c.getString(R.string.status_title, c.getString(title)) to (s?.takeIf { it.optBoolean("running") }?.let { channels(c, it, display) } ?: c.getString(reason))
+    }
+
+    fun channels(c: Context, s: JSONObject, display: StatusChannels.Display): String {
+        val groups = s.optJSONObject("groups") ?: JSONObject()
+        val format = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ssXXX", Locale.ROOT)
+        val list = groups.keys().asSequence().mapNotNull { name -> groups.optJSONObject(name)?.let { g ->
+            val stamp = try { format.parse(g.optString("last_conn").replace(Regex("\\.\\d+"), ""))?.time ?: 0L } catch (_: Exception) { 0L }
+            StatusChannels.Group(name, g.optString("kind"), g.optString("route"), g.optString("route_id"), g.optString("via"), stamp, (g.optJSONArray("targets")?.length() ?: 0) > 0)
+        } }.toList()
+        val labels = StatusChannels.Labels(c.getString(R.string.channel_mail), c.getString(R.string.channel_telegram), c.getString(R.string.channel_other),
+            c.getString(R.string.channel_shared), c.getString(R.string.route_direct), c.getString(R.string.channel_smart))
+        return display.sample(list, s.optString("mode"), s.optString("route"), s.optString("via").ifEmpty { onlyType(s) }, labels, System.currentTimeMillis())
     }
 
     internal fun notificationResources(s: JSONObject?, appSeen: Boolean, fallbackRunning: Boolean): Pair<Int, Int> {

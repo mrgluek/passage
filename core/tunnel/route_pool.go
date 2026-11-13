@@ -533,6 +533,18 @@ func (c viaConn) CloseWrite() error {
 	return c.Conn.Close()
 }
 
+func connRouteID(c net.Conn) string {
+	if v, ok := c.(viaConn); ok {
+		c = v.Conn
+	}
+	if v, ok := c.(*poolConn); ok {
+		if v.index < len(v.pool.ids) {
+			return v.pool.ids[v.index]
+		}
+	}
+	return ""
+}
+
 func connVia(c net.Conn) string {
 	if v, ok := c.(viaConn); ok {
 		return v.via

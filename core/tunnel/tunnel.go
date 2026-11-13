@@ -73,6 +73,7 @@ type group struct {
 	used           time.Time // last CONNECT, for dropping the least recently used relay
 	route          Route
 	routeSince     time.Time
+	routeID        string
 	via            string              // route type of the newest open tunnel connection: iroh, soar
 	tunnelFails    int                 // tunnel dial failures since the last reply or route change
 	hosts          map[string]hostSeen // probe host -> last seen in a CONNECT
@@ -230,12 +231,13 @@ type Tunnel struct {
 }
 
 type tracked struct {
-	group  *group
-	route  Route
-	local  net.Conn
-	remote net.Conn
-	via    string // route type, for a tunnel connection
-	opened time.Time
+	group   *group
+	route   Route
+	local   net.Conn
+	remote  net.Conn
+	routeID string
+	via     string // route type, for a tunnel connection
+	opened  time.Time
 }
 
 type routeStats struct {
@@ -790,7 +792,7 @@ func (t *Tunnel) updateViaLocked(g *group) {
 	}
 	g.via = ""
 	if newest != nil {
-		g.via = newest.via
+		g.via, g.routeID = newest.via, newest.routeID
 	}
 }
 
@@ -812,6 +814,7 @@ func (t *Tunnel) setRouteLocked(g *group, r Route, reason string) {
 	}
 	old := g.route
 	g.route = r
+	g.routeID = ""
 	t.rememberGroupHoldLocked(g)
 	if g.kind != kindOther && (old == RouteTunnel || r == RouteTunnel) {
 		rememberTunnel(t.cfg, g.name, r == RouteTunnel, t.timeNow())
@@ -929,7 +932,8 @@ func (t *Tunnel) handle(c net.Conn) {
 	t.stats[route].Conns++
 	if route == RouteTunnel {
 		tr.via = t.viaOf(remote)
-		g.via = tr.via
+		tr.routeID = connRouteID(remote)
+		g.via, g.routeID = tr.via, tr.routeID
 	}
 	t.mu.Unlock()
 
@@ -1886,6 +1890,7 @@ type GroupStatus struct {
 	Kind           string            `json:"kind"` // relay, telegram or other
 	Route          string            `json:"route"`
 	Via            string            `json:"via,omitempty"`
+	RouteID        string            `json:"route_id,omitempty"`
 	RouteSince     time.Time         `json:"route_since"`
 	State          string            `json:"state"`
 	LastProbe      time.Time         `json:"last_probe"`
@@ -1894,6 +1899,16 @@ type GroupStatus struct {
 	LastConnResult *connectionResult `json:"last_conn_result,omitempty"`
 	Targets        []string          `json:"targets"` // what the next probe checks
 	active         bool
+}
+
+func (t *Tunnel) groupRouteIDLocked(g *group) string {
+	if g.route != RouteTunnel {
+		return ""
+	}
+	if id, ok := strings.CutPrefix(cmp.Or(t.only, t.mode), "route:"); ok {
+		return id
+	}
+	return g.routeID
 }
 
 // Status returns a snapshot with the last n events.
@@ -1960,6 +1975,7 @@ func (t *Tunnel) statusLocked(n int) Status {
 			Kind:           gs.kind.String(),
 			Route:          gs.route.String(),
 			Via:            gs.viaLocked(),
+			RouteID:        t.groupRouteIDLocked(gs),
 			RouteSince:     gs.routeSince.UTC(),
 			State:          gs.state,
 			LastProbe:      gs.lastProbe.UTC(),
