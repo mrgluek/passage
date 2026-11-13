@@ -783,6 +783,7 @@ window.passageImport = text => {
     await importLink(text);
   }).catch(fail);
 };
+if (window.passageReady) window.passageReady();
 </script>
 </body>
 </html>

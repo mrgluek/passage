@@ -36,7 +36,10 @@ func runDesktop(dir string, autostart bool) {
 		messageBox(t.f("inside_archive"), windows.MB_OK|windows.MB_ICONWARNING)
 		return
 	}
-	event, first := firstInstance()
+	if err := registerPassageScheme(); err != nil {
+		showError(err.Error())
+	}
+	event, first := firstInstance(startupLink)
 	if !first {
 		return
 	}
@@ -50,8 +53,12 @@ func runDesktop(dir string, autostart bool) {
 	a := newApp(dir, version, irohHelper(), language(uiLanguage()), winPlatform{})
 	winApp = a
 	d := &desktop{app: a, dir: dir}
+	if startupLink != "" {
+		d.imports = append(d.imports, startupLink)
+	}
 	a.changed = d.update
 	ctx, cancel := context.WithCancel(context.Background())
+	go receiveLaunchLinks(ctx, d.importLink)
 	done := make(chan struct{})
 	waited := make(chan struct{})
 	systray.Run(func() {
@@ -75,7 +82,7 @@ func runDesktop(dir string, autostart bool) {
 				}
 			}
 		}()
-		if !autostart {
+		if !autostart || startupLink != "" {
 			d.openWindow()
 		}
 	}, func() {
@@ -104,6 +111,8 @@ type desktop struct {
 	routes   map[string]*systray.MenuItem
 	view     webview2.WebView
 	opening  bool
+	imports  []string
+	ready    bool
 }
 
 // update redraws the icon and tooltip, and rebuilds the menu when the
@@ -253,10 +262,17 @@ func (d *desktop) runWindow() {
 			w.Dispatch(func() { w.Eval("window.passageReply(" + jsonInt(id) + "," + string(out) + ")") })
 		}()
 	})
+	w.Bind("passageReady", func() {
+		d.mu.Lock()
+		d.ready = true
+		d.deliverImportsLocked()
+		d.mu.Unlock()
+	})
 	w.SetHtml(indexHTML)
 	w.Run()
 	d.mu.Lock()
 	d.view = nil
+	d.ready = false
 	d.mu.Unlock()
 	w.Destroy()
 }
@@ -264,4 +280,25 @@ func (d *desktop) runWindow() {
 func jsonInt(n int) string {
 	b, _ := json.Marshal(n)
 	return string(b)
+}
+
+func (d *desktop) importLink(text string) {
+	d.mu.Lock()
+	d.imports = append(d.imports, text)
+	d.deliverImportsLocked()
+	d.mu.Unlock()
+	d.openWindow()
+}
+
+func (d *desktop) deliverImportsLocked() {
+	if !d.ready || d.view == nil {
+		return
+	}
+	w := d.view
+	for _, text := range d.imports {
+		data, _ := json.Marshal(text)
+		script := "window.passageImport(" + string(data) + ");"
+		w.Dispatch(func() { w.Eval(script) })
+	}
+	d.imports = nil
 }
