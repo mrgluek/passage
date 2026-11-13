@@ -75,9 +75,9 @@ var texts = map[string]map[string]string{
 		"update_restart":                 "Passage will close and restart. Your settings will be kept.",
 
 		"app_name":               "Passage",
-		"link_label":             "Link (read from link.txt)",
+		"link_label":             "Link",
 		"link_hint":              "Paste a Passage link to add or replace routes",
-		"link_empty":             "No link yet. Paste the link you received, or put it in link.txt next to the program.",
+		"link_empty":             "No link yet. Paste the link you received.",
 		"link_file_help":         "The link is kept in link.txt next to the program, one link per line. To update it, replace the file: Passage reads it again within a few seconds.",
 		"link_ok_zone":           "Link OK: zone %[1]s",
 		"link_invalid":           "Invalid link: %[1]s",
@@ -362,8 +362,8 @@ var texts = map[string]map[string]string{
 		"update_download_failed":         "Не удалось скачать обновление. Попробуйте ещё раз.",
 		"update_restart":                 "Passage закроется и запустится снова. Настройки сохранятся.",
 
-		"link_label":             "Ссылка (читается из link.txt)",
-		"link_empty":             "Ссылки пока нет. Вставьте полученную ссылку или положите её в link.txt рядом с программой.",
+		"link_label":             "Ссылка",
+		"link_empty":             "Ссылки пока нет. Вставьте полученную ссылку.",
 		"link_file_help":         "Ссылка хранится в link.txt рядом с программой, по одной ссылке в строке. Чтобы обновить её, замените файл: Passage перечитает его через несколько секунд.",
 		"link_ok_zone":           "Ссылка в порядке: зона %[1]s",
 		"link_invalid":           "Неверная ссылка: %[1]s",

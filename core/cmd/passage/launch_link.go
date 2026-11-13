@@ -25,6 +25,11 @@ func launchLink(args []string) (string, error) {
 	if err != nil || !strings.EqualFold(u.Scheme, "passage") || !strings.HasPrefix(strings.ToLower(text), "passage://") {
 		return "", errors.New("invalid Passage link")
 	}
+	// Windows may add a slash after the host: passage://add/#v2.…
+	if u.Path == "/" && u.Opaque == "" {
+		u.Path = ""
+		text = u.String()
+	}
 	return text, nil
 }
 

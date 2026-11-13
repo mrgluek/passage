@@ -16,6 +16,8 @@ func TestLaunchLink(t *testing.T) {
 		{name: "routes", args: []string{"passage://routes?data=example"}, want: "passage://routes?data=example"},
 		{name: "subscription", args: []string{"passage://subscribe?data=example"}, want: "passage://subscribe?data=example"},
 		{name: "scheme case", args: []string{"PASSAGE://routes"}, want: "PASSAGE://routes"},
+		{name: "slash after host", args: []string{"passage://add/#v2.abc"}, want: "passage://add#v2.abc"},
+		{name: "slash before query", args: []string{"passage://tunnel/?x=1"}, want: "passage://tunnel?x=1"},
 		{name: "wrong scheme", args: []string{"https://example.org/link"}, bad: true},
 		{name: "empty", args: []string{""}, bad: true},
 		{name: "malformed", args: []string{"passage://%"}, bad: true},
