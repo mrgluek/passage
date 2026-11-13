@@ -106,14 +106,14 @@ func (d *macDesktop) update() {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	systray.SetTooltip(st.Tooltip)
-	if d.shown == nil || d.shown.My != st.My || d.shown.Update != st.Update || !slices.Equal(d.shown.Routes, st.Routes) {
+	if d.shown == nil || d.shown.Lang != st.Lang || d.shown.My != st.My || d.shown.Update != st.Update || !slices.Equal(d.shown.Routes, st.Routes) {
 		d.buildMenu(st)
 	}
 	key := "action_start"
 	if st.Running {
 		key = "action_stop"
 	}
-	d.toggle.SetTitle(d.app.t.f(key))
+	d.toggle.SetTitle(st.Text.f(key))
 	for mode, item := range d.routes {
 		if mode == st.Mode {
 			item.Check()
@@ -125,7 +125,7 @@ func (d *macDesktop) update() {
 }
 
 func (d *macDesktop) buildMenu(st trayState) {
-	t := d.app.t
+	t := st.Text
 	if d.menuDone != nil {
 		close(d.menuDone)
 	}

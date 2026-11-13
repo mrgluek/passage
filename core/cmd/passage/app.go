@@ -96,6 +96,12 @@ func newApp(dir, version, iroh, lang string, os platform) *App {
 // downloadURLs are the pages where the apps in the setup tabs can be got.
 var downloadURLs = []string{"https://download.delta.chat", "https://velta.cc/#download"}
 
+func (a *App) localization() (string, tr) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.lang, a.t
+}
+
 // setLanguage switches the window's language: "en", "ru", or "" for the system's.
 func (a *App) setLanguage(lang string) error {
 	if lang != "" && lang != "en" && lang != "ru" {
@@ -348,6 +354,8 @@ func (a *App) changedAfter() { go a.changed() }
 
 // trayState is what the tray shows.
 type trayState struct {
+	Lang    string
+	Text    tr
 	Running bool
 	Tooltip string
 	Mode    string
@@ -359,7 +367,7 @@ type trayState struct {
 func (a *App) trayState() trayState {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	st := trayState{Running: a.settings.Running, Mode: a.mode(), Routes: a.routes(), My: a.settings.My != ""}
+	st := trayState{Lang: a.lang, Text: a.t, Running: a.settings.Running, Mode: a.mode(), Routes: a.routes(), My: a.settings.My != ""}
 	st.Tooltip = "Passage: " + a.t.f(a.trayTitleKey())
 	if a.updater.offer != nil {
 		st.Update = a.updater.offer.Version
@@ -780,6 +788,7 @@ func (a *App) recheck() {
 func (a *App) report() string {
 	a.mu.Lock()
 	t := a.tun
+	text := a.t
 	a.mu.Unlock()
 	var test []string
 	if t != nil {
@@ -789,7 +798,7 @@ func (a *App) report() string {
 		a.mu.Lock()
 		a.event("network test: %s", diagnosisSummary(d))
 		a.mu.Unlock()
-		test = strings.Split(strings.TrimRight(diagnosis(a.t, d), "\n"), "\n")
+		test = strings.Split(strings.TrimRight(diagnosis(text, d), "\n"), "\n")
 	}
 	a.mu.Lock()
 	defer a.mu.Unlock()
@@ -846,7 +855,8 @@ func (a *App) call(method string, arg json.RawMessage) (any, error) {
 	}
 	switch method {
 	case "init":
-		return map[string]any{"lang": a.lang, "strings": a.t, "version": a.version, "dir": a.dir,
+		lang, text := a.localization()
+		return map[string]any{"lang": lang, "strings": text, "version": a.version, "dir": a.dir,
 			"site": siteURL, "source": sourceURL}, nil
 	case "view":
 		return a.view(), nil

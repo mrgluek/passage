@@ -10,6 +10,7 @@ import (
 	"reflect"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 
 	links "github.com/mrgluek/passage-link/link"
@@ -494,4 +495,37 @@ func TestReportRedactsEveryString(t *testing.T) {
 	if strings.Contains(string(raw), "private-value") {
 		t.Fatalf("secret in report: %s", raw)
 	}
+}
+
+func TestLanguageSnapshotsDuringChanges(t *testing.T) {
+	a := newApp(t.TempDir(), "1.0", "", "en", &fakePlatform{})
+	var wg sync.WaitGroup
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+		for range 30 {
+			a.setLanguage("ru")
+			a.setLanguage("en")
+		}
+	}()
+	go func() {
+		defer wg.Done()
+		for range 100 {
+			payload, err := a.call("init", nil)
+			if err != nil {
+				t.Error(err)
+				return
+			}
+			v := payload.(map[string]any)
+			lang := v["lang"].(string)
+			if v["strings"].(tr).f("action_start") != tr(table(lang)).f("action_start") {
+				t.Error("mixed language snapshot")
+			}
+			st := a.trayState()
+			if st.Text.f("action_start") != tr(table(st.Lang)).f("action_start") {
+				t.Error("mixed tray language")
+			}
+		}
+	}()
+	wg.Wait()
 }

@@ -117,10 +117,10 @@ func (d *desktop) update() {
 		systray.SetIcon(iconOff)
 	}
 	systray.SetTooltip(st.Tooltip)
-	if d.shown == nil || d.shown.My != st.My || d.shown.Update != st.Update || !slices.Equal(d.shown.Routes, st.Routes) {
+	if d.shown == nil || d.shown.Lang != st.Lang || d.shown.My != st.My || d.shown.Update != st.Update || !slices.Equal(d.shown.Routes, st.Routes) {
 		d.buildMenu(st)
 	}
-	t := d.app.t
+	t := st.Text
 	if st.Running {
 		d.toggle.SetTitle(t.f("action_stop"))
 	} else {
@@ -137,7 +137,7 @@ func (d *desktop) update() {
 }
 
 func (d *desktop) buildMenu(st trayState) {
-	t := d.app.t
+	t := st.Text
 	if d.menuDone != nil {
 		close(d.menuDone)
 	}
@@ -229,7 +229,8 @@ func (d *desktop) runWindow() {
 	d.view = w
 	d.mu.Unlock()
 	if w == nil {
-		if messageBox(d.app.t.f("webview_missing"), windows.MB_YESNO|windows.MB_ICONWARNING) == 6 { // IDYES
+		_, text := d.app.localization()
+		if messageBox(text.f("webview_missing"), windows.MB_YESNO|windows.MB_ICONWARNING) == 6 { // IDYES
 			winPlatform{}.open(webviewDownload)
 		}
 		return
