@@ -75,14 +75,38 @@ func (r *SubscriptionRefresher) Refresh(ctx context.Context, cfg Config, dialers
 			etag, code string
 		}
 		succeeded := false
+		failedTunnel := map[string]bool{}
+		successfulTunnel := map[string]bool{}
 		for _, tier := range []struct {
 			first, end int
 			timeout    time.Duration
 		}{{0, len(dialers), tunnelTimeout}, {len(dialers), len(dials), directTimeout}} {
-			if succeeded || ctx.Err() != nil || tier.first == tier.end {
+			diagnostic := succeeded && tier.first == len(dialers)
+			if ctx.Err() != nil || tier.first == tier.end {
 				continue
 			}
 			pairs := subscriptionPairs(sub.Sources, tier.first, tier.end, last)
+			if diagnostic {
+				pairs = nil
+				now := time.Now().Unix()
+				for _, source := range sub.Sources {
+					stats := sub.SourceStats[sourceStatsKey(source)]
+					if failedTunnel[source] && !successfulTunnel[source] && (stats.LastDirectCheck == 0 || now-stats.LastDirectCheck >= 86400) {
+						pairs = append(pairs, subscriptionPair{source, len(dialers)})
+						stats.LastDirectCheck = now
+						sub.SourceStats[sourceStatsKey(source)] = stats
+					}
+				}
+			}
+			if !diagnostic && tier.first == len(dialers) {
+				for _, pair := range pairs {
+					if failedTunnel[pair.source] {
+						stats := sub.SourceStats[sourceStatsKey(pair.source)]
+						stats.LastDirectCheck = time.Now().Unix()
+						sub.SourceStats[sourceStatsKey(pair.source)] = stats
+					}
+				}
+			}
 			attempt, cancel := context.WithTimeout(ctx, tier.timeout)
 			results := make(chan response, len(pairs))
 			var workers sync.WaitGroup
@@ -93,6 +117,7 @@ func (r *SubscriptionRefresher) Refresh(ctx context.Context, cfg Config, dialers
 					start := time.Now()
 					blob, etag, code := fetchSubscriptionWithStats(attempt, fetching, pair.source, dials[pair.dial], &stats)
 					stats.elapsed = time.Since(start)
+					stats.tunnel = pair.dial < len(dialers)
 					results <- response{stats, pair, blob, etag, code}
 				})
 			}
@@ -113,29 +138,39 @@ func (r *SubscriptionRefresher) Refresh(ctx context.Context, cfg Config, dialers
 			for range pairs {
 				result := <-results
 				pair, blob, code := result.pair, result.blob, result.code
-				if succeeded && result.stats.failure == "canceled" {
-					result.stats.failure = ""
+				if result.stats.tunnel && result.stats.failure != "" && result.stats.failure != "canceled" {
+					failedTunnel[pair.source] = true
 				}
 				sub.recordSourceFetch(pair.source, result.stats)
-				if succeeded {
+				if succeeded && !diagnostic {
 					continue
 				}
 				if code == "" {
 					id, _ := hex.DecodeString(sub.ID)
 					opened, err := links.OpenSubFile(blob, id, sub.ReadKey, ed25519.PublicKey(sub.Signer))
 					if err != nil {
-						sub.recordSourceFetch(pair.source, subscriptionFetchStats{failure: "bad"})
-						sub.LastError = subscriptionError(err)
+						sub.recordSourceFetch(pair.source, subscriptionFetchStats{failure: "bad", tunnel: pair.dial < len(dialers)})
+						if pair.dial < len(dialers) {
+							failedTunnel[pair.source] = true
+						}
+						if !diagnostic {
+							sub.LastError = subscriptionError(err)
+						}
 						continue
 					}
 					candidate, err := ApplySubFile(out.Config, sub, opened.Bundle)
 					if errors.Is(err, links.ErrNotNewer) {
 						code = "unchanged"
 					} else if err != nil {
-						sub.recordSourceFetch(pair.source, subscriptionFetchStats{failure: "bad"})
-						sub.LastError = subscriptionError(err)
+						sub.recordSourceFetch(pair.source, subscriptionFetchStats{failure: "bad", tunnel: pair.dial < len(dialers)})
+						if pair.dial < len(dialers) {
+							failedTunnel[pair.source] = true
+						}
+						if !diagnostic {
+							sub.LastError = subscriptionError(err)
+						}
 						continue
-					} else {
+					} else if !diagnostic {
 						out.Config = candidate
 						stats := sub.SourceStats
 						sub = candidate.Subscriptions[index]
@@ -144,10 +179,18 @@ func (r *SubscriptionRefresher) Refresh(ctx context.Context, cfg Config, dialers
 					}
 				}
 				if code != "" && code != "unchanged" {
-					sub.LastError = code
+					if !diagnostic {
+						sub.LastError = code
+					}
 					continue
 				}
 				sub.recordSourceOK(pair.source, pair.dial < len(dialers), result.stats.elapsed)
+				if pair.dial < len(dialers) {
+					successfulTunnel[pair.source] = true
+				}
+				if diagnostic {
+					continue
+				}
 				result.code = code
 				if code == "unchanged" {
 					if unchanged == nil {
@@ -227,7 +270,11 @@ func fetchSubscriptionWithStats(ctx context.Context, sub Subscription, source st
 	resp, err := client.Do(req)
 	stats.answered = resp != nil
 	if err != nil {
-		stats.failure = subscriptionNetworkFailure(err)
+		if errors.Is(attempt.Err(), context.Canceled) {
+			stats.failure = "canceled"
+		} else {
+			stats.failure = subscriptionNetworkFailure(err)
+		}
 		return nil, "", "network"
 	}
 	defer resp.Body.Close()
@@ -256,7 +303,11 @@ func fetchSubscriptionWithStats(ctx context.Context, sub Subscription, source st
 	}
 	raw, err := io.ReadAll(io.LimitReader(resp.Body, limit+1))
 	if err != nil {
-		stats.failure = subscriptionNetworkFailure(err)
+		if errors.Is(attempt.Err(), context.Canceled) {
+			stats.failure = "canceled"
+		} else {
+			stats.failure = subscriptionNetworkFailure(err)
+		}
 		return nil, "", "network"
 	}
 	if int64(len(raw)) > limit {
