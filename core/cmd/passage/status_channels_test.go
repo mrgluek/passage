@@ -74,3 +74,23 @@ func TestChannelStability(t *testing.T) {
 		t.Fatal(got)
 	}
 }
+
+func TestStatusDetail(t *testing.T) {
+	tr := tr(table("en"))
+	if got, _ := channelLines(tr, tunnel.Status{}, time.Unix(2_000_000, 0), nil); got != "" {
+		t.Fatalf("no route yet: got %q, want empty", got)
+	}
+	lines := "Mail: berry"
+	for _, tc := range []struct{ state, lines, want string }{
+		{"working", lines, lines},
+		{"limited", lines, tr.f("h_reason_limited") + " " + lines},
+		{"starting", lines, ""},
+		{"problem", lines, ""},
+		{"ready", lines, ""},
+		{"working", "", ""},
+	} {
+		if got := statusDetail(tr, tunnel.Health{State: tc.state}, tc.lines); got != tc.want {
+			t.Errorf("%s %q: got %q, want %q", tc.state, tc.lines, got, tc.want)
+		}
+	}
+}

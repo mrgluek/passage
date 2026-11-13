@@ -372,7 +372,10 @@ func (a *App) trayState() trayState {
 	st := trayState{Lang: a.lang, Text: a.t, Running: a.settings.Running, Mode: a.mode(), Routes: a.routes(), My: a.settings.My != ""}
 	st.Tooltip = "Passage: " + a.t.f(a.trayTitleKey())
 	if a.tun != nil {
-		st.Tooltip += "\n" + a.channels.sample(a.t, a.tun.Status(0), time.Now())
+		s := a.tun.Status(0)
+		if detail := statusDetail(a.t, s.Health, a.channels.sample(a.t, s, time.Now())); detail != "" {
+			st.Tooltip += "\n" + detail
+		}
 	}
 	if a.updater.offer != nil {
 		st.Update = a.updater.offer.Version
@@ -484,7 +487,7 @@ func (a *App) view() view {
 			st.Events = st.Events[len(st.Events)-30:]
 		}
 		v.Line = oneLine(a.t, st)
-		v.Channels = a.channels.sample(a.t, st, time.Now())
+		v.Channels = statusDetail(a.t, st.Health, a.channels.sample(a.t, st, time.Now()))
 		v.Health = st.Health
 		full = fullStatus(a.t, st)
 		var conns int64

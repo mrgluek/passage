@@ -43,4 +43,18 @@ class StatusChannelsTest {
         assertEquals("Route: smart", sample("tunnel", 24))
         assertEquals("Route: tunnel", sample("tunnel", 25))
     }
+
+    @Test fun noRouteYetGivesNoLine() {
+        assertEquals("", StatusChannels.lines(emptyList(), "auto", "", "", en, now).text)
+    }
+
+    @Test fun detailShowsChannelsOnlyWhileWorking() {
+        val lines = "Mail: berry"
+        assertEquals(lines, HomeSetup.Plain.WORKING.detail("ok", lines))
+        assertEquals("backup $lines", HomeSetup.Plain.LIMITED.detail("backup", lines))
+        for (p in listOf(HomeSetup.Plain.CONNECTING, HomeSetup.Plain.SLOW, HomeSetup.Plain.NO_INTERNET, HomeSetup.Plain.READY, HomeSetup.Plain.OFF)) {
+            assertEquals(p.name, "reason", p.detail("reason", lines))
+        }
+        assertEquals("reason", HomeSetup.Plain.WORKING.detail("reason", ""))
+    }
 }

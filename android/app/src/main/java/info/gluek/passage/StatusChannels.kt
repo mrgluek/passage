@@ -28,7 +28,10 @@ object StatusChannels {
         val parts = listOf("relay" to labels.mail, "telegram" to labels.telegram, "other" to labels.other).mapNotNull { (kind, label) ->
             kinds[kind]?.let { "$label: ${it.joinToString("/")}" }
         }
-        return Lines(parts.joinToString(", ").ifEmpty { "${labels.shared}: ${route(mode, shared, "", via, labels)}" }, shown)
+        val text = parts.joinToString(", ").ifEmpty {
+            route(mode, shared, "", via, labels).takeIf { it.isNotEmpty() }?.let { "${labels.shared}: $it" }.orEmpty()
+        }
+        return Lines(text, shown)
     }
 
     class Display {

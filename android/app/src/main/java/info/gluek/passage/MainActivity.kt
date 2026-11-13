@@ -465,7 +465,8 @@ class MainActivity : ThemedActivity() {
         val error = PassageService.lastError != null
         val plain = HomeSetup.plain(active, error, settings.hasLink, healthState, healthReason)
         stateView.text = getString(R.string.status_title, getString(plain.title))
-        reasonView.text = if (active && channelLine.isNotEmpty()) channelLine else getString(plain.reason(settings.appSeen))
+        val reason = getString(plain.reason(settings.appSeen))
+        reasonView.text = if (active) plain.detail(reason, channelLine) else reason
         renderDot(HomeSetup.dotFor(plain, SystemClock.elapsedRealtime() < trafficUntil))
     }
 

@@ -15,8 +15,9 @@ object StatusText {
     }
 
     fun notification(c: Context, s: JSONObject?, appSeen: Boolean, fallbackRunning: Boolean, display: StatusChannels.Display = StatusChannels.Display()): Pair<String, String> {
-        val (title, reason) = notificationResources(s, appSeen, fallbackRunning)
-        return c.getString(R.string.status_title, c.getString(title)) to (s?.takeIf { it.optBoolean("running") }?.let { channels(c, it, display) } ?: c.getString(reason))
+        val plain = notificationPlain(s, fallbackRunning)
+        val channels = s?.takeIf { it.optBoolean("running") }?.let { channels(c, it, display) }.orEmpty()
+        return c.getString(R.string.status_title, c.getString(plain.title)) to plain.detail(c.getString(plain.reason(appSeen)), channels)
     }
 
     fun channels(c: Context, s: JSONObject, display: StatusChannels.Display): String {
@@ -32,15 +33,19 @@ object StatusText {
     }
 
     internal fun notificationResources(s: JSONObject?, appSeen: Boolean, fallbackRunning: Boolean): Pair<Int, Int> {
+        val plain = notificationPlain(s, fallbackRunning)
+        return plain.title to plain.reason(appSeen)
+    }
+
+    private fun notificationPlain(s: JSONObject?, fallbackRunning: Boolean): HomeSetup.Plain {
         val health = s?.optJSONObject("health")
-        val plain = HomeSetup.plain(
+        return HomeSetup.plain(
             running = s?.optBoolean("running", fallbackRunning) ?: fallbackRunning,
             startFailed = false,
             hasLink = true,
             health = health?.optString("state").orEmpty(),
             reason = health?.optString("reason").orEmpty(),
         )
-        return plain.title to plain.reason(appSeen)
     }
 
     /**

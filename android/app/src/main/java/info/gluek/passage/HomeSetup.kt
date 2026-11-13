@@ -32,6 +32,14 @@ object HomeSetup {
 
         fun reason(appSeen: Boolean): Int =
             if (this == READY && appSeen) R.string.home_working_reason else reason
+
+        /** The line under the title: the channels while Passage works, else the reason. */
+        fun detail(reasonText: String, channels: String): String = when {
+            channels.isEmpty() -> reasonText
+            this == WORKING -> channels
+            this == LIMITED -> "$reasonText $channels"
+            else -> reasonText
+        }
     }
 
     fun plain(running: Boolean, startFailed: Boolean, hasLink: Boolean, health: String, reason: String): Plain = when {

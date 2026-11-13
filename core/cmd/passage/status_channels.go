@@ -56,7 +56,11 @@ func channelLines(t tr, s tunnel.Status, now time.Time, previous map[string]time
 		parts = append(parts, t.f(key, strings.Join(kinds[kind], "/")))
 	}
 	if len(parts) == 0 {
-		return t.f("notification_route", channelRoute(t, s.Mode, s.Route, "", cmp.Or(s.Via, onlyType(s)))), shown
+		route := channelRoute(t, s.Mode, s.Route, "", cmp.Or(s.Via, onlyType(s)))
+		if route == "" {
+			return "", shown
+		}
+		return t.f("notification_route", route), shown
 	}
 	return strings.Join(parts, ", "), shown
 }
@@ -87,4 +91,19 @@ func (d *channelDisplay) sample(t tr, s tunnel.Status, now time.Time) string {
 		d.value = next
 	}
 	return d.value
+}
+
+// statusDetail is the line under the status title: the channels while
+// Passage works, nothing otherwise, so the state's own reason shows.
+func statusDetail(t tr, h tunnel.Health, lines string) string {
+	if lines == "" {
+		return ""
+	}
+	switch h.State {
+	case "working":
+		return lines
+	case "limited":
+		return t.f("h_reason_limited") + " " + lines
+	}
+	return ""
 }
