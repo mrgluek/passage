@@ -96,12 +96,13 @@ type desktop struct {
 	app *App
 	dir string
 
-	mu      sync.Mutex
-	shown   *trayState // what the menu was built for
-	toggle  *systray.MenuItem
-	routes  map[string]*systray.MenuItem
-	view    webview2.WebView
-	opening bool
+	mu       sync.Mutex
+	menuDone chan struct{}
+	shown    *trayState // what the menu was built for
+	toggle   *systray.MenuItem
+	routes   map[string]*systray.MenuItem
+	view     webview2.WebView
+	opening  bool
 }
 
 // update redraws the icon and tooltip, and rebuilds the menu when the
@@ -137,20 +138,26 @@ func (d *desktop) update() {
 
 func (d *desktop) buildMenu(st trayState) {
 	t := d.app.t
+	if d.menuDone != nil {
+		close(d.menuDone)
+	}
+	d.menuDone = make(chan struct{})
+	done := d.menuDone
+	onMenuClick := func(item *systray.MenuItem, f func()) { go listenMenu(done, item.ClickedCh, f) }
 	systray.ResetMenu()
-	onClick(systray.AddMenuItem(t.f("tray_open"), ""), d.openWindow)
+	onMenuClick(systray.AddMenuItem(t.f("tray_open"), ""), d.openWindow)
 	if st.Update != "" {
-		onClick(systray.AddMenuItem(t.f("update_available", st.Update), ""), d.openWindow)
+		onMenuClick(systray.AddMenuItem(t.f("update_available", st.Update), ""), d.openWindow)
 	}
 	systray.AddSeparator()
 	d.toggle = systray.AddMenuItem(t.f("action_start"), "")
-	onClick(d.toggle, func() { d.app.setRunning(!d.app.trayState().Running) })
+	onMenuClick(d.toggle, func() { d.app.setRunning(!d.app.trayState().Running) })
 	route := systray.AddMenuItem(t.f("route_label"), "")
 	d.routes = map[string]*systray.MenuItem{}
 	add := func(mode, label string) {
 		item := route.AddSubMenuItemCheckbox(label, "", false)
 		d.routes[mode] = item
-		onClick(item, func() { d.app.setMode(mode) })
+		onMenuClick(item, func() { d.app.setMode(mode) })
 	}
 	add(tunnel.ModeAuto, t.f("mode_auto"))
 	if st.My {
@@ -161,16 +168,7 @@ func (d *desktop) buildMenu(st trayState) {
 	}
 	add(tunnel.ModeOff, t.f("mode_off"))
 	systray.AddSeparator()
-	onClick(systray.AddMenuItem(t.f("tray_quit"), ""), systray.Quit)
-}
-
-// onClick runs f for each click until the item is removed.
-func onClick(item *systray.MenuItem, f func()) {
-	go func() {
-		for range item.ClickedCh {
-			f()
-		}
-	}()
+	onMenuClick(systray.AddMenuItem(t.f("tray_quit"), ""), systray.Quit)
 }
 
 // openWindow shows the window, creating it on its own thread: closing it
