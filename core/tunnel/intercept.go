@@ -112,6 +112,9 @@ func parseResponseA(b []byte, id uint16) ([]net.IP, error) {
 			return nil, err
 		}
 		off += 4
+		if off > len(b) {
+			return nil, errors.New("truncated question")
+		}
 	}
 	var ips []net.IP
 	for i := 0; i < an; i++ {
@@ -145,6 +148,9 @@ func skipName(b []byte, off int) (int, error) {
 		case l == 0:
 			return off + 1, nil
 		case l&0xC0 == 0xC0: // compression pointer ends the name here
+			if off+1 >= len(b) {
+				return 0, errors.New("truncated pointer")
+			}
 			return off + 2, nil
 		default:
 			off += 1 + l
