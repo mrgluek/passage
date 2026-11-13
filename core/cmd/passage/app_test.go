@@ -28,11 +28,11 @@ func TestTrayState(t *testing.T) {
 			t.Fatalf("tray state = %+v, want title %q", st, title)
 		}
 	}
-	check("Add your link")
+	check("add your link")
 	a.settings.Running = true
 	check("connecting…")
 	a.lastErr = "start failed: test error"
-	check("Couldn't turn on")
+	check("couldn't turn on")
 	a.lastErr = ""
 	a.linkCfg.Subscriptions = []tunnel.Subscription{{ID: "example"}}
 	check("connecting…")
@@ -44,25 +44,25 @@ func TestTrayState(t *testing.T) {
 	a.tun = router
 	check("connecting…")
 	a.settings.Running = false
-	check("Proxy is off")
+	check("proxy is off")
 	a.t = table("ru")
-	check("Прокси выключен")
+	check("прокси выключен")
 }
 
 func TestTrayHealthTitle(t *testing.T) {
 	for _, tt := range []struct {
 		state, reason, title string
 	}{
-		{"", "", "Proxy is on"},
-		{"ready", "waiting_app", "Proxy is on"},
+		{"", "", "proxy is on"},
+		{"ready", "waiting_app", "proxy is on"},
 		{"starting", "", "connecting…"},
 		{"working", "", "working"},
 		{"limited", "reserve", "working"},
-		{"problem", "no_internet", "No internet"},
-		{"problem", "server_down", "Chat server isn't answering"},
-		{"problem", "no_route", "Can't connect"},
-		{"problem", "slow", "Still connecting"},
-		{"problem", "unknown", "Still connecting"},
+		{"problem", "no_internet", "no internet"},
+		{"problem", "server_down", "chat server isn't answering"},
+		{"problem", "no_route", "can't connect"},
+		{"problem", "slow", "still connecting"},
+		{"problem", "unknown", "still connecting"},
 	} {
 		t.Run(tt.state+"/"+tt.reason, func(t *testing.T) {
 			h := tunnel.Health{State: tt.state, Reason: tt.reason}
