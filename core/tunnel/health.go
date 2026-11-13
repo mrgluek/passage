@@ -69,10 +69,10 @@ func health(s Status, now time.Time) Health {
 		return Health{State: "limited", Reason: "reserve"}
 	case evidence:
 		return Health{State: "working"}
-	case age < healthStarting:
-		return Health{State: "starting"}
 	case !anyActivity && conns == 0 && fails == 0:
 		return Health{State: "ready", Reason: "waiting_app"}
+	case age < healthStarting:
+		return Health{State: "starting"}
 	case s.State == "relays-down":
 		return Health{State: "problem", Reason: "server_down"}
 	}

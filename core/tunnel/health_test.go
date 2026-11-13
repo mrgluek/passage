@@ -32,7 +32,7 @@ func TestHealth(t *testing.T) {
 			"a": {LastProbe: *ago(5*time.Minute + time.Second), LastResult: probeResult{RelayOK: 1}}}}, "working", ""},
 		{"quiet probe past ten minutes", Status{Started: now.Add(-time.Hour), Groups: map[string]GroupStatus{
 			"a": {LastProbe: *ago(11 * time.Minute), LastResult: probeResult{RelayOK: 1}}}}, "working", ""},
-		{"warmup", Status{Started: now.Add(-30 * time.Second)}, "starting", ""},
+		{"nothing used during warmup", Status{Started: now.Add(-30 * time.Second)}, "ready", "waiting_app"},
 		{"nothing used yet", Status{Started: now.Add(-100 * time.Second)}, "ready", "waiting_app"},
 		{"old failed dials", Status{Started: now.Add(-time.Hour), Mode: ModeAlways,
 			Stats: map[string]routeStats{"tunnel": {Fails: 3}}, Groups: map[string]GroupStatus{
