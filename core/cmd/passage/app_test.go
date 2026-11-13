@@ -42,7 +42,7 @@ func TestTrayState(t *testing.T) {
 	}
 	t.Cleanup(router.Close)
 	a.tun = router
-	check("proxy is on")
+	check("connecting…")
 	a.settings.Running = false
 	check("proxy is off")
 	a.t = table("ru")

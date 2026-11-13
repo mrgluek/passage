@@ -304,4 +304,8 @@
     <string name="channel_other">Other</string>
     <string name="channel_shared">Route</string>
     <string name="channel_smart">smart</string>
+    <string name="channel_tunnel">via %1$s tunnel (%2$s)</string>
+    <string name="channel_tunnel_type">via %1$s tunnel</string>
+    <string name="channel_tunnel_id">via tunnel (%1$s)</string>
+    <string name="channel_tunnel_plain">via tunnel</string>
 </resources>

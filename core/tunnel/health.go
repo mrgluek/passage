@@ -13,6 +13,7 @@ type Health struct {
 const (
 	healthRecent    = 5 * time.Minute
 	healthStarting  = 90 * time.Second
+	healthQuiet     = 5 * time.Second // an unused proxy shows "starting" only this long
 	healthSettle    = 120 * time.Second
 	healthSlowStart = 180 * time.Second
 )
@@ -69,7 +70,7 @@ func health(s Status, now time.Time) Health {
 		return Health{State: "limited", Reason: "reserve"}
 	case evidence:
 		return Health{State: "working"}
-	case !anyActivity && conns == 0 && fails == 0:
+	case !anyActivity && conns == 0 && fails == 0 && age >= healthQuiet:
 		return Health{State: "ready", Reason: "waiting_app"}
 	case age < healthStarting:
 		return Health{State: "starting"}

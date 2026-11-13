@@ -28,7 +28,8 @@ object StatusText {
             StatusChannels.Group(name, g.optString("kind"), g.optString("route"), g.optString("route_id"), g.optString("via"), stamp, (g.optJSONArray("targets")?.length() ?: 0) > 0)
         } }.toList()
         val labels = StatusChannels.Labels(c.getString(R.string.channel_mail), c.getString(R.string.channel_telegram), c.getString(R.string.channel_other),
-            c.getString(R.string.channel_shared), c.getString(R.string.route_direct), c.getString(R.string.channel_smart))
+            c.getString(R.string.channel_shared), c.getString(R.string.route_direct), c.getString(R.string.channel_smart),
+            listOf(R.string.channel_tunnel, R.string.channel_tunnel_type, R.string.channel_tunnel_id, R.string.channel_tunnel_plain).map { c.getString(it) })
         return display.sample(list, s.optString("mode"), s.optString("route"), s.optString("via").ifEmpty { onlyType(s) }, labels, System.currentTimeMillis())
     }
 

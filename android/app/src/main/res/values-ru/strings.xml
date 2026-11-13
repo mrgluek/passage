@@ -311,4 +311,8 @@
     <string name="channel_other">Другое</string>
     <string name="channel_shared">Маршрут</string>
     <string name="channel_smart">smart (с подстройкой)</string>
+    <string name="channel_tunnel">через %1$s-туннель (%2$s)</string>
+    <string name="channel_tunnel_type">через %1$s-туннель</string>
+    <string name="channel_tunnel_id">через туннель (%1$s)</string>
+    <string name="channel_tunnel_plain">через туннель</string>
 </resources>

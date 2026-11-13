@@ -73,9 +73,20 @@ func channelRoute(t tr, mode, route, id, via string) string {
 		return t.f("channel_smart")
 	}
 	if pinned, ok := strings.CutPrefix(mode, "route:"); ok {
-		return pinned
+		id = pinned
 	}
-	return cmp.Or(id, via, route)
+	if route == "" && id == "" && via == "" {
+		return ""
+	}
+	switch {
+	case id != "" && via != "":
+		return t.f("channel_tunnel", via, id)
+	case via != "":
+		return t.f("channel_tunnel_type", via)
+	case id != "":
+		return t.f("channel_tunnel_id", id)
+	}
+	return t.f("channel_tunnel_plain")
 }
 
 func (d *channelDisplay) sample(t tr, s tunnel.Status, now time.Time) string {
