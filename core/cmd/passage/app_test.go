@@ -30,7 +30,7 @@ func TestTrayState(t *testing.T) {
 	}
 	check("add your link")
 	a.settings.Running = true
-	check("connecting…")
+	check("add your link")
 	a.lastErr = "start failed: test error"
 	check("couldn't turn on")
 	a.lastErr = ""

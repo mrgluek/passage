@@ -445,13 +445,13 @@ function renderHome(v) {
   lastTraffic = v.traffic;
   const flowing = running && Date.now() < flowUntil;
   const dot = $("dot");
-  const h = running && v.health && v.health.state ? v.health : null;
+  const h = running && hasLink && v.health && v.health.state ? v.health : null;
   const hs = h ? h.state : "", hr = h ? h.reason : "";
   let tone = v.error || (hs === "problem" && hr === "no_route") ? " error" : (hs === "starting" || hs === "problem") ? " warn" : running ? " on" : "";
   dot.className = "dot" + tone + (flowing && !tone.includes("error") && !tone.includes("warn") ? " flow" : "");
   let title, reason, main = null, second = null;
   if (v.error) { title = t("h_title_error"); reason = ""; }
-  else if (!running && !hasLink) { title = t("h_title_nolink"); reason = t("h_reason_nolink"); }
+  else if (!hasLink) { title = t("h_title_nolink"); reason = t("h_reason_nolink"); }
   else if (!running) { title = t("h_title_off"); reason = t("h_reason_off"); }
   else if (hs === "starting") { title = t("h_title_connecting"); reason = t("h_reason_connecting"); }
   else if (hs === "problem") { title = t("h_title_" + hr); reason = t("h_reason_" + hr); }

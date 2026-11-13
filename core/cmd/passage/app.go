@@ -387,7 +387,7 @@ func (a *App) trayTitleKey() string {
 	switch {
 	case a.lastErr != "":
 		return "h_title_error"
-	case !a.settings.Running && !a.hasLink():
+	case !a.hasLink():
 		return "h_title_nolink"
 	case !a.settings.Running:
 		return "h_title_off"
