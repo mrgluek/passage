@@ -119,9 +119,11 @@ jobs:
           go-version-file: core/go.mod
           cache-dependency-path: core/go.sum
 
-      - name: Go test
+      - name: Go checks
         working-directory: ./core
-        run: go test ./...
+        run: |
+          go vet ./tunnel ./update ./internal/... ./cmd/passage-cli ./cmd/passage ./cmd/passage-http-exit ./cmd/passage-turn-exit ./cmd/passage-update-manifest
+          go test ./...
 
       - name: Set up Rust
         run: |

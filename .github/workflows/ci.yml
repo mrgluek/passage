@@ -42,7 +42,7 @@ jobs:
       - name: Go vet and test
         working-directory: ./core
         run: |
-          go vet ./tunnel ./update ./internal/... ./cmd/passage-cli ./cmd/passage ./cmd/passage-http-exit ./cmd/passage-update-manifest
+          go vet ./tunnel ./update ./internal/... ./cmd/passage-cli ./cmd/passage ./cmd/passage-http-exit ./cmd/passage-turn-exit ./cmd/passage-update-manifest
           go test -race ./...
 
       - name: Set up Rust
@@ -78,7 +78,7 @@ jobs:
       - name: Go vet and test
         working-directory: ./core
         run: |
-          go vet ./tunnel ./update ./internal/... ./cmd/passage-cli ./cmd/passage ./cmd/passage-http-exit ./cmd/passage-update-manifest
+          go vet ./tunnel ./update ./internal/... ./cmd/passage-cli ./cmd/passage ./cmd/passage-http-exit ./cmd/passage-turn-exit ./cmd/passage-update-manifest
           go test ./...
 
       - name: Show the network state read on Windows
@@ -135,8 +135,8 @@ jobs:
       - name: Go vet and test
         working-directory: ./core
         run: |
-          go vet ./tunnel ./update ./internal/... ./cmd/passage-cli ./cmd/passage ./cmd/passage-http-exit ./cmd/passage-update-manifest
-          GOOS=windows go vet ./tunnel ./update ./internal/... ./cmd/passage-cli ./cmd/passage ./cmd/passage-http-exit ./cmd/passage-update-manifest
+          go vet ./tunnel ./update ./internal/... ./cmd/passage-cli ./cmd/passage ./cmd/passage-http-exit ./cmd/passage-turn-exit ./cmd/passage-update-manifest
+          GOOS=windows go vet ./tunnel ./update ./internal/... ./cmd/passage-cli ./cmd/passage ./cmd/passage-http-exit ./cmd/passage-turn-exit ./cmd/passage-update-manifest
           go test -race ./...
 
 

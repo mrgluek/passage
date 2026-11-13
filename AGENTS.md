@@ -42,7 +42,7 @@ other apps on the phone. It has two parts:
 Go router (from `core/`; `cmd/libpassage` builds for Android only):
 
 ```bash
-go vet ./tunnel ./update ./internal/... ./cmd/passage-cli ./cmd/passage ./cmd/passage-http-exit ./cmd/passage-update-manifest
+go vet ./tunnel ./update ./internal/... ./cmd/passage-cli ./cmd/passage ./cmd/passage-http-exit ./cmd/passage-turn-exit ./cmd/passage-update-manifest
 go test -race ./...
 ```
 
