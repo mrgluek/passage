@@ -219,8 +219,8 @@
     <string name="sub_error_collision">Некоторые имена маршрутов уже заняты</string>
     <string name="sub_error_required">Обновите Passage для загрузки маршрутов</string>
     <string name="sub_closed">Закрыта владельцем</string>
-    <string name="saved_routes_empty">Маршрутов пока нет. Вставьте ссылку ниже, чтобы добавить маршруты.</string>
-    <string name="subscriptions_empty">Подписок нет. Ссылка-подписка сама обновляет маршруты: вставьте её ниже, и Passage загрузит актуальные маршруты и будет обновлять их в фоне.</string>
+    <string name="saved_routes_empty">Маршрутов пока нет. Вставьте ссылку выше, чтобы добавить маршруты.</string>
+    <string name="subscriptions_empty">Подписок нет. Ссылка-подписка сама обновляет маршруты: вставьте её выше, и Passage загрузит актуальные маршруты и будет обновлять их в фоне.</string>
     <string name="link_hint">Вставьте ссылку Passage, чтобы добавить или заменить маршруты</string>
     <string name="home_setup_title">добавьте ссылку</string>
     <string name="home_setup_reason">Чтобы Passage заработал, нужна ссылка, которую вам прислали.</string>

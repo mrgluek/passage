@@ -52,8 +52,8 @@ func TestSettingsEmptyStrings(t *testing.T) {
 	for _, tc := range []struct {
 		lang, routes, subscriptions, link string
 	}{
-		{"en", "No routes yet. Paste a link below to add routes.", "No subscriptions. A subscription link keeps your routes up to date by itself: paste it below, and Passage loads the current routes and refreshes them in the background.", "Paste a Passage link to add or replace routes"},
-		{"ru", "Маршрутов пока нет. Вставьте ссылку ниже, чтобы добавить маршруты.", "Подписок нет. Ссылка-подписка сама обновляет маршруты: вставьте её ниже, и Passage загрузит актуальные маршруты и будет обновлять их в фоне.", "Вставьте ссылку Passage, чтобы добавить или заменить маршруты"},
+		{"en", "No routes yet. Paste a link above to add routes.", "No subscriptions. A subscription link keeps your routes up to date by itself: paste it above, and Passage loads the current routes and refreshes them in the background.", "Paste a Passage link to add or replace routes"},
+		{"ru", "Маршрутов пока нет. Вставьте ссылку выше, чтобы добавить маршруты.", "Подписок нет. Ссылка-подписка сама обновляет маршруты: вставьте её выше, и Passage загрузит актуальные маршруты и будет обновлять их в фоне.", "Вставьте ссылку Passage, чтобы добавить или заменить маршруты"},
 	} {
 		tr := tr(table(tc.lang))
 		for _, check := range []struct{ key, want string }{

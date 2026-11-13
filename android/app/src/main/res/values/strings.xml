@@ -213,8 +213,8 @@
     <string name="sub_error_collision">Some route IDs are already in use</string>
     <string name="sub_error_required">Update Passage to load these routes</string>
     <string name="sub_closed">Closed by its owner</string>
-    <string name="saved_routes_empty">No routes yet. Paste a link below to add routes.</string>
-    <string name="subscriptions_empty">No subscriptions. A subscription link keeps your routes up to date by itself: paste it below, and Passage loads the current routes and refreshes them in the background.</string>
+    <string name="saved_routes_empty">No routes yet. Paste a link above to add routes.</string>
+    <string name="subscriptions_empty">No subscriptions. A subscription link keeps your routes up to date by itself: paste it above, and Passage loads the current routes and refreshes them in the background.</string>
     <string name="home_setup_title">add your link</string>
     <string name="home_setup_reason">Passage needs the link you were sent to start working.</string>
     <string name="home_off_title">proxy is off</string>

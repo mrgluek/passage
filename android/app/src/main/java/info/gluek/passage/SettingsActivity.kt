@@ -191,6 +191,34 @@ class SettingsActivity : ThemedActivity() {
     private fun buildUi(): View {
         val col = Ui.column(this)
 
+        val linkCard = Ui.card(this)
+        col.addView(linkCard)
+        linkHeading = Ui.heading(this, getString(R.string.link_label)).apply { setPadding(0, 0, 0, Ui.dp(this@SettingsActivity, 8)) }
+        linkCard.addView(linkHeading)
+        linkInfo = Ui.hint(this, "")
+        linkCard.addView(linkInfo)
+        changeButton = Ui.outlinedButton(this, getString(R.string.change_link)) { setLinkOpen(true) }
+        linkCard.addView(spaced(changeButton))
+
+        linkBox = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        linkCard.addView(linkBox)
+        linkEdit = EditText(this).apply {
+            id = R.id.link_edit
+            isSaveEnabled = false
+            hint = getString(R.string.link_hint)
+            Ui.dimHint(this)
+            inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_MULTI_LINE or
+                InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS or InputType.TYPE_TEXT_VARIATION_URI
+            minLines = 2
+            maxLines = 4
+            textSize = 13f
+        }
+        linkBox.addView(linkEdit)
+        linkBox.addView(spaced(Ui.primaryButton(this, getString(R.string.save)) { onSave() }))
+
+        subscriptionsSection = Ui.card(this)
+        col.addView(subscriptionsSection)
+
         val routeCard = Ui.card(this)
         col.addView(routeCard)
         routeCard.addView(Ui.heading(this, getString(R.string.route_label)).apply { setPadding(0, 0, 0, Ui.dp(this@SettingsActivity, 8)) })
@@ -286,34 +314,6 @@ class SettingsActivity : ThemedActivity() {
             setPadding(0, Ui.dp(this@SettingsActivity, 6), 0, 0)
         }
         savedRoutesSection.addView(routesEditHint)
-
-        val linkCard = Ui.card(this)
-        col.addView(linkCard)
-        linkHeading = Ui.heading(this, getString(R.string.link_label)).apply { setPadding(0, 0, 0, Ui.dp(this@SettingsActivity, 8)) }
-        linkCard.addView(linkHeading)
-        linkInfo = Ui.hint(this, "")
-        linkCard.addView(linkInfo)
-        changeButton = Ui.outlinedButton(this, getString(R.string.change_link)) { setLinkOpen(true) }
-        linkCard.addView(spaced(changeButton))
-
-        linkBox = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
-        linkCard.addView(linkBox)
-        linkEdit = EditText(this).apply {
-            id = R.id.link_edit
-            isSaveEnabled = false
-            hint = getString(R.string.link_hint)
-            Ui.dimHint(this)
-            inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_MULTI_LINE or
-                InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS or InputType.TYPE_TEXT_VARIATION_URI
-            minLines = 2
-            maxLines = 4
-            textSize = 13f
-        }
-        linkBox.addView(linkEdit)
-        linkBox.addView(spaced(Ui.primaryButton(this, getString(R.string.save)) { onSave() }))
-
-        subscriptionsSection = Ui.card(this)
-        col.addView(subscriptionsSection)
 
         val accessCard = Ui.card(this)
         col.addView(accessCard)
