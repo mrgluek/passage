@@ -459,3 +459,32 @@ func TestHTTPSilentDownloadEndsSession(t *testing.T) {
 		t.Fatal("silent session stayed up")
 	}
 }
+
+func TestHTTPReceivedCountsWireBytes(t *testing.T) {
+	for _, override := range []bool{false, true} {
+		t.Run(strconv.FormatBool(override), func(t *testing.T) {
+			client, _, server := httpFixture(t)
+			if override {
+				client.Close()
+				u, _ := url.Parse(server.URL)
+				var err error
+				client, err = NewHTTPClient(links.HTTPParams{Endpoint: "https://example.org:" + u.Port() + "/passage", Key: wssTestKey, DialIP: u.Hostname()})
+				if err != nil {
+					t.Fatal(err)
+				}
+				defer client.Close()
+				client.httpClient.Transport.(*http.Transport).TLSClientConfig = server.Client().Transport.(*http.Transport).TLSClientConfig.Clone()
+				client.httpClient.Transport.(*http.Transport).TLSClientConfig.ServerName = u.Hostname()
+			}
+			conn := dialTest(t, client, "mail.example.org:443")
+			defer conn.Close()
+			before := client.received()
+			if err := wssRoundTrip(conn, []byte("hello")); err != nil {
+				t.Fatal(err)
+			}
+			if before == 0 || client.received() <= before {
+				t.Fatal("HTTP wire reads were not counted")
+			}
+		})
+	}
+}

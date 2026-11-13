@@ -256,3 +256,22 @@ func TestHTTPServerUsesDialIP(t *testing.T) {
 		t.Fatalf("got %+v", s)
 	}
 }
+
+func TestHTTPServerTLSName(t *testing.T) {
+	for _, tc := range []struct{ ip, sni, addr, name string }{
+		{"", "", "example.org:443", "example.org"},
+		{"192.0.2.1", "", "192.0.2.1:443", "example.org"},
+		{"", "tls.example.org", "example.org:443", "tls.example.org"},
+		{"192.0.2.1", "tls.example.org", "192.0.2.1:443", "tls.example.org"},
+	} {
+		client, err := NewHTTPClient(links.HTTPParams{Endpoint: "https://example.org/passage", Key: wssTestKey})
+		if err != nil {
+			t.Fatal(err)
+		}
+		s := httpServer(links.HTTPParams{Endpoint: "https://example.org/passage", DialIP: tc.ip, SNI: tc.sni}, client)
+		client.Close()
+		if s.addr != tc.addr || s.name != tc.name {
+			t.Fatalf("got %s %s, want %s %s", s.addr, s.name, tc.addr, tc.name)
+		}
+	}
+}
