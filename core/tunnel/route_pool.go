@@ -282,6 +282,10 @@ func (p *routePool) dialContext(ctx context.Context, network, address string, ba
 				p.mu.Unlock()
 				if !allowed {
 					r.conn.Close()
+					if canStart() {
+						startNext()
+						stagger.Reset(routeStagger)
+					}
 					continue
 				}
 				stop()
