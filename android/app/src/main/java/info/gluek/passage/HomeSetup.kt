@@ -67,7 +67,6 @@ object HomeSetup {
 
     enum class AppTab(val label: Int) {
         DELTA_CHAT(R.string.home_tab_delta),
-        VELTA(R.string.home_tab_velta),
         TELEGRAM(R.string.home_tab_telegram),
         OTHER(R.string.home_tab_other),
     }
@@ -75,14 +74,15 @@ object HomeSetup {
     const val DELTA_CHAT_DOWNLOAD = "https://download.delta.chat"
     const val VELTA_DOWNLOAD = "https://velta.cc/#download"
 
-    data class ConnectContent(val instruction: Int?, val action: Int?, val clipboard: String?, val open: String?, val download: String?)
+    data class ConnectContent(val instruction: Int?, val action: Int?, val clipboard: String?, val open: String?, val download: String?, val secondary: ConnectContent? = null)
 
     fun connect(tab: AppTab, socksLink: String, telegramLink: String, veltaLink: String): ConnectContent = when (tab) {
-        AppTab.DELTA_CHAT -> ConnectContent(R.string.home_delta_how, R.string.copy_proxy_link, socksLink, null, DELTA_CHAT_DOWNLOAD)
-        AppTab.VELTA -> ConnectContent(R.string.home_velta_how, R.string.home_velta_open, veltaLink, veltaLink, VELTA_DOWNLOAD)
+        AppTab.DELTA_CHAT -> ConnectContent(R.string.home_delta_how, R.string.copy_proxy_link, socksLink, null, DELTA_CHAT_DOWNLOAD, velta(veltaLink))
         AppTab.TELEGRAM -> ConnectContent(R.string.home_telegram_how, R.string.home_telegram_open, telegramLink, telegramLink, null)
         AppTab.OTHER -> ConnectContent(R.string.home_other_how, null, null, null, null)
     }
+
+    private fun velta(link: String) = ConnectContent(R.string.home_velta_how, R.string.home_velta_open, link, link, VELTA_DOWNLOAD)
 
     fun isCredentialLink(link: String): Boolean = when (link.substringBefore("://")) {
         "socks5" -> '@' in link.substringAfter("://").substringBefore('/')
@@ -105,7 +105,7 @@ object HomeSetup {
         saved ?: (hasLink && wasRunning)
 
     fun appTabColumns(fontScale: Float, availableWidth: Int, minimumLabelWidth: Int): Int =
-        if (fontScale > 1.2f || minimumLabelWidth * 4 > availableWidth) 2 else 4
+        if (fontScale > 1.2f || minimumLabelWidth * AppTab.entries.size > availableWidth) 2 else AppTab.entries.size
 
     fun appTabsVisible(connected: Boolean, expanded: Boolean): Boolean = !connected || expanded
 

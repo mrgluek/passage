@@ -17,6 +17,7 @@ import android.view.Gravity
 import android.view.Menu
 import android.view.MenuItem
 import android.view.View
+import android.widget.Switch
 import android.widget.Button
 import android.widget.LinearLayout
 import android.widget.TextView
@@ -241,23 +242,40 @@ class MainActivity : ThemedActivity() {
             }
             setup.addView(tabContent)
             val content = HomeSetup.connect(appTab, settings.socksLink(), settings.tgLink(), settings.veltaLink())
-            content.instruction?.let { instruction ->
-                tabContent.addView(Ui.hint(this, getString(instruction)))
-            }
-            content.action?.let { action ->
-                tabContent.addView(Ui.outlinedButton(this, getString(action)) {
-                    content.clipboard?.let { Ui.copy(this, "Passage proxy", it, getString(R.string.proxy_link_copied), sensitive = HomeSetup.isCredentialLink(it)) }
-                    content.open?.let { openProxyLink(it, getString(action)) }
-                }.apply {
-                    layoutParams = LinearLayout.LayoutParams(-1, -2).apply { topMargin = Ui.dp(this@MainActivity, 12) }
-                })
-            }
-            content.download?.let { url ->
-                tabContent.addView(Ui.downloadLine(this, getString(R.string.home_download), url).apply {
-                    setPadding(0, Ui.dp(this@MainActivity, 10), 0, 0)
-                })
+            for (block in listOfNotNull(content, content.secondary)) {
+                block.instruction?.takeIf { appTab != HomeSetup.AppTab.OTHER }?.let { instruction ->
+                    tabContent.addView(Ui.hint(this, getString(instruction)))
+                }
+                block.action?.let { action ->
+                    tabContent.addView(Ui.outlinedButton(this, getString(action)) {
+                        block.clipboard?.let { Ui.copy(this, "Passage proxy", it, getString(R.string.proxy_link_copied), sensitive = HomeSetup.isCredentialLink(it)) }
+                        block.open?.let { openProxyLink(it, getString(action)) }
+                    }.apply {
+                        layoutParams = LinearLayout.LayoutParams(-1, -2).apply { topMargin = Ui.dp(this@MainActivity, 12) }
+                    })
+                }
+                block.download?.let { url ->
+                    tabContent.addView(Ui.downloadLine(this, getString(R.string.home_download), url).apply {
+                        setPadding(0, Ui.dp(this@MainActivity, 10), 0, 0)
+                    })
+                }
             }
             if (appTab == HomeSetup.AppTab.OTHER) {
+                tabContent.addView(Ui.hint(this, getString(R.string.home_molly_how)))
+                tabContent.addView(Ui.valueBlock(this, listOf(
+                    getString(R.string.proxy_host) to "localhost",
+                    getString(R.string.proxy_port) to settings.port.toString()
+                ), null))
+                tabContent.addView(Switch(this).apply {
+                    text = getString(R.string.allow_no_password)
+                    isChecked = !settings.auth
+                    setOnCheckedChangeListener { _, on ->
+                        settings.setAuthentication(this@MainActivity, !on)
+                        renderSetup()
+                    }
+                })
+                tabContent.addView(Ui.hint(this, getString(R.string.allow_no_password_help)))
+                tabContent.addView(Ui.hint(this, getString(R.string.home_other_how)))
                 val rows = mutableListOf(getString(R.string.proxy_host) to Settings.HOST, getString(R.string.proxy_port) to settings.port.toString())
                 if (settings.auth) rows += getString(R.string.proxy_user) to settings.user
                 tabContent.addView(Ui.valueBlock(this, rows, if (settings.auth) null else getString(R.string.proxy_no_password)).apply {
@@ -464,7 +482,7 @@ class MainActivity : ThemedActivity() {
         val active = PassageService.active
         val error = PassageService.lastError != null
         val plain = HomeSetup.plain(active, error, settings.hasLink, healthState, healthReason)
-        stateView.text = getString(R.string.status_title, getString(plain.title))
+        stateView.text = getString(plain.title)
         val reason = getString(plain.reason(settings.appSeen))
         reasonView.text = if (active) plain.detail(reason, channelLine) else reason
         renderDot(HomeSetup.dotFor(plain, SystemClock.elapsedRealtime() < trafficUntil))

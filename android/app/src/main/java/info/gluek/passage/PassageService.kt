@@ -392,7 +392,7 @@ class PassageService : Service() {
     private fun goForeground() {
         val localized = AppLanguage.localizedContext(this)
         val connecting = HomeSetup.Plain.CONNECTING
-        val n = buildNotification(localized.getString(R.string.status_title, localized.getString(connecting.title)), localized.getString(connecting.reason(false)))
+        val n = buildNotification(localized.getString(connecting.title), localized.getString(connecting.reason(false)))
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
             startForeground(NOTIFICATION_ID, n, ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE)
         } else {

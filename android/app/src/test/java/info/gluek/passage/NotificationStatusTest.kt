@@ -1,5 +1,8 @@
 package info.gluek.passage
 
+import java.io.File
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
 import org.junit.Test
@@ -52,5 +55,14 @@ class NotificationStatusTest {
             R.string.home_off_title to R.string.home_off_reason,
             StatusText.notificationResources(null, appSeen = false, fallbackRunning = false),
         )
+    }
+    @Test fun notificationAndPublicVersionShareTheStandaloneTitle() {
+        val status = File("src/main/java/info/gluek/passage/StatusText.kt").readText()
+        val service = File("src/main/java/info/gluek/passage/PassageService.kt").readText()
+        assertTrue(status.contains("return c.getString(plain.title) to"))
+        assertFalse(status.contains("R.string.status_title"))
+        assertFalse(service.contains("R.string.status_title"))
+        assertEquals(2, Regex("setContentTitle\\(title\\)").findAll(service).count())
+        assertTrue(service.contains(".setPublicVersion("))
     }
 }

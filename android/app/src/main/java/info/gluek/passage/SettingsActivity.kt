@@ -322,8 +322,7 @@ class SettingsActivity : ThemedActivity() {
             text = getString(R.string.auth_switch)
             isChecked = settings.auth
             setOnCheckedChangeListener { _, on ->
-                settings.auth = on
-                restartIfRunning()
+                settings.setAuthentication(this@SettingsActivity, on)
             }
         })
         accessCard.addView(Ui.hint(this, getString(R.string.auth_help)))

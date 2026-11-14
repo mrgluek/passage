@@ -231,6 +231,11 @@ class Settings(context: Context) {
      * Require the SOCKS5 username and password. Off ("open mode") is for
      * clients that can't send them: then any app on the phone can use the port.
      */
+    fun setAuthentication(context: Context, required: Boolean) {
+        auth = required
+        if (PassageService.active) PassageService.start(context, "settings changed")
+    }
+
     var auth: Boolean
         get() = prefs.getBoolean("auth", true)
         set(v) = prefs.edit().putBoolean("auth", v).apply()
