@@ -73,7 +73,7 @@ object NetInfo {
         var operator = ""
         try {
             val tm = context.getSystemService(Context.TELEPHONY_SERVICE) as TelephonyManager
-            // MCC+MNC of the SIM, e.g. 25001; the network's when there is no SIM code.
+            // MCC+MNC of the SIM, e.g. 00101; the network's when there is no SIM code.
             operator = tm.simOperator?.takeIf { it.isNotEmpty() } ?: tm.networkOperator ?: ""
         } catch (_: Exception) {
         }

@@ -79,7 +79,7 @@ object Updater {
     fun version(context: Context): String =
         context.packageManager.getPackageInfo(context.packageName, 0).versionName ?: ""
 
-    /** Blocks. The newer release, or null when this is the latest one. */
+    /** Waits for the newer release, or null when this is the latest one. */
     fun check(context: Context): Offer? {
         val request = JSONObject().put("version", version(context)).put("target", target())
             .put("sources", linkSources(context))
@@ -105,7 +105,7 @@ object Updater {
 
     private fun directory(context: Context) = File(context.cacheDir, "update")
 
-    /** Blocks until the file is complete. Other versions' files are removed. */
+    /** Waits until the file is complete. Other versions' files are removed. */
     fun download(context: Context, offer: Offer): File {
         val dir = directory(context).apply { mkdirs() }
         val dest = File(dir, offer.name)
@@ -157,7 +157,7 @@ object Updater {
             // Mutable: the installer adds the outcome to this intent.
             val flags = PendingIntent.FLAG_UPDATE_CURRENT or
                 if (Build.VERSION.SDK_INT >= 31) PendingIntent.FLAG_MUTABLE else 0
-            // Android blocks this start otherwise: the system sends the answer.
+            // Android requires the system to send the answer before starting.
             val options = if (Build.VERSION.SDK_INT >= 34) ActivityOptions.makeBasic()
                 .setPendingIntentCreatorBackgroundActivityStartMode(ActivityOptions.MODE_BACKGROUND_ACTIVITY_START_ALLOWED)
                 .toBundle() else null
@@ -170,7 +170,7 @@ object Updater {
         return settings.updateChecks && System.currentTimeMillis() >= settings.nextUpdateCheck
     }
 
-    /** The daily check. Blocks, so not on the service's worker. */
+    /** The daily check waits for a reply, so it runs off the service's worker. */
     fun checkNow(context: Context) {
         val settings = Settings(context)
         settings.nextUpdateCheck = System.currentTimeMillis() + CHECK_INTERVAL_MS + Random().nextInt(CHECK_JITTER_MS.toInt())

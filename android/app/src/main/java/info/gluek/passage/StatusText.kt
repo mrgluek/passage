@@ -374,7 +374,7 @@ object StatusText {
     private fun working(p: JSONObject) =
         p.optBoolean("verified") && !p.optBoolean("suspended")
 
-    /** "77.88.8.8:853" -> "77.88.8.8", "[2a0c::1]:53" -> "2a0c::1": the port shows in the transport column. */
+    /** "192.0.2.1:853" -> "192.0.2.1", "[2001:db8::1]:53" -> "2001:db8::1": the port shows in the transport column. */
     private fun shortResolver(r: String): String {
         val m = Regex("^\\[?(.*?)\\]?:(53|853)$").find(r) ?: return r
         return m.groupValues[1]
