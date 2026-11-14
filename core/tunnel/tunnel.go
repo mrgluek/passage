@@ -1338,20 +1338,25 @@ func (t *Tunnel) targetsLocked(g *group) []string {
 }
 
 // probeHost checks one probe host of g, directly or through the tunnel:
-// a full TLS handshake for mail (a TCP connect alone proves little), an
+// a TLS exchange for mail (a TCP connect alone proves little), an
 // MTProto exchange for Telegram.
 func (t *Tunnel) probeHost(ctx context.Context, g *group, viaTunnel bool, hostport string) error {
 	host, _, _ := net.SplitHostPort(hostport)
+	var err error
 	switch {
 	case g.kind == kindTelegram && viaTunnel:
 		return t.probeMTTunnel(ctx, hostport)
 	case g.kind == kindTelegram:
 		return t.probeMT(ctx, hostport)
 	case viaTunnel:
-		return t.probeTunnel(ctx, hostport, host)
+		err = t.probeTunnel(ctx, hostport, host)
 	default:
-		return t.probeTLS(ctx, hostport, host)
+		err = t.probeTLS(ctx, hostport, host)
 	}
+	if probeReachable(err) {
+		return nil
+	}
+	return err
 }
 
 // probe checks targets, then canaries only if no target answered. Smart
@@ -1473,7 +1478,7 @@ func (t *Tunnel) probeCanaries() bool {
 			pctx, pcancel := context.WithTimeout(ctx, probeTimeout)
 			defer pcancel()
 			host, _, _ := net.SplitHostPort(c)
-			answers <- answer{c, t.probeTLS(pctx, c, host) == nil}
+			answers <- answer{c, probeReachable(t.probeTLS(pctx, c, host))}
 		}()
 	}
 	next, running := 1, 1
@@ -1713,7 +1718,32 @@ func probePort(addr string) string {
 // stateRelaysDown: the relays fail directly and through the tunnel.
 const stateRelaysDown = "relays-down"
 
+// A private root is not evidence of a block; interception still fails real connections, tracked separately.
+func probeReachable(err error) bool {
+	if err == nil {
+		return true
+	}
+	var unknown x509.UnknownAuthorityError
+	if !errors.As(err, &unknown) {
+		return false
+	}
+	var verification *tls.CertificateVerificationError
+	if errors.As(err, &verification) && len(verification.UnverifiedCertificates) > 0 {
+		certs := verification.UnverifiedCertificates
+		roots, intermediates := x509.NewCertPool(), x509.NewCertPool()
+		roots.AddCert(certs[len(certs)-1])
+		for _, cert := range certs[1:] {
+			intermediates.AddCert(cert)
+		}
+		// Check the supplied chain for other errors even when its root is unknown.
+		_, err = certs[0].Verify(x509.VerifyOptions{Roots: roots, Intermediates: intermediates})
+		return err == nil
+	}
+	return true
+}
+
 // probeTLSVia completes a TLS handshake with hostport over a connection from dial.
+// Certificate errors are retained for diagnosis; routing uses probeReachable.
 func probeTLSVia(ctx context.Context, dial dialFunc, hostport, sni string) error {
 	c, err := dial(ctx, "tcp", hostport)
 	if err != nil {
@@ -1726,6 +1756,7 @@ func probeTLSVia(ctx context.Context, dial dialFunc, hostport, sni string) error
 // probeRoots verifies probe handshakes; nil means the system roots. Tests set it.
 var probeRoots *x509.CertPool
 
+// probeTLS retains certificate errors for diagnosis; routing uses probeReachable.
 func probeTLS(ctx context.Context, hostport, sni string) error {
 	d := &tls.Dialer{
 		NetDialer: &net.Dialer{Timeout: probeTimeout},

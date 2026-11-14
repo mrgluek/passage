@@ -457,7 +457,7 @@ func (t *Tunnel) findStrategy(list []strategy, hosts []string) *strategy {
 			}
 			err := probe(ctx, s.dial, hp, host)
 			cancel()
-			if err != nil {
+			if !probeReachable(err) {
 				ok = false
 				break
 			}
