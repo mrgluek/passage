@@ -226,9 +226,10 @@ class MainActivity : ThemedActivity() {
 
     private fun renderSetup() {
         val step = HomeSetup.step(settings.hasLink, PassageService.active, settings.appSeen)
-        val key = "$step ${settings.appSeen} $expanded $appTab $passwordVisible ${settings.auth} ${settings.port} ${settings.user} ${settings.pass}"
+        val key = "$step ${settings.appSeen} $expanded $appTab $passwordVisible ${settings.whatsappEnabled} ${settings.auth} ${settings.port} ${settings.user} ${settings.pass}"
         if (setupKey == key) return
         setupKey = key
+        whatsappStatusView = null
         setup.removeAllViews()
         setup.addView(Ui.heading(this, getString(HomeSetup.heading(settings.hasLink, PassageService.active, settings.appSeen))).apply { setPadding(0, 0, 0, 0) })
         val labels = listOf(R.string.home_step_link, R.string.home_step_on, R.string.home_step_app)
@@ -256,7 +257,7 @@ class MainActivity : ThemedActivity() {
             setup.addView(tabContent)
             val content = HomeSetup.connect(appTab, settings.socksLink(), settings.tgLink(), settings.veltaLink())
             for (block in listOfNotNull(content, content.secondary)) {
-                block.instruction?.takeIf { appTab != HomeSetup.AppTab.OTHER }?.let { instruction ->
+                block.instruction?.takeIf { appTab != HomeSetup.AppTab.OTHER && appTab != HomeSetup.AppTab.WHATSAPP }?.let { instruction ->
                     tabContent.addView(Ui.hint(this, getString(instruction)))
                 }
                 block.action?.let { action ->
@@ -272,6 +273,15 @@ class MainActivity : ThemedActivity() {
                         setPadding(0, Ui.dp(this@MainActivity, 10), 0, 0)
                     })
                 }
+            }
+            if (appTab == HomeSetup.AppTab.WHATSAPP) {
+                tabContent.addView(WhatsAppUi.controls(this, settings, true) {
+                    whatsappStarted = if (settings.whatsappEnabled && PassageService.active) SystemClock.elapsedRealtime() else 0L
+                    whatsappForwards = null
+                    renderSetup()
+                })
+                whatsappStatusView = Ui.hint(this, "").also { tabContent.addView(it) }
+                renderWhatsAppStatus()
             }
             if (appTab == HomeSetup.AppTab.OTHER) {
                 tabContent.addView(Ui.hint(this, getString(R.string.home_molly_how)))
@@ -448,11 +458,18 @@ class MainActivity : ThemedActivity() {
         } ?: getString(R.string.sub_routes_updated, notice.added, notice.removed)
         batteryCard.visibility = if (hasLink && active && !Ui.batteryExempt(this)) View.VISIBLE else View.GONE
         renderSetup()
+        if (!active) {
+            whatsappStarted = 0L
+            whatsappForwards = null
+            renderWhatsAppStatus()
+        } else if (whatsappStarted == 0L) whatsappStarted = SystemClock.elapsedRealtime()
         if (active) worker.execute {
             var health = "" to ""
             var channels = ""
+            var forwards: org.json.JSONArray? = null
             val counters = try {
                 val status = Native.status()
+                forwards = status.optJSONArray("forwards")
                 channels = StatusText.channels(this, status, homeChannels)
                 status.optJSONObject("health")?.let { health = it.optString("state") to it.optString("reason") }
                 val stats = status.optJSONObject("stats")
@@ -464,6 +481,8 @@ class MainActivity : ThemedActivity() {
                 healthState = health.first
                 healthReason = health.second
                 channelLine = channels
+                whatsappForwards = forwards
+                renderWhatsAppStatus()
                 if (counters != null) {
                     trafficUntil = HomeSetup.trafficDeadline(previousTraffic, counters, SystemClock.elapsedRealtime(), trafficUntil)
                     previousTraffic = counters
@@ -476,6 +495,25 @@ class MainActivity : ThemedActivity() {
                 applyPlain()
             }
         }
+    }
+
+    private var whatsappStatusView: TextView? = null
+    private var whatsappForwards: org.json.JSONArray? = null
+    private var whatsappStarted = 0L
+
+    private fun renderWhatsAppStatus() {
+        val view = whatsappStatusView ?: return
+        if (!PassageService.active || !settings.whatsappEnabled) {
+            view.text = ""
+            return
+        }
+        val status = WhatsApp.status(whatsappForwards, WhatsApp.Labels(
+            getString(R.string.whatsapp_chat), getString(R.string.whatsapp_media),
+            getString(R.string.whatsapp_waiting), getString(R.string.whatsapp_last), getString(R.string.whatsapp_down)))
+        val lines = (status.lines + status.warnings).toMutableList()
+        if (WhatsApp.showHint(settings.whatsappEnabled, PassageService.active, status.connected,
+                SystemClock.elapsedRealtime() - whatsappStarted)) lines += getString(R.string.whatsapp_check)
+        view.text = lines.joinToString("\n")
     }
 
     private val homeChannels = StatusChannels.Display()

@@ -70,6 +70,7 @@ object HomeSetup {
     enum class AppTab(val label: Int) {
         DELTA_CHAT(R.string.home_tab_delta),
         TELEGRAM(R.string.home_tab_telegram),
+        WHATSAPP(R.string.whatsapp),
         OTHER(R.string.home_tab_other),
     }
 
@@ -81,6 +82,7 @@ object HomeSetup {
     fun connect(tab: AppTab, socksLink: String, telegramLink: String, veltaLink: String): ConnectContent = when (tab) {
         AppTab.DELTA_CHAT -> ConnectContent(R.string.home_delta_how, R.string.copy_proxy_link, socksLink, null, DELTA_CHAT_DOWNLOAD, velta(veltaLink))
         AppTab.TELEGRAM -> ConnectContent(R.string.home_telegram_how, R.string.home_telegram_open, telegramLink, telegramLink, null)
+        AppTab.WHATSAPP -> ConnectContent(R.string.whatsapp_how, null, null, null, null)
         AppTab.OTHER -> ConnectContent(R.string.home_molly_other_apps, null, null, null, null)
     }
 

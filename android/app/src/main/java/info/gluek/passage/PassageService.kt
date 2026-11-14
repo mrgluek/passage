@@ -302,6 +302,9 @@ class PassageService : Service() {
                 cfg.remove("user")
                 cfg.remove("pass")
             }
+            WhatsApp.configure(cfg, s.whatsappEnabled,
+                if (s.whatsappEnabled) s.whatsappChatPort else 0,
+                if (s.whatsappEnabled) s.whatsappMediaPort else 0)
             cfg.put("mode", s.mode)
             if (s.myRoute.isNotEmpty()) cfg.put("my", s.myRoute) else cfg.remove("my")
             cfg.put("system_resolvers", JSONArray(net.dns))

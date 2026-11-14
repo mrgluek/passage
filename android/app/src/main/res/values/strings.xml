@@ -309,4 +309,17 @@
     <string name="home_molly_how">Molly: Settings → Network → Use proxy: SOCKS5, host and port below. It cannot send a password, so allow that below.</string>
     <string name="allow_no_password">Allow apps that cannot send a password</string>
     <string name="allow_no_password_help">With the password off, any app on this device can use the proxy. Apps already set up with the password keep working if they also offer no password (most do).</string>
+    <string name="whatsapp">WhatsApp</string>
+    <string name="whatsapp_switch">Turn on the proxy for WhatsApp</string>
+    <string name="whatsapp_turn_on">Turn it on to see the settings for WhatsApp.</string>
+    <string name="whatsapp_how">WhatsApp: You &gt; Storage and data &gt; Proxy &gt; Use proxy &gt; Set up proxy. Host localhost, Use TLS off, and the two ports below.</string>
+    <string name="whatsapp_chat_port">Chat port</string>
+    <string name="whatsapp_media_port">Media port</string>
+    <string name="whatsapp_chat">Chat</string>
+    <string name="whatsapp_media">Media</string>
+    <string name="whatsapp_waiting">waiting</string>
+    <string name="whatsapp_last">last connection %1$s</string>
+    <string name="whatsapp_down">listener unavailable</string>
+    <string name="whatsapp_check">If WhatsApp says Disconnected, check the host and both ports and that Use TLS is off.</string>
+    <string name="whatsapp_no_ports">No local ports available. Try again.</string>
 </resources>

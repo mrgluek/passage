@@ -43,10 +43,19 @@ class HomeConnectTest {
         assertEquals(R.string.home_velta_open, content.action)
         assertEquals("velta-link", content.clipboard)
         assertEquals(content.clipboard, content.open)
-        assertEquals(listOf(HomeSetup.AppTab.DELTA_CHAT, HomeSetup.AppTab.TELEGRAM, HomeSetup.AppTab.OTHER), HomeSetup.AppTab.entries)
+        assertEquals(listOf(HomeSetup.AppTab.DELTA_CHAT, HomeSetup.AppTab.TELEGRAM, HomeSetup.AppTab.WHATSAPP, HomeSetup.AppTab.OTHER), HomeSetup.AppTab.entries)
+    }
+    @Test fun whatsAppHasItsOwnManualFormWithoutSocksLinks() {
+        val content = HomeSetup.connect(HomeSetup.AppTab.WHATSAPP, "socks", "telegram", "velta")
+        assertEquals(R.string.whatsapp_how, content.instruction)
+        assertNull(content.action)
+        assertNull(content.clipboard)
+        assertNull(content.open)
+        assertNull(content.download)
+        assertNull(content.secondary)
     }
     @Test fun tabsUseTwoRowsForLargeFontsOrNarrowLabels() {
-        assertEquals(3, HomeSetup.appTabColumns(1f, 288, 60))
+        assertEquals(4, HomeSetup.appTabColumns(1f, 288, 60))
         assertEquals(2, HomeSetup.appTabColumns(1.5f, 288, 60))
         assertEquals(2, HomeSetup.appTabColumns(1f, 170, 60))
     }

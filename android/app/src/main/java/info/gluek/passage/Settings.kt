@@ -236,6 +236,31 @@ class Settings(context: Context) {
         if (PassageService.active) PassageService.start(context, "settings changed")
     }
 
+    var whatsappEnabled: Boolean
+        get() = prefs.getBoolean("whatsapp_enabled", false)
+        private set(v) = prefs.edit().putBoolean("whatsapp_enabled", v).apply()
+
+    fun setWhatsApp(context: Context, enabled: Boolean) {
+        if (enabled) ensureWhatsAppPorts()
+        whatsappEnabled = enabled
+        if (PassageService.active) PassageService.start(context, "settings changed")
+    }
+
+    val whatsappChatPort: Int
+        get() { ensureWhatsAppPorts(); return prefs.getInt("whatsapp_chat_port", 0) }
+    val whatsappMediaPort: Int
+        get() { ensureWhatsAppPorts(); return prefs.getInt("whatsapp_media_port", 0) }
+
+    private fun ensureWhatsAppPorts() = synchronized(configLock) {
+        if (prefs.getInt("whatsapp_chat_port", 0) != 0 && prefs.getInt("whatsapp_media_port", 0) != 0) return@synchronized
+        val socks = port
+        val chat = prefs.getInt("whatsapp_chat_port", 0).takeIf { it != 0 }
+            ?: WhatsApp.choosePort(setOf(socks, prefs.getInt("whatsapp_media_port", 0)))
+        val media = prefs.getInt("whatsapp_media_port", 0).takeIf { it != 0 }
+            ?: WhatsApp.choosePort(setOf(socks, chat))
+        prefs.edit().putInt("whatsapp_chat_port", chat).putInt("whatsapp_media_port", media).apply()
+    }
+
     var auth: Boolean
         get() = prefs.getBoolean("auth", true)
         set(v) = prefs.edit().putBoolean("auth", v).apply()
@@ -278,7 +303,8 @@ class Settings(context: Context) {
     /** New port, username and password; apps set up with the old ones must be updated. */
     fun newAccess() {
         prefs.edit()
-            .putInt("port", MIN_PORT + random.nextInt(MAX_PORT - MIN_PORT))
+            .putInt("port", generateSequence { MIN_PORT + random.nextInt(MAX_PORT - MIN_PORT) }
+                .first { it != prefs.getInt("whatsapp_chat_port", 0) && it != prefs.getInt("whatsapp_media_port", 0) })
             .putString("user", hex(4))
             .putString("pass", hex(16))
             .apply()

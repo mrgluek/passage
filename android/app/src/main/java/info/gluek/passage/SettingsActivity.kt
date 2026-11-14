@@ -333,6 +333,11 @@ class SettingsActivity : ThemedActivity() {
         }))
         accessCard.addView(Ui.hint(this, getString(R.string.new_access_help)))
 
+        col.addView(Ui.card(this).apply {
+            addView(Ui.heading(this@SettingsActivity, getString(R.string.whatsapp)))
+            addView(WhatsAppUi.controls(this@SettingsActivity, settings, false) {})
+        })
+
         val themeCard = Ui.card(this)
         col.addView(themeCard)
         themeCard.addView(Ui.heading(this, getString(R.string.theme_label)).apply { setPadding(0, 0, 0, Ui.dp(this@SettingsActivity, 8)) })
