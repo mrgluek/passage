@@ -462,7 +462,7 @@ function renderHome(v) {
   if (running) second = [t("h_turn_off"), () => call("stop").then(refresh, fail)];
   else if (!hasLink) second = [t("h_turn_on"), () => call("start").then(refresh, fail)];
   $("sTitle").textContent = v.title;
-  document.title = v.title;
+  document.title = v.caption;
   $("sReason").textContent = v.channels || reason;
   setHidden("sReason", !(v.channels || reason));
   $("sError").textContent = v.error || "";
@@ -504,7 +504,7 @@ function renderHome(v) {
   if (open) renderTabs(v);
 }
 function renderTabs(v) {
-  const names = ["tab_delta", "tab_velta", "tab_tg", "tab_other"];
+  const names = ["tab_delta", "tab_tg", "tab_other"];
   const strip = $("tabs");
   strip.textContent = "";
   names.forEach((k, i) => {
@@ -523,13 +523,35 @@ function renderTabs(v) {
     p.append(t("h_download") + " ", a);
     return p;
   };
-  if (tab === 0) pane.append(para(t("tab_delta_text")), button(t("h_copy_link"), () => copy(v.proxy_link, t("proxy_link_copied"))), download(DOWNLOADS.delta));
-  else if (tab === 1) pane.append(para(t("tab_velta_text")), button(t("h_open_velta"), () =>
+  if (tab === 0) { pane.append(para(t("tab_delta_text")), button(t("h_copy_link"), () => copy(v.proxy_link, t("proxy_link_copied"))), download(DOWNLOADS.delta));
+    pane.append(para(t("tab_velta_text")), button(t("h_open_velta"), () =>
     call("openVelta").then(opened => copy(v.velta_link, t(opened ? "velta_link_opened" : "velta_link_copied")), fail)), download(DOWNLOADS.velta));
-  else if (tab === 2) pane.append(para(t("tab_tg_text")), button(t("h_open_tg"), () =>
+  } else if (tab === 1) pane.append(para(t("tab_tg_text")), button(t("h_open_tg"), () =>
     call("openTg").then(opened => copy(v.tg_link, t(opened ? "tg_link_opened" : "tg_link_copied")), fail)));
   else {
-    pane.append(para(t("tab_other_text")));
+    pane.append(para(t("molly_text")));
+    const molly = document.createElement("div");
+    molly.className = "values";
+    for (const [label, value] of [[t("proxy_host"), "localhost"], [t("proxy_port"), String(v.port)]]) {
+      const row = document.createElement("div");
+      row.className = "v";
+      const name = document.createElement("span"), text = document.createElement("span");
+      name.textContent = label;
+      text.textContent = value;
+      row.append(name, text);
+      row.onclick = () => copy(value, t("value_copied", label));
+      molly.append(row);
+    }
+    const allow = document.createElement("label");
+    allow.className = "check";
+    const toggle = document.createElement("input");
+    toggle.type = "checkbox";
+    toggle.setAttribute("role", "switch");
+    toggle.id = "allowNoPassword";
+    toggle.checked = !v.auth;
+    toggle.onchange = () => call("setAuth", !toggle.checked).then(refresh, fail);
+    allow.append(toggle, t("allow_no_password"));
+    pane.append(molly, allow, para(t("allow_no_password_help")), para(t("tab_other_text")));
     const box = document.createElement("div");
     box.className = "values";
     const rows = [[t("proxy_host"), v.host, v.host], [t("proxy_port"), String(v.port), String(v.port)]];

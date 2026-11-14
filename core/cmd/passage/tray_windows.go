@@ -231,7 +231,7 @@ func (d *desktop) runWindow() {
 		DataPath:  filepath.Join(d.dir, dataName, "webview2"),
 		AutoFocus: true,
 		WindowOptions: webview2.WindowOptions{
-			Title:  d.app.view().Title,
+			Title:  d.app.view().Caption,
 			Width:  uint(560 * scale),
 			Height: uint(780 * scale),
 			IconId: 1, // the program's icon (go-winres)

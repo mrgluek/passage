@@ -370,7 +370,7 @@ func (a *App) trayState() trayState {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	st := trayState{Lang: a.lang, Text: a.t, Running: a.settings.Running, Mode: a.mode(), Routes: a.routes(), My: a.settings.My != ""}
-	st.Tooltip = "Passage: " + a.t.f(a.trayTitleKey())
+	st.Tooltip = captionTitle(a.t, a.trayTitleKey())
 	if a.tun != nil {
 		s := a.tun.Status(0)
 		if detail := statusDetail(a.t, s.Health, a.channels.sample(a.t, s, time.Now())); detail != "" {
@@ -395,6 +395,15 @@ func (a *App) trayTitleKey() string {
 		return "h_title_connecting"
 	}
 	return healthTitleKey(a.tun.Status(0).Health)
+}
+
+func captionTitle(t tr, key string) string {
+	title := strings.ToLower(t.f(key))
+	switch key {
+	case "h_title_working", "h_title_server_down", "h_title_checking":
+		title = t.f(strings.Replace(key, "h_title_", "h_caption_", 1))
+	}
+	return "Passage: " + title
 }
 
 func healthTitleKey(health tunnel.Health) string {
@@ -423,6 +432,7 @@ type view struct {
 	Update             updateView        `json:"update"`
 	Running            bool              `json:"running"`
 	Title              string            `json:"title"`
+	Caption            string            `json:"caption"`
 	Channels           string            `json:"channels"`
 	Head               string            `json:"head"`
 	Line               string            `json:"line"`
@@ -477,7 +487,8 @@ func (a *App) view() view {
 	default:
 		v.Head = a.t.f("proxy_stopped")
 	}
-	v.Title = "Passage: " + a.t.f(a.trayTitleKey())
+	v.Title = a.t.f(a.trayTitleKey())
+	v.Caption = captionTitle(a.t, a.trayTitleKey())
 	v.StartHint = startHint(a.t, v.Running, len(v.Routes))
 	var full string
 	if a.tun != nil {

@@ -66,7 +66,7 @@ func TestTrayHealthTitle(t *testing.T) {
 	} {
 		t.Run(tt.state+"/"+tt.reason, func(t *testing.T) {
 			h := tunnel.Health{State: tt.state, Reason: tt.reason}
-			if got := tr(table("en")).f(healthTitleKey(h)); got != tt.title {
+			if got := strings.TrimPrefix(captionTitle(table("en"), healthTitleKey(h)), "Passage: "); got != tt.title {
 				t.Fatalf("title = %q, want %q", got, tt.title)
 			}
 		})
@@ -528,4 +528,40 @@ func TestLanguageSnapshotsDuringChanges(t *testing.T) {
 		}
 	}()
 	wg.Wait()
+}
+
+func TestHomeTitleAndWindowCaption(t *testing.T) {
+	for _, tc := range []struct{ lang, title, caption string }{
+		{"en", "Proxy is off", "Passage: proxy is off"},
+		{"ru", "Прокси выключен", "Passage: прокси выключен"},
+	} {
+		a := &App{t: table(tc.lang), log: &appLog{}}
+		a.linkCfg.Subscriptions = []tunnel.Subscription{{ID: "example"}}
+		v := a.view()
+		if v.Title != tc.title || v.Caption != tc.caption {
+			t.Fatalf("%s title/caption = %q / %q", tc.lang, v.Title, v.Caption)
+		}
+		if a.trayState().Tooltip != tc.caption {
+			t.Fatalf("%s tooltip = %q", tc.lang, a.trayState().Tooltip)
+		}
+	}
+}
+
+func TestHomeAppPanes(t *testing.T) {
+	for _, want := range []string{
+		`const names = ["tab_delta", "tab_tg", "tab_other"]`,
+		`download(DOWNLOADS.delta));
+    pane.append(para(t("tab_velta_text"))`,
+		`v.velta_link`, `call("openVelta")`,
+		`pane.append(para(t("molly_text")))`,
+		`[[t("proxy_host"), "localhost"], [t("proxy_port"), String(v.port)]]`,
+		`toggle.checked = !v.auth`,
+		`call("setAuth", !toggle.checked).then(refresh, fail)`,
+		`para(t("allow_no_password_help")), para(t("tab_other_text"))`,
+		`if (v.auth) rows.push`, `document.title = v.caption`,
+	} {
+		if !strings.Contains(indexHTML, want) {
+			t.Errorf("home missing %q", want)
+		}
+	}
 }

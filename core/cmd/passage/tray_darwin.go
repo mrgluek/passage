@@ -167,7 +167,7 @@ func showMacWindow() {
 	defer C.free(unsafe.Pointer(html))
 	C.passageShowWindow(html)
 	if macApp != nil {
-		title := C.CString(macApp.view().Title)
+		title := C.CString(macApp.view().Caption)
 		C.passageSetTitle(title)
 		C.free(unsafe.Pointer(title))
 	}
