@@ -33,8 +33,8 @@ var knownStrategies = struct {
 	writers map[string]*knownStateWriter
 }{m: map[string]knownStrategy{}, blocked: map[string]map[string]time.Time{}, clean: map[string]map[string]time.Time{}, loaded: map[string]bool{}, writers: map[string]*knownStateWriter{}}
 
-// blockedMemory is how long a group stays known as blocked on a network
-// without being seen blocked again.
+// blockedMemory is how long a group stays known as filtered on a network
+// without being seen filtered again.
 const blockedMemory = 14 * 24 * time.Hour
 
 type knownStrategy struct {
@@ -369,8 +369,7 @@ func streamDial(d transport.StreamDialer) dialFunc {
 	}
 }
 
-// disorderDial sends the first n bytes with a TTL of 1, so they die at the
-// first hop and the kernel retransmits them after the rest.
+// disorderDial sends the first n bytes separately from the rest.
 func disorderDial(n int) dialFunc {
 	return func(ctx context.Context, network, addr string) (net.Conn, error) {
 		d := &net.Dialer{Timeout: directDialTimeout}
@@ -414,8 +413,7 @@ func (c *disorderConn) Write(b []byte) (int, error) {
 	return n + m, err
 }
 
-// lowTTL sets the socket's TTL (hop limit) to 1 and returns a func that
-// puts the old value back.
+// lowTTL temporarily adjusts a socket option and returns a restore function.
 func (c *disorderConn) lowTTL() (func(), error) {
 	raw, err := c.TCPConn.SyscallConn()
 	if err != nil {

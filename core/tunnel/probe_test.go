@@ -178,7 +178,7 @@ func TestReachableRelaySkipsSmartSearch(t *testing.T) {
 	tt := twoRelays(t, echoDialer("D:", &n))
 	tt.strategies = []strategy{{"works", echoDialer("S:", &n)}}
 	tt.smartProbe = func(_ context.Context, _ dialFunc, hostport, _ string) error {
-		if hostport != "blocked.example.org:993" {
+		if hostport != "filtered.example.org:993" {
 			t.Errorf("unexpected smart probe: %s", hostport)
 			return errors.New("not needed")
 		}
@@ -188,7 +188,7 @@ func TestReachableRelaySkipsSmartSearch(t *testing.T) {
 		tt.check()
 	}
 	s := tt.Status(0)
-	if g := s.Groups["blocked.example.org"]; g.Route != "smart" || !g.LastResult.SmartOK {
+	if g := s.Groups["filtered.example.org"]; g.Route != "smart" || !g.LastResult.SmartOK {
 		t.Fatalf("unreachable relay must use smart: %+v", g)
 	}
 	if g := s.Groups["open.example.org"]; g.Route != "direct" || g.LastResult.SmartChecked {

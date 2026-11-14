@@ -19,7 +19,7 @@ import (
 )
 
 // Modes. Auto routes directly and switches to the tunnel when the probe
-// hosts are blocked; Always forces the tunnel; Off never uses it. A route
+// hosts are filtered; Always forces the tunnel; Off never uses it. A route
 // type or route:<id> forces the tunnel through matching routes only.
 const (
 	ModeAuto   = "auto"
@@ -39,25 +39,19 @@ var RouteKinds = []string{"my", "http", "wss", "turn", "iroh", "soar"}
 // and the link's. soar uses all of them and backs off the ones that don't
 // answer. Port 853 means DNS-over-TLS.
 var DefaultResolvers = []string{
-	// NSDI.
 	"195.208.4.1:53", "195.208.5.1:53", "[2a0c:a9c7:8::1]:53",
-	// MSK-IX.
 	"62.76.62.76:53", "62.76.76.62:53",
-	// Yandex basic, Safe and Family.
 	"77.88.8.8:53", "77.88.8.1:53", "[2a02:6b8::feed:0ff]:53", "[2a02:6b8:0:1::feed:0ff]:53",
 	"77.88.8.88:53", "77.88.8.2:53", "[2a02:6b8::feed:bad]:53", "[2a02:6b8:0:1::feed:bad]:53",
 	"77.88.8.7:53", "77.88.8.3:53", "[2a02:6b8::feed:a11]:53", "[2a02:6b8:0:1::feed:a11]:53",
 	"77.88.8.8:853", "77.88.8.1:853", "77.88.8.88:853", "77.88.8.7:853",
-	// TransTeleCom.
 	"217.150.34.129:53",
-	// SafeDNS, Google, Quad9.
 	"195.46.39.39:53", "195.46.39.40:53",
 	"8.8.8.8:53", "8.8.4.4:53",
 	"9.9.9.9:53",
 }
 
-// DefaultCanaries tell "blocked" from "offline": one of them answering while
-// every probe host fails means blocked.
+// DefaultCanaries are hosts used to tell a dead network from a filtered one.
 var DefaultCanaries = []string{"ya.ru:443", "max.ru:443", "gosuslugi.ru:443"}
 
 const maxResolvers = 64

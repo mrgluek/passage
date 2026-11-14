@@ -148,7 +148,7 @@ func TestCheckRejectsForeignManifest(t *testing.T) {
 func TestCheckUsesNextRoute(t *testing.T) {
 	r := newRelease(t, "1.2.0", []byte("x"))
 	var plain net.Dialer
-	broken := func(context.Context, string, string) (net.Conn, error) { return nil, fmt.Errorf("blocked") }
+	broken := func(context.Context, string, string) (net.Conn, error) { return nil, fmt.Errorf("filtered") }
 	c := &Client{Key: r.key, Sources: []string{serve(t, r, nil)}, Dials: func() []Dial { return []Dial{broken, plain.DialContext} }}
 	if offer, err := c.Check(context.Background(), "1.1.0", "arm64"); err != nil || offer == nil {
 		t.Fatalf("offer %+v, err %v", offer, err)

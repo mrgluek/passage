@@ -36,7 +36,7 @@ func main() {
 	canaries := flag.String("canaries", "", "comma-separated host:port canaries, replacing the link's or the defaults")
 	linkFile := flag.String("link-file", "", "read the Passage link from this file")
 	systemDNS := flag.Bool("system-dns", true, "add this machine's DNS servers (resolv.conf) as first resolver paths")
-	operator := flag.String("operator", "", "SIM operator MCC+MNC (e.g. 25001) to add its known resolvers")
+	operator := flag.String("operator", "", "SIM operator MCC+MNC (e.g. 00101) to add its known resolvers")
 	mode := flag.String("mode", tunnel.ModeAuto, "auto, always, off, route:<id>, or a route type (my, http, wss, turn, iroh, soar)")
 	my := flag.String("my", "", "your own SOCKS5 proxy as a route: [user:pass@]host:port, a socks5:// URL or a t.me/socks link")
 	listen := flag.String("listen", "127.0.0.1:18000", "SOCKS5 listen address")

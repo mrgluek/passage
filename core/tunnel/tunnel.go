@@ -56,7 +56,7 @@ var kindNames = [...]string{"relay", "telegram", "other"}
 func (k groupKind) String() string { return kindNames[k] }
 
 // group is a set of destinations that share one route decision: each mail
-// relay has its own, so one relay being blocked doesn't move another, and
+// relay has its own, so one relay being filtered doesn't move another, and
 // Telegram has one.
 type hostSeen struct {
 	at  time.Time
@@ -157,7 +157,7 @@ const (
 	probeTimeout          = 6 * time.Second
 	tunnelProbeTimeout    = 30 * time.Second // a cold soar session needs its hellos first
 	minProbeGap           = 10 * time.Second
-	blockedAfter          = 2 // consecutive probes showing direct access blocked before switching
+	blockedAfter          = 2 // consecutive probes showing direct access filtered before switching
 	recoveredAfter        = 3 // consecutive "a relay answers directly" probes before switching back
 	maxProbedRelays       = 4
 	suspiciousLifetime    = 20 * time.Second
@@ -267,7 +267,7 @@ type probeResult struct {
 	SmartChecked bool `json:"smart_checked,omitempty"`
 	SmartOK      bool `json:"smart_ok,omitempty"`
 	// SmartKnown: the strategy had worked on this network before this probe,
-	// so one blocked probe is enough to switch to it.
+	// so one filtered probe is enough to switch to it.
 	SmartKnown bool   `json:"smart_known,omitempty"`
 	Strategy   string `json:"strategy,omitempty"`
 	// Set by confirmViaTunnel: the same targets checked through the tunnel.
@@ -632,7 +632,7 @@ func initialRoute(mode string) Route {
 func (t *Tunnel) learnDNSEgress() {
 	ctx, cancel := context.WithTimeout(t.ctx, 4*time.Second)
 	defer cancel()
-	_, err := dnsWhoami(ctx, "77.88.8.8:53")
+	_, err := dnsResolverEgress(ctx, "77.88.8.8:53")
 	if err != nil {
 		t.log.add("DNS interceptor not identified: %v", err)
 		return
@@ -1565,7 +1565,7 @@ func (t *Tunnel) probeCanaries() bool {
 }
 
 // confirmViaTunnel checks before switching, and when nothing answers directly.
-// A tunnel answer proves connectivity even when all direct access is blocked.
+// A tunnel answer proves connectivity even when all direct access is filtered.
 // With direct connectivity, failure through a live session means relays-down.
 func (t *Tunnel) confirmViaTunnel(g *group, res probeResult) probeResult {
 	t.mu.Lock()
@@ -1705,11 +1705,11 @@ func (t *Tunnel) cleanMemoryAllowedLocked(g *group) bool {
 // decide is the monitor's state machine, kept pure for tests.
 //   - any probe host answering directly means the network is open; leaving
 //     the tunnel takes recoveredAfter such probes, or one if it is failing;
-//   - every relay failing while the network is reachable means "blocked": the
+//   - every relay failing while the network is reachable means "filtered": the
 //     smart route if a strategy works, else the tunnel, unless the relays
 //     fail through a live tunnel too: then they are down ("relays-down")
 //     and the route stays;
-//   - a tunnel answer also proves direct access is blocked;
+//   - a tunnel answer also proves direct access is filtered;
 //   - everything failing means "offline": change nothing.
 func decide(route Route, res probeResult, failStreak, okStreak int, tunnelHealthy bool) (Route, int, int, string) {
 	switch {
