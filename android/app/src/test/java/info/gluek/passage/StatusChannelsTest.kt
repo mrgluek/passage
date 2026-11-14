@@ -45,7 +45,7 @@ class StatusChannelsTest {
                 Case("minimum expired", listOf(mail.copy(lastConn = now - 960_000)), "${l.shared}: ${l.direct}", shown = mapOf("mail" to now - 300_000)),
                 Case("telegram only", listOf(tg), "Tg: ${l.tunnel[2].format("berry")}"),
                 Case("unused telegram", listOf(tg.copy(lastConn = 0)), "${l.shared}: ${l.direct}"),
-                Case("several", listOf(mail, tg), "${l.mail}: ${l.direct}, Tg: ${l.tunnel[2].format("berry")}"),
+                Case("several", listOf(mail, tg), "${l.mail}: ${l.direct} · Tg: ${l.tunnel[2].format("berry")}"),
                 Case("pinned", listOf(mail.copy(route = "tunnel")), "${l.mail}: ${l.tunnel[2].format("berry")}", mode = "route:berry"),
                 Case("own route", listOf(mail.copy(route = "tunnel", id = "my", via = "my")), "${l.mail}: ${l.mine}"),
                 Case("type", listOf(mail.copy(route = "tunnel", via = "iroh")), "${l.mail}: ${l.tunnel[1].format("iroh")}"),
@@ -66,17 +66,17 @@ class StatusChannelsTest {
                 listOf(wa) to "WA: ${l.tunnel[0].format("iroh", "berry")}",
                 listOf(molly) to "Molly: ${l.tunnel[2].format("br")}",
                 listOf(mail.copy(kind = "other")) to "${l.other}: ${l.direct}",
-                listOf(mail, wa) to "${l.mail}: ${l.direct}, WA: ${l.tunnel[0].format("iroh", "berry")}",
-                listOf(mail, tg, wa) to "${l.mail}: ${l.direct}, Tg: ya, WA: berry",
-                listOf(mail, tg, wa, molly) to "${l.mail}: ${l.direct}, Tg: ya, WA: berry, Molly: br",
+                listOf(mail, wa) to "${l.mail}: ${l.direct} · WA: ${l.tunnel[0].format("iroh", "berry")}",
+                listOf(mail, tg, wa) to "${l.mail}: ${l.direct} · Tg: ya · WA: berry",
+                listOf(mail, tg, wa, molly) to "${l.mail}: ${l.direct} · Tg: ya · WA: berry · Molly: br",
                 listOf(mail, smart, mail.copy(name = "d")) to "${l.mail}: ${l.direct}${l.and}${l.smart}",
-                listOf(mail, smart, tg, wa) to "${l.mail}: ${l.direct}${l.and}${l.smart}, Tg: ya, WA: berry",
+                listOf(mail, smart, tg, wa) to "${l.mail}: ${l.direct}${l.and}${l.smart} · Tg: ya · WA: berry",
                 listOf(own) to "${l.mail}: ${l.mine}",
-                listOf(own, tg, wa) to "${l.mail}: my, Tg: ya, WA: berry",
+                listOf(own, tg, wa) to "${l.mail}: my · Tg: ya · WA: berry",
             )
             for ((groups, expected) in cases) assertEquals(expected, StatusChannels.lines(groups, "auto", "direct", "", l, now).text)
             for (via in listOf("iroh", "http", "soar", "")) {
-                assertEquals("${l.mail}: ${l.direct}, Tg: ya, WA: ${via.ifEmpty { l.tunnelShort }}",
+                assertEquals("${l.mail}: ${l.direct} · Tg: ya · WA: ${via.ifEmpty { l.tunnelShort }}",
                     StatusChannels.lines(listOf(mail, tg, wa.copy(id = "", via = via)), "auto", "direct", "", l, now).text)
             }
         }

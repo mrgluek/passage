@@ -46,7 +46,7 @@ object StatusChannels {
                 "$label: ${routes.joinToString(labels.and)}"
             }
         }
-        val text = parts.joinToString(", ").ifEmpty {
+        val text = parts.joinToString(" · ").ifEmpty {
             route(mode, shared, "", via, labels).takeIf { it.isNotEmpty() }?.let { "${labels.shared}: $it" }.orEmpty()
         }
         return Lines(text, shown)

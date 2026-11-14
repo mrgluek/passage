@@ -32,7 +32,7 @@ func TestChannelLines(t *testing.T) {
 			{name: "minimum expired", groups: map[string]tunnel.GroupStatus{"mail": {Kind: "relay", Route: "direct", LastConn: &old}}, shown: map[string]time.Time{"mail": now.Add(-5 * time.Minute)}, want: shared + direct},
 			{name: "telegram only", groups: map[string]tunnel.GroupStatus{"not-a-kind": {Kind: "telegram", Route: "tunnel", RouteID: "berry", LastConn: &old}}, want: tg + tunnelID},
 			{name: "unused telegram", groups: map[string]tunnel.GroupStatus{"telegram": {Kind: "telegram", Route: "direct"}}, want: shared + direct},
-			{name: "several", groups: map[string]tunnel.GroupStatus{"a": {Kind: "relay", Route: "direct", LastConn: &recent}, "b": {Kind: "telegram", Route: "tunnel", RouteID: "berry", LastConn: &recent}}, want: mail + direct + ", " + tg + tunnelID},
+			{name: "several", groups: map[string]tunnel.GroupStatus{"a": {Kind: "relay", Route: "direct", LastConn: &recent}, "b": {Kind: "telegram", Route: "tunnel", RouteID: "berry", LastConn: &recent}}, want: mail + direct + " · " + tg + tunnelID},
 			{name: "pinned", mode: "route:berry", groups: map[string]tunnel.GroupStatus{"mail": {Kind: "relay", Route: "tunnel", LastConn: &recent}}, want: mail + tunnelID},
 			{name: "own route", groups: map[string]tunnel.GroupStatus{"mail": {Kind: "relay", Route: "tunnel", RouteID: "my", Via: "my", LastConn: &recent}}, want: mail + mine},
 			{name: "type", groups: map[string]tunnel.GroupStatus{"mail": {Kind: "relay", Route: "tunnel", Via: "iroh", LastConn: &recent}}, want: mail + irohOnly},
@@ -124,13 +124,13 @@ func TestAppChannelForms(t *testing.T) {
 			{"wa alone", map[string]tunnel.GroupStatus{"g.whatsapp.net": wa}, "WA: " + long},
 			{"molly alone", map[string]tunnel.GroupStatus{"chat.signal.org": molly}, "Molly: " + tr.f("channel_tunnel_id", "br")},
 			{"other alone", map[string]tunnel.GroupStatus{"other": {Kind: "other", Route: "direct", LastConn: &now}}, other + ": " + direct},
-			{"two long", map[string]tunnel.GroupStatus{"a": m, "b": wa}, mail + ": " + direct + ", WA: " + long},
-			{"three compact", map[string]tunnel.GroupStatus{"a": m, "b": tg, "c": wa}, mail + ": " + direct + ", Tg: ya, WA: berry"},
-			{"four compact", map[string]tunnel.GroupStatus{"a": m, "b": tg, "c": wa, "d": molly}, mail + ": " + direct + ", Tg: ya, WA: berry, Molly: br"},
+			{"two long", map[string]tunnel.GroupStatus{"a": m, "b": wa}, mail + ": " + direct + " · WA: " + long},
+			{"three compact", map[string]tunnel.GroupStatus{"a": m, "b": tg, "c": wa}, mail + ": " + direct + " · Tg: ya · WA: berry"},
+			{"four compact", map[string]tunnel.GroupStatus{"a": m, "b": tg, "c": wa, "d": molly}, mail + ": " + direct + " · Tg: ya · WA: berry · Molly: br"},
 			{"joined distinct", map[string]tunnel.GroupStatus{"a": m, "b": smartMail, "c": m}, mail + ": " + direct + join + smart},
-			{"joined compact", map[string]tunnel.GroupStatus{"a": m, "b": smartMail, "c": tg, "d": wa}, mail + ": " + direct + join + smart + ", Tg: ya, WA: berry"},
+			{"joined compact", map[string]tunnel.GroupStatus{"a": m, "b": smartMail, "c": tg, "d": wa}, mail + ": " + direct + join + smart + " · Tg: ya · WA: berry"},
 			{"own long", map[string]tunnel.GroupStatus{"a": my}, mail + ": " + own},
-			{"own compact", map[string]tunnel.GroupStatus{"a": my, "b": tg, "c": wa}, mail + ": my, Tg: ya, WA: berry"},
+			{"own compact", map[string]tunnel.GroupStatus{"a": my, "b": tg, "c": wa}, mail + ": my · Tg: ya · WA: berry"},
 		} {
 			t.Run(lang+"/"+tc.name, func(t *testing.T) {
 				got, _ := channelLines(tr, tunnel.Status{Groups: tc.groups}, now, nil)
@@ -148,7 +148,7 @@ func TestAppChannelForms(t *testing.T) {
 				want = plain
 			}
 			got, _ := channelLines(tr, tunnel.Status{Groups: map[string]tunnel.GroupStatus{"a": m, "b": tg, "c": g}}, now, nil)
-			if expected := mail + ": " + direct + ", Tg: ya, WA: " + want; got != expected {
+			if expected := mail + ": " + direct + " · Tg: ya · WA: " + want; got != expected {
 				t.Errorf("missing id: got %q, want %q", got, expected)
 			}
 		}

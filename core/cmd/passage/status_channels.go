@@ -81,7 +81,7 @@ func channelLines(t tr, s tunnel.Status, now time.Time, previous map[string]time
 		}
 		return t.f("notification_route", route), shown
 	}
-	return strings.Join(parts, ", "), shown
+	return strings.Join(parts, " · "), shown
 }
 
 func channelRoute(t tr, mode, route, id, via string) string {
