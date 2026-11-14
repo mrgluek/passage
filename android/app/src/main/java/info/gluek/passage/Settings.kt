@@ -251,14 +251,24 @@ class Settings(context: Context) {
     val whatsappMediaPort: Int
         get() { ensureWhatsAppPorts(); return prefs.getInt("whatsapp_media_port", 0) }
 
-    private fun ensureWhatsAppPorts() = synchronized(configLock) {
-        if (prefs.getInt("whatsapp_chat_port", 0) != 0 && prefs.getInt("whatsapp_media_port", 0) != 0) return@synchronized
-        val socks = port
-        val chat = prefs.getInt("whatsapp_chat_port", 0).takeIf { it != 0 }
-            ?: WhatsApp.choosePort(setOf(socks, prefs.getInt("whatsapp_media_port", 0)))
-        val media = prefs.getInt("whatsapp_media_port", 0).takeIf { it != 0 }
-            ?: WhatsApp.choosePort(setOf(socks, chat))
-        prefs.edit().putInt("whatsapp_chat_port", chat).putInt("whatsapp_media_port", media).apply()
+    private fun ensureWhatsAppPorts() {
+        while (true) {
+            val previous = synchronized(configLock) {
+                prefs.getInt("whatsapp_chat_port", 0) to prefs.getInt("whatsapp_media_port", 0)
+            }
+            if (previous.first != 0 && previous.second != 0) return
+            val socks = port
+            val chat = previous.first.takeIf { it != 0 }
+                ?: WhatsApp.choosePort(setOf(socks, previous.second))
+            val media = previous.second.takeIf { it != 0 }
+                ?: WhatsApp.choosePort(setOf(socks, chat))
+            synchronized(configLock) {
+                if (previous == (prefs.getInt("whatsapp_chat_port", 0) to prefs.getInt("whatsapp_media_port", 0)) && socks == port) {
+                    prefs.edit().putInt("whatsapp_chat_port", chat).putInt("whatsapp_media_port", media).apply()
+                    return
+                }
+            }
+        }
     }
 
     var auth: Boolean

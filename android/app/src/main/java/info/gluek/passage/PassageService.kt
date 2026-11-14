@@ -380,7 +380,8 @@ class PassageService : Service() {
     private fun updateNotification(snapshot: JSONObject? = null, force: Boolean = false) {
         if (!active) return
         val localized = AppLanguage.localizedContext(this)
-        val content = StatusText.notification(localized, snapshot ?: status(), Settings(this).appSeen, fallbackRunning = lastError == null, display = notificationChannels)
+        val settings = Settings(this)
+        val content = StatusText.notification(localized, snapshot ?: status(), settings.appSeen, fallbackRunning = lastError == null, display = notificationChannels, hasLink = settings.hasLink)
         if (!force && content == lastNotification) return
         val nm = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
         nm.notify(NOTIFICATION_ID, buildNotification(content.first, content.second))

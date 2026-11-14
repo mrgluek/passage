@@ -80,4 +80,13 @@ class NotificationStatusTest {
             StatusText.notificationResources(status, appSeen = false, fallbackRunning = true),
         )
     }
+    @Test fun savedLinkOverridesEmptyCoreRoutes() {
+        val status = JSONObject().put("running", true).put("route_count", 0).put("subscriptions", org.json.JSONArray())
+        for ((state, title) in listOf("starting" to R.string.home_connecting_title, "working" to R.string.home_working_title)) {
+            status.put("health", JSONObject().put("state", state))
+            assertEquals(title, StatusText.notificationResources(status, false, true, hasLink = true).first)
+            assertEquals(HomeSetup.Plain.NOT_SET_UP.title, StatusText.notificationResources(status, false, true, hasLink = false).first)
+        }
+    }
+
 }

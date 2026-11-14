@@ -14,8 +14,8 @@ object StatusText {
         return listOfNotNull(routes(c, s), network(c, s), tunnelState(c, s)).joinToString(" · ")
     }
 
-    fun notification(c: Context, s: JSONObject?, appSeen: Boolean, fallbackRunning: Boolean, display: StatusChannels.Display = StatusChannels.Display()): Pair<String, String> {
-        val plain = notificationPlain(s, fallbackRunning)
+    fun notification(c: Context, s: JSONObject?, appSeen: Boolean, fallbackRunning: Boolean, display: StatusChannels.Display = StatusChannels.Display(), hasLink: Boolean? = null): Pair<String, String> {
+        val plain = notificationPlain(s, fallbackRunning, hasLink)
         val channels = s?.takeIf { it.optBoolean("running") }?.let { channels(c, it, display) }.orEmpty()
         return c.getString(plain.title) to plain.detail(c.getString(plain.reason(appSeen)), channels)
     }
@@ -33,17 +33,17 @@ object StatusText {
         return display.sample(list, s.optString("mode"), s.optString("route"), s.optString("via").ifEmpty { onlyType(s) }, labels, System.currentTimeMillis())
     }
 
-    internal fun notificationResources(s: JSONObject?, appSeen: Boolean, fallbackRunning: Boolean): Pair<Int, Int> {
-        val plain = notificationPlain(s, fallbackRunning)
+    internal fun notificationResources(s: JSONObject?, appSeen: Boolean, fallbackRunning: Boolean, hasLink: Boolean? = null): Pair<Int, Int> {
+        val plain = notificationPlain(s, fallbackRunning, hasLink)
         return plain.title to plain.reason(appSeen)
     }
 
-    private fun notificationPlain(s: JSONObject?, fallbackRunning: Boolean): HomeSetup.Plain {
+    private fun notificationPlain(s: JSONObject?, fallbackRunning: Boolean, hasLink: Boolean?): HomeSetup.Plain {
         val health = s?.optJSONObject("health")
         return HomeSetup.plain(
             running = s?.optBoolean("running", fallbackRunning) ?: fallbackRunning,
             startFailed = false,
-            hasLink = s == null || !s.has("route_count") || s.optInt("route_count") > 0 || (s.optJSONArray("subscriptions")?.length() ?: 0) > 0,
+            hasLink = hasLink ?: (s == null || !s.has("route_count") || s.optInt("route_count") > 0 || (s.optJSONArray("subscriptions")?.length() ?: 0) > 0),
             health = health?.optString("state").orEmpty(),
             reason = health?.optString("reason").orEmpty(),
         )
