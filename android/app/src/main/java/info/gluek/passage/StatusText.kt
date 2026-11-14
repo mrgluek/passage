@@ -43,7 +43,7 @@ object StatusText {
         return HomeSetup.plain(
             running = s?.optBoolean("running", fallbackRunning) ?: fallbackRunning,
             startFailed = false,
-            hasLink = true,
+            hasLink = s == null || !s.has("route_count") || s.optInt("route_count") > 0 || (s.optJSONArray("subscriptions")?.length() ?: 0) > 0,
             health = health?.optString("state").orEmpty(),
             reason = health?.optString("reason").orEmpty(),
         )

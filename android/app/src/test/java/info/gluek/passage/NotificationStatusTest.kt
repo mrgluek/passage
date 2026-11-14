@@ -65,4 +65,19 @@ class NotificationStatusTest {
         assertEquals(2, Regex("setContentTitle\\(title\\)").findAll(service).count())
         assertTrue(service.contains(".setPublicVersion("))
     }
+
+    @Test
+    fun asksForALinkWhileThereAreNoRoutes() {
+        val status = JSONObject().put("running", true).put("route_count", 0).put("subscriptions", org.json.JSONArray())
+            .put("health", JSONObject().put("state", "starting"))
+        assertEquals(
+            HomeSetup.Plain.NOT_SET_UP.title to HomeSetup.Plain.NOT_SET_UP.reason(false),
+            StatusText.notificationResources(status, appSeen = false, fallbackRunning = true),
+        )
+        status.put("route_count", 3)
+        assertEquals(
+            HomeSetup.Plain.CONNECTING.title to HomeSetup.Plain.CONNECTING.reason(false),
+            StatusText.notificationResources(status, appSeen = false, fallbackRunning = true),
+        )
+    }
 }

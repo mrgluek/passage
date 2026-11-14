@@ -44,6 +44,7 @@ object HomeSetup {
 
     fun plain(running: Boolean, startFailed: Boolean, hasLink: Boolean, health: String, reason: String): Plain = when {
         startFailed -> Plain.START_FAILED
+        !hasLink -> Plain.NOT_SET_UP
         running && health == "starting" -> Plain.CONNECTING
         running && health == "problem" -> when (reason) {
             "no_internet" -> Plain.NO_INTERNET
@@ -54,7 +55,6 @@ object HomeSetup {
         running && health == "limited" -> Plain.LIMITED
         running && health == "working" -> Plain.WORKING
         running -> Plain.READY
-        !hasLink -> Plain.NOT_SET_UP
         else -> Plain.OFF
     }
 
