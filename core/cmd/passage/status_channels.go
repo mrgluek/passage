@@ -18,7 +18,7 @@ type channelDisplay struct {
 // channelLines also returns when each visible group first appeared.
 func channelLines(t tr, s tunnel.Status, now time.Time, previous map[string]time.Time) (string, map[string]time.Time) {
 	shown := map[string]time.Time{}
-	kinds := map[string][]string{}
+	kinds := map[string][]tunnel.GroupStatus{}
 	names := make([]string, 0, len(s.Groups))
 	for name := range s.Groups {
 		names = append(names, name)
@@ -42,18 +42,37 @@ func channelLines(t tr, s tunnel.Status, now time.Time, previous map[string]time
 			first = now
 		}
 		shown[name] = first
-		route := channelRoute(t, s.Mode, g.Route, g.RouteID, cmp.Or(g.Via, onlyType(s)))
-		if !slices.Contains(kinds[g.Kind], route) {
-			kinds[g.Kind] = append(kinds[g.Kind], route)
+		kind := g.Kind
+		if kind == "relay" && g.App != "" {
+			kind = g.App
+		}
+		kinds[kind] = append(kinds[kind], g)
+	}
+	order := []string{"relay", "telegram", "whatsapp", "signal", "other"}
+	count := 0
+	for _, kind := range order {
+		if len(kinds[kind]) > 0 {
+			count++
 		}
 	}
 	var parts []string
-	for _, kind := range []string{"relay", "telegram", "other"} {
+	for _, kind := range order {
 		if len(kinds[kind]) == 0 {
 			continue
 		}
-		key := map[string]string{"relay": "group_mail", "telegram": "group_telegram", "other": "group_other"}[kind]
-		parts = append(parts, t.f(key, strings.Join(kinds[kind], "/")))
+		var routes []string
+		for _, g := range kinds[kind] {
+			via := cmp.Or(g.Via, onlyType(s))
+			route := channelRoute(t, s.Mode, g.Route, g.RouteID, via)
+			if count >= 3 {
+				route = channelRouteShort(t, s.Mode, g.Route, g.RouteID, via)
+			}
+			if !slices.Contains(routes, route) {
+				routes = append(routes, route)
+			}
+		}
+		key := map[string]string{"relay": "group_mail", "telegram": "group_telegram", "whatsapp": "group_whatsapp", "signal": "group_signal", "other": "group_other"}[kind]
+		parts = append(parts, t.f(key, strings.Join(routes, t.f("channel_and"))))
 	}
 	if len(parts) == 0 {
 		route := channelRoute(t, s.Mode, s.Route, "", cmp.Or(s.Via, onlyType(s)))
@@ -90,6 +109,22 @@ func channelRoute(t tr, mode, route, id, via string) string {
 		return t.f("channel_tunnel_id", id)
 	}
 	return t.f("channel_tunnel_plain")
+}
+
+func channelRouteShort(t tr, mode, route, id, via string) string {
+	switch route {
+	case "direct":
+		return t.f("route_direct")
+	case "smart":
+		return t.f("channel_smart")
+	}
+	if pinned, ok := strings.CutPrefix(mode, "route:"); ok {
+		id = pinned
+	}
+	if route == "my" || mode == "my" || via == "my" || id == "my" {
+		return "my"
+	}
+	return cmp.Or(id, via, t.f("route_tunnel"))
 }
 
 func (d *channelDisplay) sample(t tr, s tunnel.Status, now time.Time) string {

@@ -14,7 +14,7 @@ func TestChannelLines(t *testing.T) {
 		direct, smart, mail, shared, tg := "direct", "smart", "Mail: ", "Route: ", "Tg: "
 		tunnelID, irohID, irohOnly, mine := "via tunnel (berry)", "via iroh tunnel (berry)", "via iroh tunnel", "via my route"
 		if lang == "ru" {
-			direct, smart, mail, shared = "напрямую", "smart (с подстройкой)", "Почта: ", "Маршрут: "
+			direct, smart, mail, shared = "напрямую", "с подстройкой", "Почта: ", "Маршрут: "
 			tunnelID, irohID, irohOnly, mine = "через туннель (berry)", "через iroh-туннель (berry)", "через iroh-туннель", "через мой маршрут"
 		}
 		cases := []struct {
@@ -94,6 +94,95 @@ func TestStatusDetail(t *testing.T) {
 	} {
 		if got := statusDetail(tr, tunnel.Health{State: tc.state}, tc.lines); got != tc.want {
 			t.Errorf("%s %q: got %q, want %q", tc.state, tc.lines, got, tc.want)
+		}
+	}
+}
+
+func TestAppChannelForms(t *testing.T) {
+	now := time.Unix(2_000_000, 0)
+	for _, lang := range []string{"en", "ru"} {
+		tr := tr(table(lang))
+		mail, direct, smart, other, join := "Mail", "direct", "smart", "Other", " and "
+		long, own, plain := "via iroh tunnel (berry)", "via my route", "tunnel"
+		if lang == "ru" {
+			mail, direct, smart, other, join = "Почта", "напрямую", "с подстройкой", "Другое", " и "
+			long, own, plain = "через iroh-туннель (berry)", "через мой маршрут", "туннель"
+		}
+		m := tunnel.GroupStatus{Kind: "relay", Route: "direct", LastConn: &now}
+		tg := tunnel.GroupStatus{Kind: "telegram", Route: "tunnel", RouteID: "ya", LastConn: &now}
+		wa := tunnel.GroupStatus{Kind: "relay", App: "whatsapp", Route: "tunnel", RouteID: "berry", Via: "iroh", LastConn: &now}
+		molly := tunnel.GroupStatus{Kind: "relay", App: "signal", Route: "tunnel", RouteID: "br", LastConn: &now}
+		my := m
+		my.Route, my.RouteID, my.Via = "tunnel", "my", "my"
+		smartMail := m
+		smartMail.Route = "smart"
+		for _, tc := range []struct {
+			name   string
+			groups map[string]tunnel.GroupStatus
+			want   string
+		}{
+			{"wa alone", map[string]tunnel.GroupStatus{"g.whatsapp.net": wa}, "WA: " + long},
+			{"molly alone", map[string]tunnel.GroupStatus{"chat.signal.org": molly}, "Molly: " + tr.f("channel_tunnel_id", "br")},
+			{"other alone", map[string]tunnel.GroupStatus{"other": {Kind: "other", Route: "direct", LastConn: &now}}, other + ": " + direct},
+			{"two long", map[string]tunnel.GroupStatus{"a": m, "b": wa}, mail + ": " + direct + ", WA: " + long},
+			{"three compact", map[string]tunnel.GroupStatus{"a": m, "b": tg, "c": wa}, mail + ": " + direct + ", Tg: ya, WA: berry"},
+			{"four compact", map[string]tunnel.GroupStatus{"a": m, "b": tg, "c": wa, "d": molly}, mail + ": " + direct + ", Tg: ya, WA: berry, Molly: br"},
+			{"joined distinct", map[string]tunnel.GroupStatus{"a": m, "b": smartMail, "c": m}, mail + ": " + direct + join + smart},
+			{"joined compact", map[string]tunnel.GroupStatus{"a": m, "b": smartMail, "c": tg, "d": wa}, mail + ": " + direct + join + smart + ", Tg: ya, WA: berry"},
+			{"own long", map[string]tunnel.GroupStatus{"a": my}, mail + ": " + own},
+			{"own compact", map[string]tunnel.GroupStatus{"a": my, "b": tg, "c": wa}, mail + ": my, Tg: ya, WA: berry"},
+		} {
+			t.Run(lang+"/"+tc.name, func(t *testing.T) {
+				got, _ := channelLines(tr, tunnel.Status{Groups: tc.groups}, now, nil)
+				if got != tc.want {
+					t.Fatalf("got %q, want %q", got, tc.want)
+				}
+			})
+		}
+		for _, via := range []string{"iroh", "http", "soar", ""} {
+			g := wa
+			g.RouteID = ""
+			g.Via = via
+			want := via
+			if want == "" {
+				want = plain
+			}
+			got, _ := channelLines(tr, tunnel.Status{Groups: map[string]tunnel.GroupStatus{"a": m, "b": tg, "c": g}}, now, nil)
+			if expected := mail + ": " + direct + ", Tg: ya, WA: " + want; got != expected {
+				t.Errorf("missing id: got %q, want %q", got, expected)
+			}
+		}
+	}
+}
+
+func TestAppChannelTiming(t *testing.T) {
+	now := time.Unix(2_000_000, 0)
+	old := now.Add(-16 * time.Minute)
+	for _, lang := range []string{"en", "ru"} {
+		tr := tr(table(lang))
+		for _, app := range []string{"", "whatsapp", "signal"} {
+			g := tunnel.GroupStatus{Kind: "relay", App: app, Route: "direct", LastConn: &old}
+			s := tunnel.Status{Route: "direct", Groups: map[string]tunnel.GroupStatus{"a": g}}
+			shared := tr.f("notification_route", tr.f("route_direct"))
+			for _, elapsed := range []time.Duration{4 * time.Minute, 5 * time.Minute} {
+				got, shown := channelLines(tr, s, now, map[string]time.Time{"a": now.Add(-elapsed)})
+				if (got != shared) != (elapsed < 5*time.Minute) || (len(shown) > 0) != (elapsed < 5*time.Minute) {
+					t.Fatalf("%s %s %s: %q %v", lang, app, elapsed, got, shown)
+				}
+			}
+			d := channelDisplay{}
+			s.Groups = nil
+			d.sample(tr, s, now)
+			g.LastConn = &now
+			s.Groups = map[string]tunnel.GroupStatus{"a": g}
+			d.sample(tr, s, now.Add(time.Second))
+			if got := d.sample(tr, s, now.Add(10*time.Second)); got != shared {
+				t.Fatal(got)
+			}
+			expected, _ := channelLines(tr, s, now, nil)
+			if got := d.sample(tr, s, now.Add(11*time.Second)); got != expected {
+				t.Fatalf("got %q, want %q", got, expected)
+			}
 		}
 	}
 }
