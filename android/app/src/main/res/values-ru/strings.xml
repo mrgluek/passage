@@ -327,5 +327,7 @@
     <string name="whatsapp_last">последнее подключение %1$s</string>
     <string name="whatsapp_down">порт недоступен</string>
     <string name="whatsapp_check">Если WhatsApp пишет «Нет подключения», проверьте хост, оба порта и что TLS выключен.</string>
+    <string name="whatsapp_ports_help">Эти два порта не требуют пароля, поэтому ими может пользоваться любое приложение на этом телефоне, но через них доступны только серверы WhatsApp.</string>
+    <string name="whatsapp_ports_busy">Нет свободного порта; попробуйте позже</string>
     <string name="whatsapp_no_ports">Нет свободных локальных портов. Попробуйте ещё раз.</string>
 </resources>

@@ -6,9 +6,23 @@ import android.widget.Switch
 import android.widget.Toast
 
 object WhatsAppUi {
+    internal fun availablePorts(read: () -> Pair<Int, Int>): Pair<Int, Int>? =
+        try { read() } catch (_: IllegalStateException) { null }
+
     fun controls(context: Context, settings: Settings, home: Boolean, changed: () -> Unit): LinearLayout =
         LinearLayout(context).apply {
             orientation = LinearLayout.VERTICAL
+            val ports = availablePorts { settings.whatsappChatPort to settings.whatsappMediaPort }
+            if (ports == null) {
+                addView(Switch(context).apply {
+                    text = context.getString(R.string.whatsapp_switch)
+                    isChecked = false
+                    isEnabled = false
+                })
+                addView(Ui.hint(context, context.getString(R.string.whatsapp_ports_busy)))
+                return@apply
+            }
+            addView(Ui.hint(context, context.getString(R.string.whatsapp_ports_help)))
             val form = LinearLayout(context).apply { orientation = LinearLayout.VERTICAL }
             fun render() {
                 form.removeAllViews()
@@ -19,8 +33,8 @@ object WhatsAppUi {
                 if (home) form.addView(Ui.hint(context, context.getString(R.string.whatsapp_how)))
                 val rows = mutableListOf<Pair<String, String>>()
                 if (home) rows += context.getString(R.string.proxy_host) to "localhost"
-                rows += context.getString(R.string.whatsapp_chat_port) to settings.whatsappChatPort.toString()
-                rows += context.getString(R.string.whatsapp_media_port) to settings.whatsappMediaPort.toString()
+                rows += context.getString(R.string.whatsapp_chat_port) to ports.first.toString()
+                rows += context.getString(R.string.whatsapp_media_port) to ports.second.toString()
                 form.addView(Ui.valueBlock(context, rows))
             }
             addView(Switch(context).apply {

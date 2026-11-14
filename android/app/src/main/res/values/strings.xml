@@ -320,5 +320,7 @@
     <string name="whatsapp_last">last connection %1$s</string>
     <string name="whatsapp_down">listener unavailable</string>
     <string name="whatsapp_check">If WhatsApp says Disconnected, check the host and both ports and that Use TLS is off.</string>
+    <string name="whatsapp_ports_help">These two ports take no password, so any app on this phone can use them, but they only reach WhatsApp\'s servers.</string>
+    <string name="whatsapp_ports_busy">No free port; try again later</string>
     <string name="whatsapp_no_ports">No local ports available. Try again.</string>
 </resources>

@@ -43,6 +43,13 @@ class WhatsAppTest {
         WhatsApp.choosePort(emptySet(), 0) { false }
     }
 
+    @Test fun noFreePortLeavesControlsUnavailable() {
+        assertNull(WhatsAppUi.availablePorts {
+            WhatsApp.choosePort(emptySet(), 0) { false } to 20001
+        })
+        assertEquals(20001 to 20002, WhatsAppUi.availablePorts { 20001 to 20002 })
+    }
+
     private val labels = WhatsApp.Labels("Chat", "Media", "waiting", "last connection %1\$s", "listener unavailable")
 
     @Test fun statusShowsWaitingAndLastConnectionAndShortListenerErrors() {
@@ -88,7 +95,7 @@ class WhatsAppTest {
         }
         val english = strings("values")
         val russian = strings("values-ru")
-        assertEquals(13, english.size)
+        assertEquals(15, english.size)
         assertEquals(english.keys, russian.keys)
         for ((key, value) in english) {
             assertTrue(russian.getValue(key).isNotBlank())
