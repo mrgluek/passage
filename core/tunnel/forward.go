@@ -27,8 +27,9 @@ type ForwardStatus struct {
 }
 
 type forwardListener struct {
-	ln     net.Listener
-	status ForwardStatus
+	ln              net.Listener
+	status          ForwardStatus
+	lastDialFailure time.Time
 }
 
 func forwardPort(port string) (int, bool) {
@@ -113,4 +114,20 @@ func (t *Tunnel) startForwards() {
 			go t.serveListener(f.ln, i)
 		}
 	}
+}
+
+func (t *Tunnel) logForwardDialFailure(index int, err error) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	f := &t.forwards[index]
+	now := t.timeNow()
+	if !f.lastDialFailure.IsZero() && now.Sub(f.lastDialFailure) < time.Minute {
+		return
+	}
+	f.lastDialFailure = now
+	name := f.status.Name
+	if name == "" {
+		_, name, _ = net.SplitHostPort(f.status.Listen)
+	}
+	t.log.add("forward %s: dial %s failed: %v", name, f.status.Target, err)
 }

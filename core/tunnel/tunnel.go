@@ -905,7 +905,7 @@ func (t *Tunnel) serveListener(ln net.Listener, forward int) {
 				t.handle(c)
 			} else {
 				defer c.Close()
-				t.connect(c, t.cfg.Forwards[forward].Target, false)
+				t.connect(c, t.cfg.Forwards[forward].Target, false, forward)
 			}
 		}()
 	}
@@ -923,7 +923,7 @@ func (t *Tunnel) handle(c net.Conn) {
 	t.connect(c, addr, true)
 }
 
-func (t *Tunnel) connect(c net.Conn, addr string, socks bool) {
+func (t *Tunnel) connect(c net.Conn, addr string, socks bool, forward ...int) {
 	t.mu.Lock()
 	if t.clients[c] {
 		t.clients[c] = false
@@ -938,6 +938,9 @@ func (t *Tunnel) connect(c net.Conn, addr string, socks bool) {
 		c.SetWriteDeadline(time.Now().Add(handshakeTimeout))
 	}
 	if err != nil {
+		if len(forward) > 0 {
+			t.logForwardDialFailure(forward[0], err)
+		}
 		if errors.Is(err, errNoIPv6Route) {
 			if socks {
 				socksReply(c, repNetworkUnreachable)

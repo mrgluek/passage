@@ -360,3 +360,44 @@ func TestForwardConnectionCap(t *testing.T) {
 		time.Sleep(20 * time.Millisecond)
 	}
 }
+
+func TestForwardDialFailureHistoryIsThrottled(t *testing.T) {
+	var calls atomic.Int32
+	tt := newTestTunnel(t, ModeOff, failDialer(&calls), nil)
+	var seconds atomic.Int64
+	tt.now = func() time.Time { return time.Unix(1000+seconds.Load(), 0) }
+	addresses := []string{freeForwardAddr(t), freeForwardAddr(t)}
+	tt.cfg.Forwards = []Forward{
+		{Name: "chat", Listen: addresses[0], Target: "example.org:443"},
+		{Listen: addresses[1], Target: "example.org:443"},
+	}
+	tt.startForwards()
+	for _, step := range []struct {
+		seconds int64
+		count   int
+	}{{0, 1}, {59, 1}, {60, 2}} {
+		seconds.Store(step.seconds)
+		for i, addr := range addresses {
+			c := forwardConnect(t, addr)
+			c.SetReadDeadline(time.Now().Add(time.Second))
+			if _, err := c.Read(make([]byte, 1)); err != io.EOF {
+				t.Fatalf("failed forward read: %v", err)
+			}
+			c.Close()
+			name := "chat"
+			if i == 1 {
+				_, name, _ = net.SplitHostPort(addr)
+			}
+			want := "forward " + name + ": dial example.org:443 failed: blocked"
+			count := 0
+			for _, e := range tt.Status(100).Events {
+				if e.Msg == want {
+					count++
+				}
+			}
+			if count != step.count {
+				t.Fatalf("at %ds: %q entries = %d, want %d", step.seconds, want, count, step.count)
+			}
+		}
+	}
+}
