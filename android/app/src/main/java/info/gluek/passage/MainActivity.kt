@@ -256,9 +256,11 @@ class MainActivity : ThemedActivity() {
             }
             setup.addView(tabContent)
             val content = HomeSetup.connect(appTab, settings.socksLink(), settings.tgLink(), settings.veltaLink())
-            for (block in listOfNotNull(content, content.secondary)) {
+            for ((blockIndex, block) in listOfNotNull(content, content.secondary).withIndex()) {
                 block.instruction?.takeIf { appTab != HomeSetup.AppTab.OTHER && appTab != HomeSetup.AppTab.WHATSAPP }?.let { instruction ->
-                    tabContent.addView(Ui.hint(this, getString(instruction)))
+                    tabContent.addView(Ui.hint(this, getString(instruction)).apply {
+                        if (blockIndex > 0) setPadding(paddingLeft, paddingTop + Ui.dp(this@MainActivity, 16), paddingRight, paddingBottom)
+                    })
                 }
                 block.action?.let { action ->
                     tabContent.addView(Ui.outlinedButton(this, getString(action)) {
