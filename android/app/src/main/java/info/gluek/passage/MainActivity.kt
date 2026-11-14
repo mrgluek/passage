@@ -288,15 +288,7 @@ class MainActivity : ThemedActivity() {
                     }
                 })
                 tabContent.addView(Ui.hint(this, getString(R.string.allow_no_password_help)))
-                tabContent.addView(Ui.hint(this, getString(R.string.home_other_how)))
-                val rows = mutableListOf(getString(R.string.proxy_host) to Settings.HOST, getString(R.string.proxy_port) to settings.port.toString())
-                if (settings.auth) rows += getString(R.string.proxy_user) to settings.user
-                tabContent.addView(Ui.valueBlock(this, rows, if (settings.auth) null else getString(R.string.proxy_no_password)).apply {
-                    layoutParams = LinearLayout.LayoutParams(-1, -2).apply { topMargin = Ui.dp(this@MainActivity, 12) }
-                    if (settings.auth) addView(Ui.passwordRow(this@MainActivity, settings.pass, passwordVisible) {
-                        passwordVisible = !passwordVisible; renderSetup()
-                    })
-                })
+                tabContent.addView(Ui.hint(this, getString(R.string.home_molly_other_apps)))
             }
             if (!settings.appSeen) {
                 setup.addView(Ui.hint(this, getString(R.string.home_app_not_seen)).apply {

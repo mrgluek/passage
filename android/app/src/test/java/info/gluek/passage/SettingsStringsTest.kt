@@ -66,6 +66,6 @@ class SettingsStringsTest {
         org.junit.Assert.assertTrue(main.contains("isChecked = !settings.auth"))
         org.junit.Assert.assertTrue(main.contains("settings.setAuthentication(this@MainActivity, !on)"))
         org.junit.Assert.assertTrue(settings.contains("settings.setAuthentication(this@SettingsActivity, on)"))
-        org.junit.Assert.assertTrue(main.indexOf("getString(R.string.home_molly_how)") < main.indexOf("getString(R.string.home_other_how)"))
+        org.junit.Assert.assertTrue(main.indexOf("getString(R.string.home_molly_how)") < main.indexOf("getString(R.string.home_molly_other_apps)"))
     }
 }

@@ -557,8 +557,8 @@ func TestHomeAppPanes(t *testing.T) {
 		`[[t("proxy_host"), "localhost"], [t("proxy_port"), String(v.port)]]`,
 		`toggle.checked = !v.auth`,
 		`call("setAuth", !toggle.checked).then(refresh, fail)`,
-		`para(t("allow_no_password_help")), para(t("tab_other_text"))`,
-		`if (v.auth) rows.push`, `document.title = v.caption`,
+		`para(t("allow_no_password_help")), para(t("molly_other_apps"))`,
+		`document.title = v.caption`,
 	} {
 		if !strings.Contains(indexHTML, want) {
 			t.Errorf("home missing %q", want)

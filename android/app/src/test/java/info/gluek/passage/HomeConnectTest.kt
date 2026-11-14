@@ -32,7 +32,7 @@ class HomeConnectTest {
     @Test fun otherAppUsesManualValuesWithoutLinkActions() {
         val content = HomeSetup.connect(HomeSetup.AppTab.OTHER, "socks-link", "telegram-link", "velta-link")
         assertNull(content.download)
-        assertEquals(R.string.home_other_how, content.instruction)
+        assertEquals(R.string.home_molly_other_apps, content.instruction)
         assertNull(content.action)
         assertNull(content.clipboard)
         assertNull(content.open)
@@ -64,7 +64,7 @@ class HomeConnectTest {
         assertEquals(R.string.home_telegram_open, telegram.action)
         assertNull(telegram.download)
         val other = HomeSetup.connect(HomeSetup.AppTab.OTHER, "socks-link", "telegram-link", "velta-link")
-        assertEquals(R.string.home_other_how, other.instruction)
+        assertEquals(R.string.home_molly_other_apps, other.instruction)
         assertNull(other.action)
         assertNull(other.download)
     }

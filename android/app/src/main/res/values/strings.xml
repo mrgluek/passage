@@ -278,7 +278,7 @@
     <string name="report_failed">Couldn\'t create the report file. Try again.</string>
     <string name="home_tab_delta">Delta Chat</string>
     <string name="home_tab_telegram">Telegram</string>
-    <string name="home_tab_other">Other</string>
+    <string name="home_tab_other">Molly</string>
     <string name="home_delta_how">In the Delta Chat (or ArcaneChat) app open Settings → Advanced → Proxy → Add proxy, then paste the link:</string>
     <string name="home_telegram_how">Tap the button: Telegram opens and offers to add the proxy. If several Telegram apps are installed, or yours is not the official one, the link is copied: paste it in Settings → Data and Storage → Proxy:</string>
     <string name="home_dot_on">Proxy on</string>
@@ -295,7 +295,7 @@
     <string name="home_download">Download:</string>
     <string name="home_velta_open">Copy and open link in Velta</string>
     <string name="home_telegram_open">Copy and open link in Telegram</string>
-    <string name="home_other_how">Tap a value to copy it.</string>
+    <string name="home_molly_other_apps">Another app with a SOCKS5 proxy setting: Settings → Proxy access lists the host, port, user and password.</string>
     <string name="home_test_report">Test network and send report to the developer</string>
     <string name="channel_mail">Mail</string>
     <string name="channel_telegram">Tg</string>

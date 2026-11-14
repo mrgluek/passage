@@ -285,7 +285,7 @@
     <string name="report_failed">Не удалось создать файл отчёта. Повторите попытку.</string>
     <string name="home_tab_delta">Delta Chat</string>
     <string name="home_tab_telegram">Telegram</string>
-    <string name="home_tab_other">Другое</string>
+    <string name="home_tab_other">Molly</string>
     <string name="home_delta_how">В приложении Delta Chat (или ArcaneChat) откройте Настройки → Дополнительно → Прокси → Добавить прокси и вставьте ссылку:</string>
     <string name="home_telegram_how">Нажмите кнопку: Telegram откроется и предложит добавить прокси. Если установлено несколько приложений Telegram или у вас неофициальный клиент, ссылка скопирована: вставьте её в Настройки → Данные и память → Прокси:</string>
     <string name="home_dot_on">Прокси включён</string>
@@ -302,7 +302,7 @@
     <string name="home_download">Скачать:</string>
     <string name="home_velta_open">Скопировать и открыть ссылку в Velta</string>
     <string name="home_telegram_open">Скопировать и открыть ссылку в Telegram</string>
-    <string name="home_other_how">Нажмите на значение, чтобы скопировать.</string>
+    <string name="home_molly_other_apps">Другое приложение с настройкой SOCKS5: хост, порт, логин и пароль перечислены в Настройки → Доступ к прокси.</string>
     <string name="home_test_report">Проверить сеть и отправить отчёт разработчику</string>
     <string name="channel_mail">Почта</string>
     <string name="channel_telegram">Tg</string>

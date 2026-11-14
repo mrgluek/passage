@@ -553,29 +553,7 @@ function renderTabs(v) {
     toggle.checked = !v.auth;
     toggle.onchange = () => call("setAuth", !toggle.checked).then(refresh, fail);
     allow.append(toggle, t("allow_no_password"));
-    pane.append(molly, allow, para(t("allow_no_password_help")), para(t("tab_other_text")));
-    const box = document.createElement("div");
-    box.className = "values";
-    const rows = [[t("proxy_host"), v.host, v.host], [t("proxy_port"), String(v.port), String(v.port)]];
-    if (v.auth) rows.push([t("proxy_user"), v.user, v.user], [t("proxy_pass"), showPass ? v.pass : "•".repeat(8), v.pass]);
-    for (const [label, shown, value] of rows) {
-      const r = document.createElement("div");
-      r.className = "v";
-      r.innerHTML = "<span></span><span></span>";
-      r.children[0].textContent = label;
-      r.children[1].textContent = shown;
-      r.onclick = () => copy(value, t("value_copied", label));
-      if (label === t("proxy_pass")) {
-        const sp = document.createElement("span");
-        sp.className = "showpw";
-        sp.textContent = t(showPass ? "h_hide" : "h_show");
-        sp.onclick = e => { e.stopPropagation(); showPass = !showPass; shownHome = ""; renderHome(last); };
-        r.append(sp);
-      }
-      box.append(r);
-    }
-    if (!v.auth) { const n = document.createElement("p"); n.className = "hint"; n.textContent = t("proxy_no_password"); box.append(n); }
-    pane.append(box);
+    pane.append(molly, allow, para(t("allow_no_password_help")), para(t("molly_other_apps")));
   }
 }
 function renderSubscriptions(rows) {
