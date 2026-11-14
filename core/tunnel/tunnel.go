@@ -1978,6 +1978,7 @@ type Status struct {
 
 // GroupStatus is one group's part of Status.
 type GroupStatus struct {
+	App            string            `json:"app,omitempty"`
 	Kind           string            `json:"kind"` // relay, telegram or other
 	Route          string            `json:"route"`
 	Via            string            `json:"via,omitempty"`
@@ -2072,6 +2073,7 @@ func (t *Tunnel) statusLocked(n int) Status {
 		}
 		s.Groups[gs.name] = GroupStatus{
 			Kind:           gs.kind.String(),
+			App:            groupApp(gs.kind.String(), gs.name),
 			Route:          gs.route.String(),
 			Via:            gs.viaLocked(),
 			RouteID:        t.groupRouteIDLocked(gs),
