@@ -151,6 +151,7 @@ const (
 	handshakeTimeout      = 30 * time.Second
 	maxConnections        = 256
 	maxPendingHandshakes  = 32
+	maxForwardConnections = 64 // across all forwards, so they cannot starve the SOCKS listener
 	directDialTimeout     = 8 * time.Second
 	tunnelDialTimeout     = 60 * time.Second
 	probeTimeout          = 6 * time.Second
@@ -171,17 +172,18 @@ type dialFunc func(ctx context.Context, network, addr string) (net.Conn, error)
 
 // Tunnel is a running local proxy.
 type Tunnel struct {
-	subs      *subscriptionRuntime
-	cfg       Config
-	resolvers []string // the paths handed to soar (IPv6 dropped without a route)
-	ln        net.Listener
-	forwards  []forwardListener
-	client    soarClient
-	log       *eventLog
-	ctx       context.Context
-	cancel    context.CancelFunc
-	kick      chan struct{}
-	wg        sync.WaitGroup
+	subs         *subscriptionRuntime
+	cfg          Config
+	resolvers    []string // the paths handed to soar (IPv6 dropped without a route)
+	ln           net.Listener
+	forwards     []forwardListener
+	forwardConns int
+	client       soarClient
+	log          *eventLog
+	ctx          context.Context
+	cancel       context.CancelFunc
+	kick         chan struct{}
+	wg           sync.WaitGroup
 
 	// Swappable for tests. ways[RouteSmart] is set while a strategy works;
 	// guarded by mu.
@@ -865,7 +867,8 @@ func (t *Tunnel) serveListener(ln net.Listener, forward int) {
 			continue
 		}
 		t.mu.Lock()
-		if t.ctx.Err() != nil || len(t.clients) >= maxConnections || (forward < 0 && t.pending >= maxPendingHandshakes) {
+		if t.ctx.Err() != nil || len(t.clients) >= maxConnections || (forward < 0 && t.pending >= maxPendingHandshakes) ||
+			(forward >= 0 && t.forwardConns >= maxForwardConnections) {
 			t.mu.Unlock()
 			c.Close()
 			continue
@@ -877,6 +880,7 @@ func (t *Tunnel) serveListener(ln net.Listener, forward int) {
 		if forward < 0 {
 			t.pending++
 		} else {
+			t.forwardConns++
 			f := &t.forwards[forward].status
 			f.Conns++
 			now := t.timeNow().UTC()
@@ -890,6 +894,9 @@ func (t *Tunnel) serveListener(ln net.Listener, forward int) {
 				t.mu.Lock()
 				if t.clients[c] {
 					t.pending--
+				}
+				if forward >= 0 {
+					t.forwardConns--
 				}
 				delete(t.clients, c)
 				t.mu.Unlock()
@@ -1399,7 +1406,7 @@ func (t *Tunnel) probeHost(ctx context.Context, g *group, viaTunnel bool, hostpo
 	default:
 		err = t.probeTLS(ctx, hostport, host)
 	}
-	if probeReachable(err) {
+	if probeReachableFor(err, host) {
 		return nil
 	}
 	return err
@@ -1524,7 +1531,7 @@ func (t *Tunnel) probeCanaries() bool {
 			pctx, pcancel := context.WithTimeout(ctx, probeTimeout)
 			defer pcancel()
 			host, _, _ := net.SplitHostPort(c)
-			answers <- answer{c, probeReachable(t.probeTLS(pctx, c, host))}
+			answers <- answer{c, probeReachableFor(t.probeTLS(pctx, c, host), host)}
 		}()
 	}
 	next, running := 1, 1
@@ -1765,7 +1772,10 @@ func probePort(addr string) string {
 const stateRelaysDown = "relays-down"
 
 // A private root is not evidence of a block; interception still fails real connections, tracked separately.
-func probeReachable(err error) bool {
+func probeReachable(err error) bool { return probeReachableFor(err, "") }
+
+// probeReachableFor also checks the host name when it is known.
+func probeReachableFor(err error, host string) bool {
 	if err == nil {
 		return true
 	}
@@ -1782,7 +1792,7 @@ func probeReachable(err error) bool {
 			intermediates.AddCert(cert)
 		}
 		// Check the supplied chain for other errors even when its root is unknown.
-		_, err = certs[0].Verify(x509.VerifyOptions{Roots: roots, Intermediates: intermediates})
+		_, err = certs[0].Verify(x509.VerifyOptions{DNSName: host, Roots: roots, Intermediates: intermediates})
 		return err == nil
 	}
 	return true

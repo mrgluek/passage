@@ -93,7 +93,7 @@ func validateForwards(cfg Config) error {
 func (t *Tunnel) startForwards() {
 	t.forwards = make([]forwardListener, len(t.cfg.Forwards))
 	for i, f := range t.cfg.Forwards {
-		ln, _, err := listenProxy(f.Listen, 5*time.Second)
+		ln, _, err := listenProxy(f.Listen, time.Second)
 		status := ForwardStatus{Name: f.Name, Listen: f.Listen, Target: f.Target, Up: err == nil}
 		if err != nil {
 			// Keep addresses and OS-specific wrappers out of the status error.

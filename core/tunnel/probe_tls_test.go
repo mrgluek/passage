@@ -143,8 +143,8 @@ func TestPrivateRootTunnelProbe(t *testing.T) {
 		host, _, _ := net.SplitHostPort(addr)
 		return probeTLSVia(ctx, d.DialContext, addr, host)
 	}
-	g := tt.testGroup("relay.example.org:993")
-	res := tt.confirmViaTunnel(g, probeResult{Relays: 1, NetworkOK: true, hosts: []string{"relay.example.org:993"}})
+	g := tt.testGroup("example.org:993")
+	res := tt.confirmViaTunnel(g, probeResult{Relays: 1, NetworkOK: true, hosts: []string{"example.org:993"}})
 	if !res.TunnelChecked || !res.TunnelOK {
 		t.Fatalf("private-root tunnel probe did not answer: %+v", res)
 	}
@@ -162,7 +162,7 @@ func TestPinnedTunnelToAutoRecoversWithPrivateRoot(t *testing.T) {
 	tt.cfg.StateFile = filepath.Join(t.TempDir(), "state.json")
 	tt.client = &routePool{clients: []soarClient{&poolFixture{dial: d.DialContext}}, ids: []string{"test"}, kinds: []string{"http"}, ipv6: []bool{false}}
 	tt.probeTunnel = func(context.Context, string, string) error { return nil }
-	g := tt.testGroup("relay.example.org:993")
+	g := tt.testGroup("example.org:993")
 	tt.probeTLS = func(ctx context.Context, _, _ string) error {
 		host, _, _ := net.SplitHostPort(addr)
 		return probeTLS(ctx, addr, host)
@@ -188,5 +188,18 @@ func TestPinnedTunnelToAutoRecoversWithPrivateRoot(t *testing.T) {
 	s := tt.Status(0).Groups[g.name]
 	if s.Route != "direct" || s.State != "direct" || s.LastResult.RelayOK != 1 {
 		t.Fatalf("private-root relay did not recover: %+v", s)
+	}
+}
+
+func TestProbeReachableChecksTheHostName(t *testing.T) {
+	srv := tlsProbeServer(t, false)
+	probeRoots = x509.NewCertPool()
+	defer func() { probeRoots = nil }()
+	err := probeTLS(context.Background(), srv.Listener.Addr().String(), "example.org")
+	if !probeReachableFor(err, "example.org") {
+		t.Fatalf("matching name rejected: %v", err)
+	}
+	if probeReachableFor(err, "other.example.net") {
+		t.Fatal("an untrusted chain for another name counted as reachable")
 	}
 }

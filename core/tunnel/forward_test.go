@@ -314,3 +314,49 @@ func TestForwardCloseCancelsDial(t *testing.T) {
 	}
 	waitClients(t, tt, 0)
 }
+
+func TestForwardConnectionCap(t *testing.T) {
+	target, addr := localEcho(t), freeForwardAddr(t)
+	tt, err := Start(Config{Mode: ModeOff, Forwards: []Forward{{Name: "cap", Listen: addr, Target: target}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(tt.Close)
+	var open []net.Conn
+	for range maxForwardConnections {
+		c := forwardConnect(t, addr)
+		c.Write([]byte("x"))
+		buf := make([]byte, 1)
+		if _, err := io.ReadFull(c, buf); err != nil {
+			t.Fatal(err)
+		}
+		open = append(open, c)
+	}
+	extra := forwardConnect(t, addr)
+	extra.SetDeadline(time.Now().Add(2 * time.Second))
+	if _, err := extra.Read(make([]byte, 1)); err == nil {
+		t.Fatal("a connection past the forward cap was served")
+	}
+	// The SOCKS listener is unaffected.
+	socks, err := net.DialTimeout("tcp", tt.Addr(), time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	socks.Close()
+	for _, c := range open {
+		c.Close()
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		tt.mu.Lock()
+		n := tt.forwardConns
+		tt.mu.Unlock()
+		if n == 0 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("forward counter stuck at %d", n)
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+}
