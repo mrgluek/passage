@@ -84,12 +84,13 @@ type Config struct {
 	// SystemResolvers are the DNS servers the phone's current network handed
 	// out (the operator's on mobile data); Operator is the SIM's MCC+MNC.
 	// Both come from the app at start, never from a link.
-	SystemResolvers []string `json:"system_resolvers,omitempty"`
-	Operator        string   `json:"operator,omitempty"`
-	Mode            string   `json:"mode,omitempty"`
-	Listen          string   `json:"listen,omitempty"` // default 127.0.0.1:0
-	User            string   `json:"user,omitempty"`   // SOCKS5 credentials; empty = no auth
-	Pass            string   `json:"pass,omitempty"`
+	SystemResolvers []string  `json:"system_resolvers,omitempty"`
+	Operator        string    `json:"operator,omitempty"`
+	Mode            string    `json:"mode,omitempty"`
+	Listen          string    `json:"listen,omitempty"` // default 127.0.0.1:0
+	Forwards        []Forward `json:"forwards,omitempty"`
+	User            string    `json:"user,omitempty"` // SOCKS5 credentials; empty = no auth
+	Pass            string    `json:"pass,omitempty"`
 	// SafeQName is the query-name length every resolver path starts at; soar
 	// grows it to the 253 maximum. 0 = soarSafeQName (101).
 	SafeQName int `json:"safe_qname,omitempty"`

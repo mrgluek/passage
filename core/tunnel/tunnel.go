@@ -175,6 +175,7 @@ type Tunnel struct {
 	cfg       Config
 	resolvers []string // the paths handed to soar (IPv6 dropped without a route)
 	ln        net.Listener
+	forwards  []forwardListener
 	client    soarClient
 	log       *eventLog
 	ctx       context.Context
@@ -278,6 +279,9 @@ type probeResult struct {
 func Start(cfg Config) (*Tunnel, error) {
 	cfg, err := cfg.Normalize()
 	if err != nil {
+		return nil, err
+	}
+	if err := validateForwards(cfg); err != nil {
 		return nil, err
 	}
 	rawConfig := cfg
@@ -412,6 +416,7 @@ func Start(cfg Config) (*Tunnel, error) {
 			pool.onFailure = t.requestSubscriptionRefresh
 		}
 	}
+	t.startForwards()
 	t.warmTunnel()
 	t.settleHealth()
 	t.wg.Add(3)
@@ -648,6 +653,13 @@ func (t *Tunnel) Close() {
 	t.cancel()
 	t.ln.Close()
 	t.mu.Lock()
+	for i := range t.forwards {
+		f := &t.forwards[i]
+		if f.ln != nil {
+			f.ln.Close()
+		}
+		f.status.Up = false
+	}
 	var locals []net.Conn
 	for c := range t.clients {
 		locals = append(locals, c)
@@ -837,9 +849,13 @@ func (t *Tunnel) setRouteLocked(g *group, r Route, reason string) {
 }
 
 func (t *Tunnel) serve() {
+	t.serveListener(t.ln, -1)
+}
+
+func (t *Tunnel) serveListener(ln net.Listener, forward int) {
 	defer t.wg.Done()
 	for {
-		c, err := t.ln.Accept()
+		c, err := ln.Accept()
 		if err != nil {
 			if t.ctx.Err() != nil {
 				return
@@ -849,7 +865,7 @@ func (t *Tunnel) serve() {
 			continue
 		}
 		t.mu.Lock()
-		if t.ctx.Err() != nil || len(t.clients) >= maxConnections || t.pending >= maxPendingHandshakes {
+		if t.ctx.Err() != nil || len(t.clients) >= maxConnections || (forward < 0 && t.pending >= maxPendingHandshakes) {
 			t.mu.Unlock()
 			c.Close()
 			continue
@@ -857,8 +873,15 @@ func (t *Tunnel) serve() {
 		if t.clients == nil {
 			t.clients = make(map[net.Conn]bool)
 		}
-		t.clients[c] = true
-		t.pending++
+		t.clients[c] = forward < 0
+		if forward < 0 {
+			t.pending++
+		} else {
+			f := &t.forwards[forward].status
+			f.Conns++
+			now := t.timeNow().UTC()
+			f.LastConn = &now
+		}
 		t.wg.Add(1)
 		t.mu.Unlock()
 		go func() {
@@ -871,7 +894,12 @@ func (t *Tunnel) serve() {
 				delete(t.clients, c)
 				t.mu.Unlock()
 			}()
-			t.handle(c)
+			if forward < 0 {
+				t.handle(c)
+			} else {
+				defer c.Close()
+				t.connect(c, t.cfg.Forwards[forward].Target, false)
+			}
 		}()
 	}
 }
@@ -885,6 +913,10 @@ func (t *Tunnel) handle(c net.Conn) {
 		return
 	}
 	c.SetDeadline(time.Time{})
+	t.connect(c, addr, true)
+}
+
+func (t *Tunnel) connect(c net.Conn, addr string, socks bool) {
 	t.mu.Lock()
 	if t.clients[c] {
 		t.clients[c] = false
@@ -894,11 +926,15 @@ func (t *Tunnel) handle(c net.Conn) {
 	t.mu.Unlock()
 	t.learn(g, addr)
 
-	remote, route, err := t.dial(g, addr)
-	c.SetWriteDeadline(time.Now().Add(handshakeTimeout))
+	remote, route, err := t.dialWithHistory(g, addr, socks)
+	if socks {
+		c.SetWriteDeadline(time.Now().Add(handshakeTimeout))
+	}
 	if err != nil {
 		if errors.Is(err, errNoIPv6Route) {
-			socksReply(c, repNetworkUnreachable)
+			if socks {
+				socksReply(c, repNetworkUnreachable)
+			}
 			return
 		}
 		t.mu.Lock()
@@ -907,15 +943,19 @@ func (t *Tunnel) handle(c net.Conn) {
 			g.tunnelFails++
 		}
 		t.mu.Unlock()
-		t.log.add("%s dial %s failed: %v", route, addr, err)
-		socksReply(c, repHostUnreachable)
+		if socks {
+			t.log.add("%s dial %s failed: %v", route, addr, err)
+			socksReply(c, repHostUnreachable)
+		}
 		return
 	}
 	defer remote.Close()
-	if err := socksReply(c, repSucceeded); err != nil {
-		return
+	if socks {
+		if err := socksReply(c, repSucceeded); err != nil {
+			return
+		}
+		c.SetDeadline(time.Time{})
 	}
-	c.SetDeadline(time.Time{})
 
 	trackedRemote := remote
 	if tc, ok := remote.(*trialConn); ok {
@@ -1020,6 +1060,10 @@ var errNoIPv6Route = errors.New("no IPv6 route available")
 // through to the next usable route for this connection and triggers a probe.
 // The error of the last route tried is returned for the caller to count.
 func (t *Tunnel) dial(g *group, addr string) (net.Conn, Route, error) {
+	return t.dialWithHistory(g, addr, true)
+}
+
+func (t *Tunnel) dialWithHistory(g *group, addr string, logFailures bool) (net.Conn, Route, error) {
 	t.tick(t.timeNow())
 	ipv6 := isIPv6Address(addr)
 	localIPv6 := !ipv6 || t.hasIPv6Route()
@@ -1145,7 +1189,9 @@ func (t *Tunnel) dial(g *group, addr string) (net.Conn, Route, error) {
 			t.stats[r].Fails++
 		}
 		t.mu.Unlock()
-		t.log.add("%s dial %s failed (%v); trying %s", r, addr, err, next)
+		if logFailures {
+			t.log.add("%s dial %s failed (%v); trying %s", r, addr, err, next)
+		}
 		r = next
 	}
 }
@@ -1875,6 +1921,7 @@ func dialResolver(ctx context.Context, network, addr string) (net.Conn, error) {
 
 // Status is the diagnostics snapshot shown in the app and sent in reports.
 type Status struct {
+	Forwards      []ForwardStatus       `json:"forwards,omitempty"`
 	Subscriptions []SubscriptionStatus  `json:"subscriptions,omitempty"`
 	ConfigChanged bool                  `json:"config_changed,omitempty"`
 	RouteCount    int                   `json:"route_count"`
@@ -1991,6 +2038,14 @@ func (t *Tunnel) statusLocked(n int) Status {
 		Stats:          map[string]routeStats{},
 		Soar:           SoarVersion(),
 		Groups:         map[string]GroupStatus{},
+	}
+	for _, f := range t.forwards {
+		row := f.status
+		if row.LastConn != nil {
+			stamp := *row.LastConn
+			row.LastConn = &stamp
+		}
+		s.Forwards = append(s.Forwards, row)
 	}
 	for _, gs := range t.groupsLocked() {
 		if gs.kind == kindOther && gs.lastConn.IsZero() {
