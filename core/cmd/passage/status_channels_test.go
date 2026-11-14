@@ -12,10 +12,10 @@ func TestChannelLines(t *testing.T) {
 	for _, lang := range []string{"en", "ru"} {
 		tr := tr(table(lang))
 		direct, smart, mail, shared, tg := "direct", "smart", "Mail: ", "Route: ", "Tg: "
-		tunnelID, irohID, irohOnly := "via tunnel (berry)", "via iroh tunnel (berry)", "via iroh tunnel"
+		tunnelID, irohID, irohOnly, mine := "via tunnel (berry)", "via iroh tunnel (berry)", "via iroh tunnel", "via my route"
 		if lang == "ru" {
 			direct, smart, mail, shared = "напрямую", "smart (с подстройкой)", "Почта: ", "Маршрут: "
-			tunnelID, irohID, irohOnly = "через туннель (berry)", "через iroh-туннель (berry)", "через iroh-туннель"
+			tunnelID, irohID, irohOnly, mine = "через туннель (berry)", "через iroh-туннель (berry)", "через iroh-туннель", "через мой маршрут"
 		}
 		cases := []struct {
 			name, mode string
@@ -34,6 +34,7 @@ func TestChannelLines(t *testing.T) {
 			{name: "unused telegram", groups: map[string]tunnel.GroupStatus{"telegram": {Kind: "telegram", Route: "direct"}}, want: shared + direct},
 			{name: "several", groups: map[string]tunnel.GroupStatus{"a": {Kind: "relay", Route: "direct", LastConn: &recent}, "b": {Kind: "telegram", Route: "tunnel", RouteID: "berry", LastConn: &recent}}, want: mail + direct + ", " + tg + tunnelID},
 			{name: "pinned", mode: "route:berry", groups: map[string]tunnel.GroupStatus{"mail": {Kind: "relay", Route: "tunnel", LastConn: &recent}}, want: mail + tunnelID},
+			{name: "own route", groups: map[string]tunnel.GroupStatus{"mail": {Kind: "relay", Route: "tunnel", RouteID: "my", Via: "my", LastConn: &recent}}, want: mail + mine},
 			{name: "type", groups: map[string]tunnel.GroupStatus{"mail": {Kind: "relay", Route: "tunnel", Via: "iroh", LastConn: &recent}}, want: mail + irohOnly},
 		}
 		for _, tc := range cases {

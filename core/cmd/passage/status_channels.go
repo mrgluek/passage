@@ -75,6 +75,9 @@ func channelRoute(t tr, mode, route, id, via string) string {
 	if pinned, ok := strings.CutPrefix(mode, "route:"); ok {
 		id = pinned
 	}
+	if via == "my" {
+		return t.f("channel_my")
+	}
 	if route == "" && id == "" && via == "" {
 		return ""
 	}

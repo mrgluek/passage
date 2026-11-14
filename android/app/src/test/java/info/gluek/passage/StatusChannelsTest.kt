@@ -5,8 +5,8 @@ import org.junit.Test
 
 class StatusChannelsTest {
     private val now = 2_000_000_000L
-    private val en = StatusChannels.Labels("Mail", "Tg", "Other", "Route", "direct", "smart", listOf("via %s tunnel (%s)", "via %s tunnel", "via tunnel (%s)", "via tunnel"))
-    private val ru = StatusChannels.Labels("Почта", "Tg", "Другое", "Маршрут", "напрямую", "smart (с подстройкой)", listOf("через %s-туннель (%s)", "через %s-туннель", "через туннель (%s)", "через туннель"))
+    private val en = StatusChannels.Labels("Mail", "Tg", "Other", "Route", "direct", "smart", listOf("via %s tunnel (%s)", "via %s tunnel", "via tunnel (%s)", "via tunnel"), "via my route")
+    private val ru = StatusChannels.Labels("Почта", "Tg", "Другое", "Маршрут", "напрямую", "smart (с подстройкой)", listOf("через %s-туннель (%s)", "через %s-туннель", "через туннель (%s)", "через туннель"), "через мой маршрут")
 
     @Test fun channelLines() {
         data class Case(val name: String, val groups: List<StatusChannels.Group>, val expected: String, val mode: String = "auto", val shown: Map<String, Long> = emptyMap())
@@ -25,6 +25,7 @@ class StatusChannelsTest {
                 Case("unused telegram", listOf(tg.copy(lastConn = 0)), "${l.shared}: ${l.direct}"),
                 Case("several", listOf(mail, tg), "${l.mail}: ${l.direct}, Tg: ${l.tunnel[2].format("berry")}"),
                 Case("pinned", listOf(mail.copy(route = "tunnel")), "${l.mail}: ${l.tunnel[2].format("berry")}", mode = "route:berry"),
+                Case("own route", listOf(mail.copy(route = "tunnel", id = "my", via = "my")), "${l.mail}: ${l.mine}"),
                 Case("type", listOf(mail.copy(route = "tunnel", via = "iroh")), "${l.mail}: ${l.tunnel[1].format("iroh")}"),
             )
             for (c in cases) assertEquals(c.name, c.expected, StatusChannels.lines(c.groups, c.mode, "direct", "", l, now, c.shown).text)

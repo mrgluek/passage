@@ -2,7 +2,7 @@ package info.gluek.passage
 
 object StatusChannels {
     data class Group(val name: String, val kind: String, val route: String, val id: String = "", val via: String = "", val lastConn: Long = 0, val targets: Boolean = false)
-    data class Labels(val mail: String, val telegram: String, val other: String, val shared: String, val direct: String, val smart: String, val tunnel: List<String>)
+    data class Labels(val mail: String, val telegram: String, val other: String, val shared: String, val direct: String, val smart: String, val tunnel: List<String>, val mine: String)
     // tunnel: formats for type and id, type only, id only, neither
     data class Lines(val text: String, val shown: Map<String, Long>)
 
@@ -13,6 +13,7 @@ object StatusChannels {
             val name = if (mode.startsWith("route:")) mode.removePrefix("route:") else id
             when {
                 route.isEmpty() && name.isEmpty() && via.isEmpty() -> ""
+                via == "my" -> labels.mine
                 name.isNotEmpty() && via.isNotEmpty() -> labels.tunnel[0].format(via, name)
                 via.isNotEmpty() -> labels.tunnel[1].format(via)
                 name.isNotEmpty() -> labels.tunnel[2].format(name)

@@ -330,4 +330,5 @@
     <string name="whatsapp_ports_help">Эти два порта не требуют пароля, поэтому ими может пользоваться любое приложение на этом телефоне, но через них доступны только серверы WhatsApp.</string>
     <string name="whatsapp_ports_busy">Нет свободного порта; попробуйте позже</string>
     <string name="whatsapp_no_ports">Нет свободных локальных портов. Попробуйте ещё раз.</string>
+    <string name="channel_my">через мой маршрут</string>
 </resources>

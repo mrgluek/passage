@@ -323,4 +323,5 @@
     <string name="whatsapp_ports_help">These two ports take no password, so any app on this phone can use them, but they only reach WhatsApp\'s servers.</string>
     <string name="whatsapp_ports_busy">No free port; try again later</string>
     <string name="whatsapp_no_ports">No local ports available. Try again.</string>
+    <string name="channel_my">via my route</string>
 </resources>
