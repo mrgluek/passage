@@ -388,7 +388,7 @@ func TestForwardDialFailureHistoryIsThrottled(t *testing.T) {
 			if i == 1 {
 				_, name, _ = net.SplitHostPort(addr)
 			}
-			want := "forward " + name + ": dial example.org:443 failed: blocked"
+			want := "forward " + name + ": dial example.org:443 failed: filtered"
 			count := 0
 			for _, e := range tt.Status(100).Events {
 				if e.Msg == want {
