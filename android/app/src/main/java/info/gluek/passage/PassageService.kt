@@ -11,7 +11,6 @@ import android.content.pm.ServiceInfo
 import android.net.ConnectivityManager
 import android.net.LinkProperties
 import android.net.Network
-import android.os.BatteryManager
 import android.os.Build
 import android.os.Handler
 import android.os.IBinder
@@ -52,7 +51,6 @@ class PassageService : Service() {
         private const val TICK_MS = 60_000L
         private const val RETRY_MS = 15_000L
         private const val NET_SETTLE_MS = 2_000L
-        private const val BATTERY_SAMPLE_MS = 10 * 60_000L
         private const val UPDATE_SETTLE_MS = 5 * 60_000L
 
         /** The service is up (the proxy may still be starting or retrying). */
@@ -97,7 +95,6 @@ class PassageService : Service() {
     // Touched on the worker thread only.
     private var lastNet: Pair<List<String>, String>? = null
     private var lastNotification: Pair<String, String>? = null
-    private var lastBatterySample = 0L
     private val startedAt = System.currentTimeMillis()
 
     private val tick = object : Runnable {
@@ -109,7 +106,6 @@ class PassageService : Service() {
                     Diagnostics.routerEvents(status)
                     updateWakeLock(status)
                     updateNotification(status)
-                    sampleBattery()
                     checkForUpdate()
                 } finally {
                     // With a Soar route, check often: its polling needs the
@@ -226,28 +222,6 @@ class PassageService : Service() {
         return (0 until tunnels.length()).any {
             val t = tunnels.getJSONObject(it)
             t.optString("type") == "soar" && t.optString("state") == "up"
-        }
-    }
-
-    /** One battery sample every BATTERY_SAMPLE_MS for the report (while the proxy runs). */
-    private fun sampleBattery() {
-        val now = System.currentTimeMillis()
-        if (now - lastBatterySample < BATTERY_SAMPLE_MS) return
-        lastBatterySample = now
-        try {
-            val bm = getSystemService(BatteryManager::class.java)
-            val pm = getSystemService(PowerManager::class.java)
-            fun prop(id: Int): Any = bm.getIntProperty(id).let { if (it == 0 || it == Int.MIN_VALUE) JSONObject.NULL else it }
-            Diagnostics.battery(JSONObject()
-                .put("level", bm.getIntProperty(BatteryManager.BATTERY_PROPERTY_CAPACITY))
-                .put("charge_uah", prop(BatteryManager.BATTERY_PROPERTY_CHARGE_COUNTER))
-                .put("current_ua", prop(BatteryManager.BATTERY_PROPERTY_CURRENT_NOW))
-                .put("charging", bm.isCharging)
-                .put("screen_on", pm.isInteractive)
-                .put("doze", pm.isDeviceIdleMode)
-                .put("wake_lock", wakeLock?.isHeld == true))
-        } catch (e: Throwable) {
-            Diagnostics.error("battery sample failed", e)
         }
     }
 

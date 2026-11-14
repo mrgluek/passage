@@ -114,34 +114,6 @@ object StatusText {
             .sortedBy { it.first }
             .toList()
 
-    /**
-     * Battery drain from consecutive samples while not charging, split by
-     * whether the wake lock was held at the start of each interval.
-     */
-    fun batterySummary(samples: JSONArray): JSONObject {
-        val hours = doubleArrayOf(0.0, 0.0)
-        val drop = doubleArrayOf(0.0, 0.0)
-        val format = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss", Locale.US).apply { timeZone = java.util.TimeZone.getTimeZone("UTC") }
-        fun time(s: JSONObject) = try { format.parse(s.optString("t").take(19))?.time } catch (_: Exception) { null }
-        for (i in 1 until samples.length()) {
-            val a = samples.getJSONObject(i - 1)
-            val b = samples.getJSONObject(i)
-            if (a.optBoolean("charging") || b.optBoolean("charging")) continue
-            val ta = time(a) ?: continue
-            val tb = time(b) ?: continue
-            val h = (tb - ta) / 3_600_000.0
-            // Samples need the CPU awake, so without the lock they come late;
-            // longer gaps likely span time with the proxy off.
-            if (h <= 0 || h > 3.0 || b.optInt("level") > a.optInt("level")) continue
-            val k = if (a.optBoolean("wake_lock")) 1 else 0
-            hours[k] += h
-            drop[k] += (a.optInt("level") - b.optInt("level")).toDouble()
-        }
-        fun part(k: Int) = JSONObject().put("hours", "%.1f".format(Locale.US, hours[k])).put("percent", drop[k].toInt())
-            .put("percent_per_hour", if (hours[k] > 0) "%.2f".format(Locale.US, drop[k] / hours[k]) else JSONObject.NULL)
-        return JSONObject().put("with_wake_lock", part(1)).put("without_wake_lock", part(0))
-    }
-
     /** The network test in one line for the log: "12 ok, 3 failed". */
     fun diagnosisSummary(d: JSONObject): String {
         d.optString("error").takeIf { it.isNotEmpty() }?.let { return it }
@@ -358,7 +330,6 @@ object StatusText {
             diagnostics.opt(key)?.let { redactReportValue(it, Diagnostics::redact) }
         }
         r.put("diagnostics", diagnostics)
-        diagnostics.optJSONArray("battery")?.let { r.put("battery_summary", batterySummary(it)) }
         if (networkTest != null) r.put("network_test", JSONArray(networkTest.trimEnd().lines()))
         r.put("device_network", JSONObject()
             .put("transport", net.transport)
