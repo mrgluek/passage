@@ -55,6 +55,9 @@ type App struct {
 
 	channels               channelDisplay
 	mu                     sync.Mutex
+	whatsappStarted        time.Time
+	whatsappError          string
+	whatsappPortsTried     bool
 	settings               Settings
 	tun                    *tunnel.Tunnel
 	lastErr                string
@@ -208,6 +211,11 @@ func (a *App) startLocked(why string) {
 	cfg := a.linkCfg
 	s := a.settings
 	cfg.Listen = s.listen()
+	if s.WhatsApp {
+		a.ensureWhatsAppPortsLocked()
+		s = a.settings
+	}
+	cfg.Forwards = whatsappForwards(s)
 	if s.Auth {
 		cfg.User, cfg.Pass = s.User, s.Pass
 	}
@@ -232,6 +240,7 @@ func (a *App) startLocked(why string) {
 		return
 	}
 	a.lastErr = ""
+	a.whatsappStarted = time.Now()
 }
 
 // tick restarts a dead router, follows network and link file changes.
@@ -459,6 +468,13 @@ type view struct {
 	Error string `json:"error"`
 	// Health is the router's plain verdict, empty while the proxy is stopped.
 	Health tunnel.Health `json:"health"`
+
+	WhatsApp          bool                   `json:"whatsapp"`
+	WhatsAppChatPort  int                    `json:"whatsapp_chat_port"`
+	WhatsAppMediaPort int                    `json:"whatsapp_media_port"`
+	WhatsAppError     string                 `json:"whatsapp_error"`
+	Forwards          []tunnel.ForwardStatus `json:"forwards"`
+	WhatsAppStatus    whatsappStatus         `json:"whatsapp_status"`
 }
 
 // startHint asks to start the proxy when routes exist but it is not running.
@@ -476,6 +492,8 @@ func (a *App) view() view {
 	v := view{Running: s.Running, HasLink: a.hasLink(), Mode: a.mode(), Routes: a.routes(),
 		My: s.My != "", Auth: s.Auth, Host: host, Port: s.Port, ProxyLink: s.socksURL(), TgLink: s.proxyLink("tg://socks"), VeltaLink: s.veltaLink(),
 		AppSeen: s.AppSeen, Lang: s.Lang, Error: a.lastErr}
+	v.WhatsApp, v.WhatsAppChatPort, v.WhatsAppMediaPort = s.WhatsApp, s.WhatsAppChatPort, s.WhatsAppMediaPort
+	v.WhatsAppError = a.whatsappError
 	if s.Auth {
 		v.User, v.Pass = s.User, s.Pass
 	}
@@ -500,6 +518,9 @@ func (a *App) view() view {
 		v.Line = oneLine(a.t, st)
 		v.Channels = statusDetail(a.t, st.Health, a.channels.sample(a.t, st, time.Now()))
 		v.Health = st.Health
+		v.Forwards = st.Forwards
+		v.WhatsAppStatus = formatWhatsAppStatus(a.t, st.Forwards)
+		v.WhatsAppStatus.Hint = s.WhatsApp && !v.WhatsAppStatus.Connected && time.Since(a.whatsappStarted) >= 30*time.Second
 		full = fullStatus(a.t, st)
 		var conns int64
 		for _, r := range st.Stats {
@@ -948,6 +969,15 @@ func (a *App) call(method string, arg json.RawMessage) (any, error) {
 			"auto_update": a.settings.AutoUpdate, "soar": tunnel.SoarVersion()}, nil
 	case "saveMy":
 		return a.saveMy(str())
+	case "whatsappPorts":
+		a.mu.Lock()
+		if a.whatsappError != "" {
+			a.whatsappPortsTried = false
+		}
+		a.ensureWhatsAppPortsLocked()
+		a.mu.Unlock()
+	case "setWhatsApp":
+		return nil, a.setWhatsApp(flag())
 	case "setAuth":
 		a.setAuth(flag())
 	case "newAccess":

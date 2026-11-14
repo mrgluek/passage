@@ -229,6 +229,10 @@ a { color: var(--accent); cursor: pointer; text-decoration: underline; }
   <p class="hint" data-t="new_access_help"></p>
 
   </section>
+  <section class="card">
+  <h2 data-t="whatsapp"></h2>
+  <div id="whatsappSettings"></div>
+  </section>
   <section class="card hidden" id="updateSettings"><h2 data-t="updates"></h2><button id="updateCheck" data-t="update_check"></button><p id="updateStatus" aria-live="polite"></p><p id="updateDetail" class="hint hidden"></p><progress id="updateProgress" class="hidden"></progress><div><button id="updateDownload" data-t="update_download"></button><button id="updateCancel" data-t="cancel"></button><button id="updateInstall" data-t="update_install"></button></div><label class="check"><input type="checkbox" id="autoUpdate"><span data-t="update_auto"></span></label><p class="hint" data-t="update_help"></p></section>
   <section class="card"><h2 data-t="language_label"></h2><div class="segments" id="langSeg"></div></section>
   <section class="card">
@@ -422,6 +426,7 @@ function render(v) {
     segments($("settingsRoutes"), v);
   }
   renderHome(v);
+  renderWhatsApp($("whatsappSettings"), v, false);
   $("status").textContent = v.full;
 }
 
@@ -475,7 +480,7 @@ function renderHome(v) {
   if (second) { $("sSecond").textContent = second[0]; $("sSecond").onclick = second[1]; }
   const done = hasLink && running && seen;
   $("setupHead").textContent = t(done ? "h_steps_done" : "h_steps_pending");
-  const key = JSON.stringify([hasLink, running, seen, hs, hr, tab, tabsOpen, showPass, v.host, v.port, v.user, v.pass, v.auth, v.lang, v.proxy_link, v.velta_link]);
+  const key = JSON.stringify([hasLink, running, seen, hs, hr, tab, tabsOpen, showPass, v.host, v.port, v.user, v.pass, v.auth, v.lang, v.proxy_link, v.velta_link, v.whatsapp, v.whatsapp_chat_port, v.whatsapp_media_port, v.whatsapp_error, v.whatsapp_status]);
   if (key === shownHome) return;
   shownHome = key;
   const steps = $("steps");
@@ -506,13 +511,13 @@ function renderHome(v) {
   if (open) renderTabs(v);
 }
 function renderTabs(v) {
-  const names = ["tab_delta", "tab_tg", "tab_other"];
+  const names = ["tab_delta", "tab_tg", "whatsapp", "tab_other"];
   const strip = $("tabs");
   strip.textContent = "";
   names.forEach((k, i) => {
     const d = document.createElement("div");
     d.textContent = t(k);
-    if (i === tab) d.className = "on"; else d.onclick = () => { tab = i; shownHome = ""; renderHome(last); };
+    if (i === tab) d.className = "on"; else d.onclick = () => { tab = i; if (i === 2) call("whatsappPorts").then(refresh, fail); shownHome = ""; renderHome(last); };
     strip.append(d);
   });
   const pane = $("tabpane");
@@ -530,6 +535,7 @@ function renderTabs(v) {
     call("openVelta").then(opened => copy(v.velta_link, t(opened ? "velta_link_opened" : "velta_link_copied")), fail)), download(DOWNLOADS.velta));
   } else if (tab === 1) pane.append(para(t("tab_tg_text")), button(t("h_open_tg"), () =>
     call("openTg").then(opened => copy(v.tg_link, t(opened ? "tg_link_opened" : "tg_link_copied")), fail)));
+  else if (tab === 2) renderWhatsApp(pane, v, true);
   else {
     pane.append(para(t("molly_text")));
     const molly = document.createElement("div");
@@ -554,6 +560,38 @@ function renderTabs(v) {
     toggle.onchange = () => call("setAuth", !toggle.checked).then(refresh, fail);
     allow.append(toggle, t("allow_no_password"));
     pane.append(molly, allow, para(t("allow_no_password_help")), para(t("molly_other_apps")));
+  }
+}
+function renderWhatsApp(pane, v, home) {
+  pane.textContent = "";
+  const para = (text, warning = false) => {
+    const p = document.createElement("p"); p.className = warning ? "hint warn" : "hint"; p.textContent = text; pane.append(p);
+  };
+  const label = document.createElement("label"); label.className = "check";
+  const toggle = document.createElement("input"); toggle.type = "checkbox"; toggle.setAttribute("role", "switch");
+  toggle.checked = v.whatsapp; toggle.disabled = !!v.whatsapp_error;
+  toggle.onchange = () => call("setWhatsApp", toggle.checked).then(refresh, e => { refresh(); fail(e); });
+  label.append(toggle, t("whatsapp_switch")); pane.append(label);
+  if (v.whatsapp_error) { para(v.whatsapp_error, true); return; }
+  if (home && !v.whatsapp) { para(t("whatsapp_turn_on")); return; }
+  if (home) para(t("whatsapp_how"));
+  const box = document.createElement("div"); box.className = "values";
+  const rows = home ? [[t("proxy_host"), "localhost"]] : [];
+  rows.push([t("whatsapp_chat_port"), v.whatsapp_chat_port], [t("whatsapp_media_port"), v.whatsapp_media_port]);
+  for (const [name, value] of rows) {
+    const row = document.createElement("div"); row.className = "v";
+    const key = document.createElement("span"), text = document.createElement("span");
+    key.textContent = name; text.textContent = value || "—"; row.append(key, text);
+    if (value) row.onclick = () => copy(String(value), t("value_copied", name));
+    box.append(row);
+  }
+  pane.append(box);
+  if (!home) para(t("whatsapp_ports_help"));
+  if (home && v.running && v.whatsapp) {
+    const status = v.whatsapp_status || {};
+    for (const line of status.lines || []) para(line);
+    for (const warning of status.warnings || []) para(warning, true);
+    if (status.hint) para(t("whatsapp_check"));
   }
 }
 function renderSubscriptions(rows) {
@@ -640,6 +678,7 @@ function showLink(open) {
   }, fail);
 }
 function showSettings() {
+  call("whatsappPorts").then(refresh, fail);
   renderLang();
   call("settings").then(s => {
     $("autoUpdate").checked = s.auto_update;
