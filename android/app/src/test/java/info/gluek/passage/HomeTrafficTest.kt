@@ -4,6 +4,13 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class HomeTrafficTest {
+    @Test fun ringRequiresTrafficAndResumedActivity() {
+        for (state in HomeSetup.DotState.values()) {
+            assertFalse(HomeSetup.ringRequested(state, false))
+            assertEquals(state == HomeSetup.DotState.TRAFFIC, HomeSetup.ringRequested(state, true))
+        }
+    }
+
     private val idle = HomeSetup.TrafficCounters(2, 10, 20)
 
     @Test fun firstSnapshotAndUnchangedCountersAreSteady() {

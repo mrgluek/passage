@@ -26,6 +26,6 @@
     <color name="proxy_on_dot_soft">#C0D4C2</color>
     <color name="proxy_warn_dot">#D6C28D</color>
     <color name="proxy_problem_dot">#C69D98</color>
-    <color name="proxy_traffic_dot">#34C759</color>
+    <color name="proxy_traffic_dot">#3DDC58</color>
     <color name="input_hint">#95A09B</color>
 </resources>

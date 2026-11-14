@@ -9,13 +9,13 @@
   --bg: #ffffff; --fg: #1b1c1e; --muted: #5f6368; --accent: #185FA5; --on-accent: #ffffff;
   --shade: rgba(0,0,0,.055); --line: rgba(0,0,0,.12); --warn: #a4372a;
   --page: #e5e5e1; --card: #f2f2ee; --border: rgba(0,0,0,.10);
-  --dot-off: #9aa0a6; --dot-on: #8fb59a; --dot-bright: #2ecc40; --dot-error: #d98f86; --dot-warn: #e0c070; --hint: rgba(95,99,104,.7);
+  --dot-off: #9aa0a6; --dot-on: #2ecc40; --dot-bright: #2ecc40; --dot-error: #d98f86; --dot-warn: #e0c070; --hint: rgba(95,99,104,.7);
 }
 @media (prefers-color-scheme: dark) {
   :root { --bg: #1d1e20; --fg: #e8e9eb; --muted: #a0a4a8; --accent: #85B7EB; --on-accent: #0d2440;
     --shade: rgba(255,255,255,.07); --line: rgba(255,255,255,.14); --warn: #f08b7e;
     --page: #151617; --card: #232527; --border: rgba(255,255,255,.10);
-    --dot-off: #6f757b; --dot-on: #7fa48a; --dot-bright: #3ddc58; --dot-error: #c9786f; --dot-warn: #c4a455; --hint: rgba(160,164,168,.6); }
+    --dot-off: #6f757b; --dot-on: #3ddc58; --dot-bright: #3ddc58; --dot-error: #c9786f; --dot-warn: #c4a455; --hint: rgba(160,164,168,.6); }
 }
 * { box-sizing: border-box; }
 html, body { margin: 0; background: var(--page); color: var(--fg); }
@@ -29,13 +29,15 @@ main { padding: 14px 16px 24px; max-width: 720px; margin: 0 auto; }
 .card > h2:not(:first-child) { margin-top: 18px; }
 .ctitle { font-size: 20px; font-weight: 600; color: var(--muted); }
 .titleRow { display: flex; align-items: center; gap: 10px; margin-bottom: 6px; }
-.dot { width: 14px; height: 14px; border-radius: 50%; background: var(--dot-off); flex: none; }
+.dot { position: relative; width: 14px; height: 14px; border-radius: 50%; background: var(--dot-off); flex: none; }
 .dot.on { background: var(--dot-on); }
 .dot.error { background: var(--dot-error); }
 .dot.warn { background: var(--dot-warn); }
-.dot.flow { animation: flow 1.8s ease-in-out infinite; }
-@keyframes flow { 0%, 100% { background: var(--dot-on); } 50% { background: var(--dot-bright); } }
-@media (prefers-reduced-motion: reduce) { .dot.flow { animation: none; } }
+.dot.flow::after { content: ""; position: absolute; inset: 0; border-radius: 50%;
+  background: var(--dot-bright); opacity: 0; pointer-events: none; animation: dot-ripple 1.2s ease-out infinite; }
+@keyframes dot-ripple { from { transform: scale(1); opacity: .5; } to { transform: scale(2.2); opacity: 0; } }
+.window-hidden .dot.flow::after, .hidden .dot.flow::after { animation: none; }
+@media (prefers-reduced-motion: reduce) { .dot.flow::after { animation: none; } }
 button.wide { display: block; width: 100%; padding: 11px 14px; margin: 12px 0 4px; border-radius: 22px; }
 button.textbtn { display: block; margin: 10px auto 0; border: none; padding: 8px 14px; }
 .steps { margin: 0 0 6px; }
@@ -448,7 +450,7 @@ function renderHome(v) {
   const h = running && hasLink && v.health && v.health.state ? v.health : null;
   const hs = h ? h.state : "", hr = h ? h.reason : "";
   let tone = v.error || (hs === "problem" && hr === "no_route") ? " error" : (hs === "starting" || hs === "problem") ? " warn" : running && hasLink ? " on" : "";
-  dot.className = "dot" + tone + (flowing && !tone.includes("error") && !tone.includes("warn") ? " flow" : "");
+  dot.className = "dot" + tone + (flowing && tone === " on" ? " flow" : "");
   let title, reason, main = null, second = null;
   if (v.error) { title = t("h_title_error"); reason = ""; }
   else if (!hasLink) { title = t("h_title_nolink"); reason = t("h_reason_nolink"); }
@@ -786,6 +788,10 @@ function renderLang() {
     box.append(d);
   }
 }
+document.addEventListener("visibilitychange", () => {
+  document.documentElement.classList.toggle("window-hidden", document.hidden);
+});
+document.documentElement.classList.toggle("window-hidden", document.hidden);
 const initialized = call("init").then(i => {
   applyStrings(i);
   page("home");

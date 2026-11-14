@@ -2,6 +2,8 @@ package info.gluek.passage
 
 object HomeSetup {
     enum class DotState { OFF, ON, TRAFFIC, WARN, PROBLEM }
+
+    fun ringRequested(state: DotState, resumed: Boolean): Boolean = state == DotState.TRAFFIC && resumed
     data class TrafficCounters(val connections: Long, val up: Long, val down: Long)
 
     fun trafficChanged(previous: TrafficCounters?, current: TrafficCounters): Boolean = previous != null && previous != current
