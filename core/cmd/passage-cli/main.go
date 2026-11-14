@@ -41,6 +41,14 @@ func main() {
 	my := flag.String("my", "", "your own SOCKS5 proxy as a route: [user:pass@]host:port, a socks5:// URL or a t.me/socks link")
 	listen := flag.String("listen", "127.0.0.1:18000", "SOCKS5 listen address")
 	user := flag.String("user", "", "SOCKS5 username (empty = no auth)")
+	var forwards []tunnel.Forward
+	flag.Func("forward", "lab TCP forward listen=target (repeatable)", func(value string) error {
+		forward, err := parseForward(value)
+		if err == nil {
+			forwards = append(forwards, forward)
+		}
+		return err
+	})
 	pass := flag.String("pass", "", "SOCKS5 password")
 	every := flag.Duration("status", time.Minute, "print a status line this often (0 = never)")
 	paths := flag.Bool("paths", false, "also print one line per resolver path with each status")
@@ -81,6 +89,7 @@ func main() {
 		cfg.Canaries = strings.Split(*canaries, ",")
 	}
 	cfg.Mode, cfg.Listen, cfg.User, cfg.Pass = *mode, *listen, *user, *pass
+	cfg.Forwards = forwards
 	cfg.Operator = *operator
 	cfg.My = *my
 	cfg.IrohBinary = irohHelper(*iroh)
@@ -255,9 +264,20 @@ func statusJSON(s tunnel.Status) []byte {
 		groups[name] = row
 	}
 	status := map[string]any{"route": s.Route, "state": s.State, "groups": groups, "active": s.Active, "stats": s.Stats}
+	if len(s.Forwards) > 0 {
+		status["forwards"] = s.Forwards
+	}
 	if len(s.Subscriptions) > 0 {
 		status["subscriptions"] = s.Subscriptions
 	}
 	line, _ := json.Marshal(status)
 	return line
+}
+
+func parseForward(value string) (tunnel.Forward, error) {
+	listen, target, ok := strings.Cut(value, "=")
+	if !ok || listen == "" || target == "" {
+		return tunnel.Forward{}, fmt.Errorf("forward must be listen=target")
+	}
+	return tunnel.Forward{Listen: listen, Target: target}, nil
 }
