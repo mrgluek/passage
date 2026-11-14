@@ -300,6 +300,9 @@
     <string name="channel_telegram">Tg</string>
     <string name="channel_other">Other</string>
     <string name="channel_shared">Route</string>
+    <string name="channel_whatsapp">WA</string>
+    <string name="channel_signal">Molly</string>
+    <string name="channel_and">" and "</string>
     <string name="channel_smart">smart</string>
     <string name="channel_tunnel">via %1$s tunnel (%2$s)</string>
     <string name="channel_tunnel_type">via %1$s tunnel</string>

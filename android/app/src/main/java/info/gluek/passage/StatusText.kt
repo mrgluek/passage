@@ -25,11 +25,12 @@ object StatusText {
         val format = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ssXXX", Locale.ROOT)
         val list = groups.keys().asSequence().mapNotNull { name -> groups.optJSONObject(name)?.let { g ->
             val stamp = try { format.parse(g.optString("last_conn").replace(Regex("\\.\\d+"), ""))?.time ?: 0L } catch (_: Exception) { 0L }
-            StatusChannels.Group(name, g.optString("kind"), g.optString("route"), g.optString("route_id"), g.optString("via"), stamp, (g.optJSONArray("targets")?.length() ?: 0) > 0)
+            StatusChannels.Group(name, g.optString("kind"), g.optString("route"), g.optString("route_id"), g.optString("via"), stamp, (g.optJSONArray("targets")?.length() ?: 0) > 0, g.optString("app"))
         } }.toList()
         val labels = StatusChannels.Labels(c.getString(R.string.channel_mail), c.getString(R.string.channel_telegram), c.getString(R.string.channel_other),
             c.getString(R.string.channel_shared), c.getString(R.string.route_direct), c.getString(R.string.channel_smart),
-            listOf(R.string.channel_tunnel, R.string.channel_tunnel_type, R.string.channel_tunnel_id, R.string.channel_tunnel_plain).map { c.getString(it) }, c.getString(R.string.channel_my))
+            listOf(R.string.channel_tunnel, R.string.channel_tunnel_type, R.string.channel_tunnel_id, R.string.channel_tunnel_plain).map { c.getString(it) },
+            c.getString(R.string.channel_whatsapp), c.getString(R.string.channel_signal), c.getString(R.string.channel_and), c.getString(R.string.route_tunnel), c.getString(R.string.channel_my))
         return display.sample(list, s.optString("mode"), s.optString("route"), s.optString("via").ifEmpty { onlyType(s) }, labels, System.currentTimeMillis())
     }
 
