@@ -309,7 +309,8 @@
     <string name="channel_tunnel_type">via %1$s tunnel</string>
     <string name="channel_tunnel_id">via tunnel (%1$s)</string>
     <string name="channel_tunnel_plain">via tunnel</string>
-    <string name="home_molly_how">Molly: Settings → Network → Use proxy: SOCKS5, host and port below. It cannot send a password, so allow that above.</string>
+    <string name="home_molly_how">Molly: Settings → Network → Use proxy: SOCKS5, host and port below.</string>
+    <string name="home_molly_intro">Molly is an open-source Signal client. It supports a proxy but cannot send a username and password. Allow that below:</string>
     <string name="allow_no_password">Allow apps that cannot send a password</string>
     <string name="allow_no_password_help">With the password off, any app on this device can use the proxy. Apps already set up with the password keep working if they also offer no password (most do).</string>
     <string name="whatsapp">WhatsApp</string>

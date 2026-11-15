@@ -286,6 +286,9 @@ class MainActivity : ThemedActivity() {
                 renderWhatsAppStatus()
             }
             if (appTab == HomeSetup.AppTab.OTHER) {
+                tabContent.addView(Ui.hint(this, getString(R.string.home_molly_intro)).apply {
+                    setPadding(paddingLeft, paddingTop, paddingRight, paddingBottom + Ui.dp(this@MainActivity, 12))
+                })
                 tabContent.addView(Switch(this).apply {
                     text = getString(R.string.allow_no_password)
                     isChecked = !settings.auth

@@ -316,7 +316,8 @@
     <string name="channel_tunnel_type">через %1$s-туннель</string>
     <string name="channel_tunnel_id">через туннель (%1$s)</string>
     <string name="channel_tunnel_plain">через туннель</string>
-    <string name="home_molly_how">Molly: Настройки → Сеть → Использовать прокси: SOCKS5, хост и порт указаны ниже. Приложение не передаёт пароль — разрешите это выше.</string>
+    <string name="home_molly_how">Molly: Настройки → Сеть → Использовать прокси: SOCKS5, хост и порт указаны ниже.</string>
+    <string name="home_molly_intro">Molly — клиент для Signal с открытым кодом, он поддерживает прокси, но не умеет передавать логин и пароль. Разрешите это ниже:</string>
     <string name="allow_no_password">Разрешить приложения без поддержки пароля</string>
     <string name="allow_no_password_help">Без пароля прокси может пользоваться любое приложение на этом устройстве. Приложения, уже настроенные с паролем, продолжат работать, если также поддерживают подключение без пароля (большинство поддерживает).</string>
     <string name="whatsapp">WhatsApp</string>
