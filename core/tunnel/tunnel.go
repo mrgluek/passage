@@ -1767,7 +1767,7 @@ func decide(route Route, res probeResult, failStreak, okStreak int, tunnelHealth
 func probePort(addr string) string {
 	if _, port, err := net.SplitHostPort(addr); err == nil {
 		switch port {
-		case "993", "465", "443":
+		case "993", "465", "443", whatsappChatPort:
 			return port
 		}
 	}
@@ -1790,7 +1790,12 @@ func probeReachableFor(err error, host string) bool {
 		return false
 	}
 	var verification *tls.CertificateVerificationError
-	if errors.As(err, &verification) && len(verification.UnverifiedCertificates) > 0 {
+	// A private root is a chain the server sends whole: a lone certificate
+	// that vouches for itself is what an interceptor presents.
+	if !errors.As(err, &verification) || len(verification.UnverifiedCertificates) < 2 {
+		return false
+	}
+	{
 		certs := verification.UnverifiedCertificates
 		roots, intermediates := x509.NewCertPool(), x509.NewCertPool()
 		roots.AddCert(certs[len(certs)-1])
@@ -1801,7 +1806,15 @@ func probeReachableFor(err error, host string) bool {
 		_, err = certs[0].Verify(x509.VerifyOptions{DNSName: host, Roots: roots, Intermediates: intermediates})
 		return err == nil
 	}
-	return true
+}
+
+// whatsappChatPort carries a protocol that does not start with TLS, so probes
+// of it only connect.
+const whatsappChatPort = "5222"
+
+func connectOnly(hostport string) bool {
+	_, port, _ := net.SplitHostPort(hostport)
+	return port == whatsappChatPort
 }
 
 // probeTLSVia completes a TLS handshake with hostport over a connection from dial.
@@ -1812,6 +1825,9 @@ func probeTLSVia(ctx context.Context, dial dialFunc, hostport, sni string) error
 		return err
 	}
 	defer c.Close()
+	if connectOnly(hostport) {
+		return nil
+	}
 	return tls.Client(c, &tls.Config{ServerName: sni, MinVersion: tls.VersionTLS12, RootCAs: probeRoots}).HandshakeContext(ctx)
 }
 
@@ -1820,6 +1836,13 @@ var probeRoots *x509.CertPool
 
 // probeTLS retains certificate errors for diagnosis; routing uses probeReachable.
 func probeTLS(ctx context.Context, hostport, sni string) error {
+	if connectOnly(hostport) {
+		c, err := (&net.Dialer{Timeout: probeTimeout}).DialContext(ctx, "tcp", hostport)
+		if err != nil {
+			return err
+		}
+		return c.Close()
+	}
 	d := &tls.Dialer{
 		NetDialer: &net.Dialer{Timeout: probeTimeout},
 		Config:    &tls.Config{ServerName: sni, MinVersion: tls.VersionTLS12, RootCAs: probeRoots},

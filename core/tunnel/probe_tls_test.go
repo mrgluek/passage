@@ -7,6 +7,7 @@ import (
 	"crypto/rand"
 	"crypto/tls"
 	"crypto/x509"
+	"crypto/x509/pkix"
 	"errors"
 	"fmt"
 	"math/big"
@@ -29,20 +30,33 @@ func tlsProbeServer(t *testing.T, expired bool) *httptest.Server {
 		t.Fatal(err)
 	}
 	host, _, _ := net.SplitHostPort(srv.Listener.Addr().String())
+	caKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ca := &x509.Certificate{
+		SerialNumber: big.NewInt(2), Subject: pkix.Name{CommonName: "probe test root"},
+		NotBefore: time.Now().Add(-2 * time.Hour), NotAfter: time.Now().Add(time.Hour),
+		KeyUsage: x509.KeyUsageCertSign, IsCA: true, BasicConstraintsValid: true,
+	}
+	caDER, err := x509.CreateCertificate(rand.Reader, ca, ca, &caKey.PublicKey, caKey)
+	if err != nil {
+		t.Fatal(err)
+	}
 	cert := &x509.Certificate{
 		SerialNumber: big.NewInt(1), DNSNames: []string{"example.org"}, IPAddresses: []net.IP{net.ParseIP(host)},
 		NotBefore: time.Now().Add(-2 * time.Hour), NotAfter: time.Now().Add(time.Hour),
-		KeyUsage:    x509.KeyUsageDigitalSignature | x509.KeyUsageCertSign,
-		ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth}, IsCA: true, BasicConstraintsValid: true,
+		KeyUsage:    x509.KeyUsageDigitalSignature,
+		ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
 	}
 	if expired {
 		cert.NotAfter = time.Now().Add(-time.Hour)
 	}
-	der, err := x509.CreateCertificate(rand.Reader, cert, cert, &key.PublicKey, key)
+	der, err := x509.CreateCertificate(rand.Reader, cert, ca, &key.PublicKey, caKey)
 	if err != nil {
 		t.Fatal(err)
 	}
-	srv.TLS = &tls.Config{Certificates: []tls.Certificate{{Certificate: [][]byte{der}, PrivateKey: key}}}
+	srv.TLS = &tls.Config{Certificates: []tls.Certificate{{Certificate: [][]byte{der, caDER}, PrivateKey: key}}}
 	srv.StartTLS()
 	return srv
 }
@@ -117,8 +131,8 @@ func TestProbeReachableErrors(t *testing.T) {
 		want bool
 	}{
 		{nil, true},
-		{x509.UnknownAuthorityError{}, true},
-		{fmt.Errorf("wrapped: %w", &tls.CertificateVerificationError{Err: x509.UnknownAuthorityError{}}), true},
+		{x509.UnknownAuthorityError{}, false},
+		{fmt.Errorf("wrapped: %w", &tls.CertificateVerificationError{Err: x509.UnknownAuthorityError{}}), false},
 		{x509.HostnameError{}, false},
 		{x509.CertificateInvalidError{Reason: x509.Expired}, false},
 		{context.DeadlineExceeded, false},
@@ -201,5 +215,33 @@ func TestProbeReachableChecksTheHostName(t *testing.T) {
 	}
 	if probeReachableFor(err, "other.example.net") {
 		t.Fatal("an untrusted chain for another name counted as reachable")
+	}
+}
+
+func TestSelfSignedLeafIsNotReachable(t *testing.T) {
+	key, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	tmpl := &x509.Certificate{SerialNumber: big.NewInt(3), DNSNames: []string{"example.org"}, NotBefore: time.Now().Add(-time.Hour), NotAfter: time.Now().Add(time.Hour)}
+	der, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, &key.PublicKey, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cert, _ := x509.ParseCertificate(der)
+	err = &tls.CertificateVerificationError{UnverifiedCertificates: []*x509.Certificate{cert}, Err: x509.UnknownAuthorityError{}}
+	if probeReachableFor(err, "example.org") {
+		t.Fatal("a lone self-signed certificate counted as reachable")
+	}
+}
+
+func TestChatPortIsProbedAsItself(t *testing.T) {
+	if got := probePort("g.whatsapp.net:5222"); got != "5222" {
+		t.Fatalf("probePort=%q", got)
+	}
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+	if !connectOnly("g.whatsapp.net:5222") || connectOnly(ln.Addr().String()) {
+		t.Fatal("connectOnly picks the wrong ports")
 	}
 }
