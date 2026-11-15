@@ -50,7 +50,7 @@ class SettingsStringsTest {
                 assertFalse("$locale/$key", value.contains("Passage:"))
                 assertFalse("$locale/$key", value.first().isLowerCase())
             }
-            for (key in listOf("home_velta_how", "home_molly_how", "allow_no_password", "allow_no_password_help")) {
+            for (key in listOf("home_velta_how", "home_molly_how", "home_molly_intro", "allow_no_password", "allow_no_password_help")) {
                 assertFalse("$locale/$key", strings[key].isNullOrBlank())
             }
             assertFalse(strings.containsKey("home_tab_velta"))
