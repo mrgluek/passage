@@ -159,6 +159,9 @@ func ParseLink(link string) (Config, error) {
 
 // Normalize validates the config and fills defaults.
 func (c Config) Normalize() (Config, error) {
+	if (c.User == "") != (c.Pass == "") {
+		return Config{}, errors.New("user and password must be set together")
+	}
 	subIDs, owners := map[string]bool{}, map[string]bool{}
 	for _, sub := range c.Subscriptions {
 		if err := sub.validate(); err != nil {

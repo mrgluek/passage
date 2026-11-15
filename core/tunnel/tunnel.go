@@ -881,10 +881,7 @@ func (t *Tunnel) serveListener(ln net.Listener, forward int) {
 			t.pending++
 		} else {
 			t.forwardConns++
-			f := &t.forwards[forward].status
-			f.Conns++
-			now := t.timeNow().UTC()
-			f.LastConn = &now
+			t.forwards[forward].status.Conns++
 		}
 		t.wg.Add(1)
 		t.mu.Unlock()
@@ -960,6 +957,12 @@ func (t *Tunnel) connect(c net.Conn, addr string, socks bool, forward ...int) {
 		return
 	}
 	defer remote.Close()
+	if len(forward) > 0 {
+		t.mu.Lock()
+		now := t.timeNow().UTC()
+		t.forwards[forward[0]].status.LastConn = &now
+		t.mu.Unlock()
+	}
 	if socks {
 		if err := socksReply(c, repSucceeded); err != nil {
 			return
