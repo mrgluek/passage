@@ -286,11 +286,6 @@ class MainActivity : ThemedActivity() {
                 renderWhatsAppStatus()
             }
             if (appTab == HomeSetup.AppTab.OTHER) {
-                tabContent.addView(Ui.hint(this, getString(R.string.home_molly_how)))
-                tabContent.addView(Ui.valueBlock(this, listOf(
-                    getString(R.string.proxy_host) to "127.0.0.1",
-                    getString(R.string.proxy_port) to settings.port.toString()
-                ), null))
                 tabContent.addView(Switch(this).apply {
                     text = getString(R.string.allow_no_password)
                     isChecked = !settings.auth
@@ -300,7 +295,28 @@ class MainActivity : ThemedActivity() {
                     }
                 })
                 tabContent.addView(Ui.hint(this, getString(R.string.allow_no_password_help)))
+                tabContent.addView(Ui.hint(this, getString(R.string.home_molly_how)).apply {
+                    setPadding(paddingLeft, paddingTop + Ui.dp(this@MainActivity, 16), paddingRight, paddingBottom)
+                })
+                tabContent.addView(Ui.valueBlock(this, listOf(
+                    getString(R.string.proxy_host) to "127.0.0.1",
+                    getString(R.string.proxy_port) to settings.port.toString()
+                ), null).apply {
+                    layoutParams = LinearLayout.LayoutParams(-1, -2).apply { topMargin = Ui.dp(this@MainActivity, 12) }
+                })
+                tabContent.addView(Ui.downloadLine(this, getString(R.string.home_download), HomeSetup.MOLLY_DOWNLOAD).apply {
+                    setPadding(0, Ui.dp(this@MainActivity, 10), 0, 0)
+                })
+                tabContent.addView(Ui.heading(this, getString(R.string.home_other_app_title)))
                 tabContent.addView(Ui.hint(this, getString(R.string.home_molly_other_apps)))
+                val rows = mutableListOf(getString(R.string.proxy_host) to Settings.HOST, getString(R.string.proxy_port) to settings.port.toString())
+                if (settings.auth) rows += getString(R.string.proxy_user) to settings.user
+                tabContent.addView(Ui.valueBlock(this, rows, if (settings.auth) null else getString(R.string.proxy_no_password)).apply {
+                    layoutParams = LinearLayout.LayoutParams(-1, -2).apply { topMargin = Ui.dp(this@MainActivity, 12) }
+                    if (settings.auth) addView(Ui.passwordRow(this@MainActivity, settings.pass, passwordVisible) {
+                        passwordVisible = !passwordVisible; renderSetup()
+                    })
+                })
             }
             if (!settings.appSeen) {
                 setup.addView(Ui.hint(this, getString(R.string.home_app_not_seen)).apply {

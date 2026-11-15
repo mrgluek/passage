@@ -75,6 +75,7 @@ object HomeSetup {
     }
 
     const val DELTA_CHAT_DOWNLOAD = "https://download.delta.chat"
+    const val MOLLY_DOWNLOAD = "https://molly.im"
     const val VELTA_DOWNLOAD = "https://velta.cc/#download"
 
     data class ConnectContent(val instruction: Int?, val action: Int?, val clipboard: String?, val open: String?, val download: String?, val secondary: ConnectContent? = null)

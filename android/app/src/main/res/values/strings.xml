@@ -294,7 +294,8 @@
     <string name="home_download">Download:</string>
     <string name="home_velta_open">Copy and open link in Velta</string>
     <string name="home_telegram_open">Copy and open link in Telegram</string>
-    <string name="home_molly_other_apps">Another app with a SOCKS5 proxy setting: Settings → Proxy access lists the host, port, user and password.</string>
+    <string name="home_molly_other_apps">Another app with a SOCKS5 proxy setting. Tap a value to copy it:</string>
+    <string name="home_other_app_title">Another app</string>
     <string name="home_test_report">Test network and send report to the developer</string>
     <string name="channel_mail">Mail</string>
     <string name="channel_telegram">Tg</string>
@@ -308,7 +309,7 @@
     <string name="channel_tunnel_type">via %1$s tunnel</string>
     <string name="channel_tunnel_id">via tunnel (%1$s)</string>
     <string name="channel_tunnel_plain">via tunnel</string>
-    <string name="home_molly_how">Molly: Settings → Network → Use proxy: SOCKS5, host and port below. It cannot send a password, so allow that below.</string>
+    <string name="home_molly_how">Molly: Settings → Network → Use proxy: SOCKS5, host and port below. It cannot send a password, so allow that above.</string>
     <string name="allow_no_password">Allow apps that cannot send a password</string>
     <string name="allow_no_password_help">With the password off, any app on this device can use the proxy. Apps already set up with the password keep working if they also offer no password (most do).</string>
     <string name="whatsapp">WhatsApp</string>

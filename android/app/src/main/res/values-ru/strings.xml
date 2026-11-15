@@ -301,7 +301,8 @@
     <string name="home_download">Скачать:</string>
     <string name="home_velta_open">Скопировать и открыть ссылку в Velta</string>
     <string name="home_telegram_open">Скопировать и открыть ссылку в Telegram</string>
-    <string name="home_molly_other_apps">Другое приложение с настройкой SOCKS5: хост, порт, логин и пароль перечислены в Настройки → Доступ к прокси.</string>
+    <string name="home_molly_other_apps">Другое приложение с настройкой SOCKS5. Нажмите на значение, чтобы скопировать:</string>
+    <string name="home_other_app_title">Другое приложение</string>
     <string name="home_test_report">Проверить сеть и отправить отчёт разработчику</string>
     <string name="channel_mail">Почта</string>
     <string name="channel_telegram">Tg</string>
@@ -315,7 +316,7 @@
     <string name="channel_tunnel_type">через %1$s-туннель</string>
     <string name="channel_tunnel_id">через туннель (%1$s)</string>
     <string name="channel_tunnel_plain">через туннель</string>
-    <string name="home_molly_how">Molly: Настройки → Сеть → Использовать прокси: SOCKS5, хост и порт указаны ниже. Приложение не передаёт пароль — разрешите это ниже.</string>
+    <string name="home_molly_how">Molly: Настройки → Сеть → Использовать прокси: SOCKS5, хост и порт указаны ниже. Приложение не передаёт пароль — разрешите это выше.</string>
     <string name="allow_no_password">Разрешить приложения без поддержки пароля</string>
     <string name="allow_no_password_help">Без пароля прокси может пользоваться любое приложение на этом устройстве. Приложения, уже настроенные с паролем, продолжат работать, если также поддерживают подключение без пароля (большинство поддерживает).</string>
     <string name="whatsapp">WhatsApp</string>
