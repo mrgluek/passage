@@ -36,17 +36,16 @@ func socksHandshake(c io.ReadWriter, user, pass string) (string, error) {
 	if _, err := io.ReadFull(c, methods); err != nil {
 		return "", err
 	}
-	want := byte(0x00)
-	if user != "" {
-		want = 0x02
-	}
-	offered := false
+	want := byte(0xff)
 	for _, m := range methods {
-		if m == want {
-			offered = true
+		if m == 0x02 && want == 0xff {
+			want = 0x02
+		}
+		if m == 0x00 && user == "" {
+			want = 0x00
 		}
 	}
-	if !offered {
+	if want == 0xff {
 		c.Write([]byte{5, 0xff})
 		return "", errors.New("client offers no acceptable auth method")
 	}
@@ -118,7 +117,7 @@ func socksAuth(c io.ReadWriter, user, pass string) error {
 	if err != nil {
 		return err
 	}
-	ok := subtle.ConstantTimeCompare(u, []byte(user)) == 1 && subtle.ConstantTimeCompare(p, []byte(pass)) == 1
+	ok := user == "" || (subtle.ConstantTimeCompare(u, []byte(user)) == 1 && subtle.ConstantTimeCompare(p, []byte(pass)) == 1)
 	if !ok {
 		c.Write([]byte{1, 1})
 		return errors.New("bad SOCKS credentials")

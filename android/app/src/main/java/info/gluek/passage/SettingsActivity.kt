@@ -322,8 +322,7 @@ class SettingsActivity : ThemedActivity() {
             text = getString(R.string.auth_switch)
             isChecked = settings.auth
             setOnCheckedChangeListener { _, on ->
-                settings.auth = on
-                restartIfRunning()
+                settings.setAuthentication(this@SettingsActivity, on)
             }
         })
         accessCard.addView(Ui.hint(this, getString(R.string.auth_help)))
@@ -333,6 +332,11 @@ class SettingsActivity : ThemedActivity() {
             Toast.makeText(this@SettingsActivity, getString(R.string.new_access_done), Toast.LENGTH_SHORT).show()
         }))
         accessCard.addView(Ui.hint(this, getString(R.string.new_access_help)))
+
+        col.addView(Ui.card(this).apply {
+            addView(Ui.heading(this@SettingsActivity, getString(R.string.whatsapp)))
+            addView(WhatsAppUi.controls(this@SettingsActivity, settings, false) {})
+        })
 
         val themeCard = Ui.card(this)
         col.addView(themeCard)

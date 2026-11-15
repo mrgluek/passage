@@ -53,15 +53,15 @@ func TestDetectInterception(t *testing.T) {
 	}
 }
 
-func TestWhoamiParsesTheARecord(t *testing.T) {
-	ip, err := dnsWhoami(context.Background(), fakeDNS(t))
+func TestResolverEgressParsesTheARecord(t *testing.T) {
+	ip, err := dnsResolverEgress(context.Background(), fakeDNS(t))
 	if err != nil || ip.String() != "203.0.113.7" {
 		t.Fatalf("got %v, %v", ip, err)
 	}
 }
 
 func TestParseRejectsForeignIDs(t *testing.T) {
-	q, _ := buildQueryA(0x1234, "example.com")
+	q, _ := buildQueryA(0x1234, "example.org")
 	q[2] |= 0x80
 	if _, err := parseResponseA(q, 0x4321); err == nil {
 		t.Fatal("a response to another query id must be ignored")
@@ -72,8 +72,8 @@ func TestParseRejectsForeignIDs(t *testing.T) {
 }
 
 func TestDotFirst(t *testing.T) {
-	in := []string{"77.88.8.8:53", "77.88.8.8:853", "8.8.8.8:53", "77.88.8.1:853"}
-	if got := strings.Join(dotFirst(in), ","); got != "77.88.8.8:853,77.88.8.1:853,77.88.8.8:53,8.8.8.8:53" {
+	in := []string{"192.0.2.8:53", "192.0.2.8:853", "198.51.100.8:53", "192.0.2.1:853"}
+	if got := strings.Join(dotFirst(in), ","); got != "192.0.2.8:853,192.0.2.1:853,192.0.2.8:53,198.51.100.8:53" {
 		t.Fatalf("got %s", got)
 	}
 }

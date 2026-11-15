@@ -17,6 +17,7 @@ import (
 	"runtime/debug"
 	"slices"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -56,7 +57,7 @@ var kindNames = [...]string{"relay", "telegram", "other"}
 func (k groupKind) String() string { return kindNames[k] }
 
 // group is a set of destinations that share one route decision: each mail
-// relay has its own, so one relay being blocked doesn't move another, and
+// relay has its own, so one relay being filtered doesn't move another, and
 // Telegram has one.
 type hostSeen struct {
 	at  time.Time
@@ -151,12 +152,13 @@ const (
 	handshakeTimeout      = 30 * time.Second
 	maxConnections        = 256
 	maxPendingHandshakes  = 32
+	maxForwardConnections = 64 // across all forwards, so they cannot starve the SOCKS listener
 	directDialTimeout     = 8 * time.Second
 	tunnelDialTimeout     = 60 * time.Second
 	probeTimeout          = 6 * time.Second
 	tunnelProbeTimeout    = 30 * time.Second // a cold soar session needs its hellos first
 	minProbeGap           = 10 * time.Second
-	blockedAfter          = 2 // consecutive probes showing direct access blocked before switching
+	blockedAfter          = 2 // consecutive probes showing direct access filtered before switching
 	recoveredAfter        = 3 // consecutive "a relay answers directly" probes before switching back
 	maxProbedRelays       = 4
 	suspiciousLifetime    = 20 * time.Second
@@ -171,16 +173,18 @@ type dialFunc func(ctx context.Context, network, addr string) (net.Conn, error)
 
 // Tunnel is a running local proxy.
 type Tunnel struct {
-	subs      *subscriptionRuntime
-	cfg       Config
-	resolvers []string // the paths handed to soar (IPv6 dropped without a route)
-	ln        net.Listener
-	client    soarClient
-	log       *eventLog
-	ctx       context.Context
-	cancel    context.CancelFunc
-	kick      chan struct{}
-	wg        sync.WaitGroup
+	subs         *subscriptionRuntime
+	cfg          Config
+	resolvers    []string // the paths handed to soar (IPv6 dropped without a route)
+	ln           net.Listener
+	forwards     []forwardListener
+	forwardConns int
+	client       soarClient
+	log          *eventLog
+	ctx          context.Context
+	cancel       context.CancelFunc
+	kick         chan struct{}
+	wg           sync.WaitGroup
 
 	// Swappable for tests. ways[RouteSmart] is set while a strategy works;
 	// guarded by mu.
@@ -264,7 +268,7 @@ type probeResult struct {
 	SmartChecked bool `json:"smart_checked,omitempty"`
 	SmartOK      bool `json:"smart_ok,omitempty"`
 	// SmartKnown: the strategy had worked on this network before this probe,
-	// so one blocked probe is enough to switch to it.
+	// so one filtered probe is enough to switch to it.
 	SmartKnown bool   `json:"smart_known,omitempty"`
 	Strategy   string `json:"strategy,omitempty"`
 	// Set by confirmViaTunnel: the same targets checked through the tunnel.
@@ -278,6 +282,9 @@ type probeResult struct {
 func Start(cfg Config) (*Tunnel, error) {
 	cfg, err := cfg.Normalize()
 	if err != nil {
+		return nil, err
+	}
+	if err := validateForwards(cfg); err != nil {
 		return nil, err
 	}
 	rawConfig := cfg
@@ -377,6 +384,17 @@ func Start(cfg Config) (*Tunnel, error) {
 		}
 		return nil, err
 	}
+	if tcp, ok := ln.Addr().(*net.TCPAddr); ok {
+		for _, f := range cfg.Forwards {
+			if _, port, _ := net.SplitHostPort(f.Listen); port == strconv.Itoa(tcp.Port) && (tcp.IP.IsUnspecified() || tcp.IP.IsLoopback()) {
+				ln.Close()
+				if t.client != nil {
+					t.client.Close()
+				}
+				return nil, errors.New("a forward listens where the SOCKS listener is")
+			}
+		}
+	}
 	if cfg.My != "" && pointsAt(cfg.My, ln.Addr()) {
 		ln.Close()
 		t.client.Close()
@@ -412,6 +430,7 @@ func Start(cfg Config) (*Tunnel, error) {
 			pool.onFailure = t.requestSubscriptionRefresh
 		}
 	}
+	t.startForwards()
 	t.warmTunnel()
 	t.settleHealth()
 	t.wg.Add(3)
@@ -625,7 +644,7 @@ func initialRoute(mode string) Route {
 func (t *Tunnel) learnDNSEgress() {
 	ctx, cancel := context.WithTimeout(t.ctx, 4*time.Second)
 	defer cancel()
-	_, err := dnsWhoami(ctx, "77.88.8.8:53")
+	_, err := dnsResolverEgress(ctx, "77.88.8.8:53")
 	if err != nil {
 		t.log.add("DNS interceptor not identified: %v", err)
 		return
@@ -648,6 +667,13 @@ func (t *Tunnel) Close() {
 	t.cancel()
 	t.ln.Close()
 	t.mu.Lock()
+	for i := range t.forwards {
+		f := &t.forwards[i]
+		if f.ln != nil {
+			f.ln.Close()
+		}
+		f.status.Up = false
+	}
 	var locals []net.Conn
 	for c := range t.clients {
 		locals = append(locals, c)
@@ -837,9 +863,13 @@ func (t *Tunnel) setRouteLocked(g *group, r Route, reason string) {
 }
 
 func (t *Tunnel) serve() {
+	t.serveListener(t.ln, -1)
+}
+
+func (t *Tunnel) serveListener(ln net.Listener, forward int) {
 	defer t.wg.Done()
 	for {
-		c, err := t.ln.Accept()
+		c, err := ln.Accept()
 		if err != nil {
 			if t.ctx.Err() != nil {
 				return
@@ -849,7 +879,8 @@ func (t *Tunnel) serve() {
 			continue
 		}
 		t.mu.Lock()
-		if t.ctx.Err() != nil || len(t.clients) >= maxConnections || t.pending >= maxPendingHandshakes {
+		if t.ctx.Err() != nil || len(t.clients) >= maxConnections || (forward < 0 && t.pending >= maxPendingHandshakes) ||
+			(forward >= 0 && t.forwardConns >= maxForwardConnections) {
 			t.mu.Unlock()
 			c.Close()
 			continue
@@ -857,8 +888,13 @@ func (t *Tunnel) serve() {
 		if t.clients == nil {
 			t.clients = make(map[net.Conn]bool)
 		}
-		t.clients[c] = true
-		t.pending++
+		t.clients[c] = forward < 0
+		if forward < 0 {
+			t.pending++
+		} else {
+			t.forwardConns++
+			t.forwards[forward].status.Conns++
+		}
 		t.wg.Add(1)
 		t.mu.Unlock()
 		go func() {
@@ -868,10 +904,18 @@ func (t *Tunnel) serve() {
 				if t.clients[c] {
 					t.pending--
 				}
+				if forward >= 0 {
+					t.forwardConns--
+				}
 				delete(t.clients, c)
 				t.mu.Unlock()
 			}()
-			t.handle(c)
+			if forward < 0 {
+				t.handle(c)
+			} else {
+				defer c.Close()
+				t.connect(c, t.cfg.Forwards[forward].Target, false, forward)
+			}
 		}()
 	}
 }
@@ -885,6 +929,10 @@ func (t *Tunnel) handle(c net.Conn) {
 		return
 	}
 	c.SetDeadline(time.Time{})
+	t.connect(c, addr, true)
+}
+
+func (t *Tunnel) connect(c net.Conn, addr string, socks bool, forward ...int) {
 	t.mu.Lock()
 	if t.clients[c] {
 		t.clients[c] = false
@@ -894,11 +942,18 @@ func (t *Tunnel) handle(c net.Conn) {
 	t.mu.Unlock()
 	t.learn(g, addr)
 
-	remote, route, err := t.dial(g, addr)
-	c.SetWriteDeadline(time.Now().Add(handshakeTimeout))
+	remote, route, err := t.dialWithHistory(g, addr, socks)
+	if socks {
+		c.SetWriteDeadline(time.Now().Add(handshakeTimeout))
+	}
 	if err != nil {
+		if len(forward) > 0 {
+			t.logForwardDialFailure(forward[0], err)
+		}
 		if errors.Is(err, errNoIPv6Route) {
-			socksReply(c, repNetworkUnreachable)
+			if socks {
+				socksReply(c, repNetworkUnreachable)
+			}
 			return
 		}
 		t.mu.Lock()
@@ -907,15 +962,25 @@ func (t *Tunnel) handle(c net.Conn) {
 			g.tunnelFails++
 		}
 		t.mu.Unlock()
-		t.log.add("%s dial %s failed: %v", route, addr, err)
-		socksReply(c, repHostUnreachable)
+		if socks {
+			t.log.add("%s dial %s failed: %v", route, addr, err)
+			socksReply(c, repHostUnreachable)
+		}
 		return
 	}
 	defer remote.Close()
-	if err := socksReply(c, repSucceeded); err != nil {
-		return
+	if len(forward) > 0 {
+		t.mu.Lock()
+		now := t.timeNow().UTC()
+		t.forwards[forward[0]].status.LastConn = &now
+		t.mu.Unlock()
 	}
-	c.SetDeadline(time.Time{})
+	if socks {
+		if err := socksReply(c, repSucceeded); err != nil {
+			return
+		}
+		c.SetDeadline(time.Time{})
+	}
 
 	trackedRemote := remote
 	if tc, ok := remote.(*trialConn); ok {
@@ -1020,6 +1085,10 @@ var errNoIPv6Route = errors.New("no IPv6 route available")
 // through to the next usable route for this connection and triggers a probe.
 // The error of the last route tried is returned for the caller to count.
 func (t *Tunnel) dial(g *group, addr string) (net.Conn, Route, error) {
+	return t.dialWithHistory(g, addr, true)
+}
+
+func (t *Tunnel) dialWithHistory(g *group, addr string, logFailures bool) (net.Conn, Route, error) {
 	t.tick(t.timeNow())
 	ipv6 := isIPv6Address(addr)
 	localIPv6 := !ipv6 || t.hasIPv6Route()
@@ -1145,7 +1214,9 @@ func (t *Tunnel) dial(g *group, addr string) (net.Conn, Route, error) {
 			t.stats[r].Fails++
 		}
 		t.mu.Unlock()
-		t.log.add("%s dial %s failed (%v); trying %s", r, addr, err, next)
+		if logFailures {
+			t.log.add("%s dial %s failed (%v); trying %s", r, addr, err, next)
+		}
 		r = next
 	}
 }
@@ -1338,20 +1409,25 @@ func (t *Tunnel) targetsLocked(g *group) []string {
 }
 
 // probeHost checks one probe host of g, directly or through the tunnel:
-// a full TLS handshake for mail (a TCP connect alone proves little), an
+// a TLS exchange for mail (a TCP connect alone proves little), an
 // MTProto exchange for Telegram.
 func (t *Tunnel) probeHost(ctx context.Context, g *group, viaTunnel bool, hostport string) error {
 	host, _, _ := net.SplitHostPort(hostport)
+	var err error
 	switch {
 	case g.kind == kindTelegram && viaTunnel:
 		return t.probeMTTunnel(ctx, hostport)
 	case g.kind == kindTelegram:
 		return t.probeMT(ctx, hostport)
 	case viaTunnel:
-		return t.probeTunnel(ctx, hostport, host)
+		err = t.probeTunnel(ctx, hostport, host)
 	default:
-		return t.probeTLS(ctx, hostport, host)
+		err = t.probeTLS(ctx, hostport, host)
 	}
+	if probeReachableFor(err, host) {
+		return nil
+	}
+	return err
 }
 
 // probe checks targets, then canaries only if no target answered. Smart
@@ -1473,7 +1549,7 @@ func (t *Tunnel) probeCanaries() bool {
 			pctx, pcancel := context.WithTimeout(ctx, probeTimeout)
 			defer pcancel()
 			host, _, _ := net.SplitHostPort(c)
-			answers <- answer{c, t.probeTLS(pctx, c, host) == nil}
+			answers <- answer{c, probeReachableFor(t.probeTLS(pctx, c, host), host)}
 		}()
 	}
 	next, running := 1, 1
@@ -1507,7 +1583,7 @@ func (t *Tunnel) probeCanaries() bool {
 }
 
 // confirmViaTunnel checks before switching, and when nothing answers directly.
-// A tunnel answer proves connectivity even when all direct access is blocked.
+// A tunnel answer proves connectivity even when all direct access is filtered.
 // With direct connectivity, failure through a live session means relays-down.
 func (t *Tunnel) confirmViaTunnel(g *group, res probeResult) probeResult {
 	t.mu.Lock()
@@ -1647,11 +1723,11 @@ func (t *Tunnel) cleanMemoryAllowedLocked(g *group) bool {
 // decide is the monitor's state machine, kept pure for tests.
 //   - any probe host answering directly means the network is open; leaving
 //     the tunnel takes recoveredAfter such probes, or one if it is failing;
-//   - every relay failing while the network is reachable means "blocked": the
+//   - every relay failing while the network is reachable means "filtered": the
 //     smart route if a strategy works, else the tunnel, unless the relays
 //     fail through a live tunnel too: then they are down ("relays-down")
 //     and the route stays;
-//   - a tunnel answer also proves direct access is blocked;
+//   - a tunnel answer also proves direct access is filtered;
 //   - everything failing means "offline": change nothing.
 func decide(route Route, res probeResult, failStreak, okStreak int, tunnelHealthy bool) (Route, int, int, string) {
 	switch {
@@ -1703,7 +1779,7 @@ func decide(route Route, res probeResult, failStreak, okStreak int, tunnelHealth
 func probePort(addr string) string {
 	if _, port, err := net.SplitHostPort(addr); err == nil {
 		switch port {
-		case "993", "465", "443":
+		case "993", "465", "443", whatsappChatPort:
 			return port
 		}
 	}
@@ -1713,20 +1789,72 @@ func probePort(addr string) string {
 // stateRelaysDown: the relays fail directly and through the tunnel.
 const stateRelaysDown = "relays-down"
 
+// A private root is not evidence of a block; interception still fails real connections, tracked separately.
+func probeReachable(err error) bool { return probeReachableFor(err, "") }
+
+// probeReachableFor also checks the host name when it is known.
+func probeReachableFor(err error, host string) bool {
+	if err == nil {
+		return true
+	}
+	var unknown x509.UnknownAuthorityError
+	if !errors.As(err, &unknown) {
+		return false
+	}
+	var verification *tls.CertificateVerificationError
+	// A private root is a chain the server sends whole: a lone certificate
+	// that vouches for itself is what an interceptor presents.
+	if !errors.As(err, &verification) || len(verification.UnverifiedCertificates) < 2 {
+		return false
+	}
+	{
+		certs := verification.UnverifiedCertificates
+		roots, intermediates := x509.NewCertPool(), x509.NewCertPool()
+		roots.AddCert(certs[len(certs)-1])
+		for _, cert := range certs[1:] {
+			intermediates.AddCert(cert)
+		}
+		// Check the supplied chain for other errors even when its root is unknown.
+		_, err = certs[0].Verify(x509.VerifyOptions{DNSName: host, Roots: roots, Intermediates: intermediates})
+		return err == nil
+	}
+}
+
+// whatsappChatPort carries a protocol that does not start with TLS, so probes
+// of it only connect.
+const whatsappChatPort = "5222"
+
+func connectOnly(hostport string) bool {
+	_, port, _ := net.SplitHostPort(hostport)
+	return port == whatsappChatPort
+}
+
 // probeTLSVia completes a TLS handshake with hostport over a connection from dial.
+// Certificate errors are retained for diagnosis; routing uses probeReachable.
 func probeTLSVia(ctx context.Context, dial dialFunc, hostport, sni string) error {
 	c, err := dial(ctx, "tcp", hostport)
 	if err != nil {
 		return err
 	}
 	defer c.Close()
+	if connectOnly(hostport) {
+		return nil
+	}
 	return tls.Client(c, &tls.Config{ServerName: sni, MinVersion: tls.VersionTLS12, RootCAs: probeRoots}).HandshakeContext(ctx)
 }
 
 // probeRoots verifies probe handshakes; nil means the system roots. Tests set it.
 var probeRoots *x509.CertPool
 
+// probeTLS retains certificate errors for diagnosis; routing uses probeReachable.
 func probeTLS(ctx context.Context, hostport, sni string) error {
+	if connectOnly(hostport) {
+		c, err := (&net.Dialer{Timeout: probeTimeout}).DialContext(ctx, "tcp", hostport)
+		if err != nil {
+			return err
+		}
+		return c.Close()
+	}
 	d := &tls.Dialer{
 		NetDialer: &net.Dialer{Timeout: probeTimeout},
 		Config:    &tls.Config{ServerName: sni, MinVersion: tls.VersionTLS12, RootCAs: probeRoots},
@@ -1844,6 +1972,7 @@ func dialResolver(ctx context.Context, network, addr string) (net.Conn, error) {
 
 // Status is the diagnostics snapshot shown in the app and sent in reports.
 type Status struct {
+	Forwards      []ForwardStatus       `json:"forwards,omitempty"`
 	Subscriptions []SubscriptionStatus  `json:"subscriptions,omitempty"`
 	ConfigChanged bool                  `json:"config_changed,omitempty"`
 	RouteCount    int                   `json:"route_count"`
@@ -1887,6 +2016,7 @@ type Status struct {
 
 // GroupStatus is one group's part of Status.
 type GroupStatus struct {
+	App            string            `json:"app,omitempty"`
 	Kind           string            `json:"kind"` // relay, telegram or other
 	Route          string            `json:"route"`
 	Via            string            `json:"via,omitempty"`
@@ -1961,6 +2091,14 @@ func (t *Tunnel) statusLocked(n int) Status {
 		Soar:           SoarVersion(),
 		Groups:         map[string]GroupStatus{},
 	}
+	for _, f := range t.forwards {
+		row := f.status
+		if row.LastConn != nil {
+			stamp := *row.LastConn
+			row.LastConn = &stamp
+		}
+		s.Forwards = append(s.Forwards, row)
+	}
 	for _, gs := range t.groupsLocked() {
 		if gs.kind == kindOther && gs.lastConn.IsZero() {
 			continue
@@ -1973,6 +2111,7 @@ func (t *Tunnel) statusLocked(n int) Status {
 		}
 		s.Groups[gs.name] = GroupStatus{
 			Kind:           gs.kind.String(),
+			App:            groupApp(gs.kind.String(), gs.name),
 			Route:          gs.route.String(),
 			Via:            gs.viaLocked(),
 			RouteID:        t.groupRouteIDLocked(gs),

@@ -11,7 +11,6 @@ import android.content.pm.ServiceInfo
 import android.net.ConnectivityManager
 import android.net.LinkProperties
 import android.net.Network
-import android.os.BatteryManager
 import android.os.Build
 import android.os.Handler
 import android.os.IBinder
@@ -52,7 +51,6 @@ class PassageService : Service() {
         private const val TICK_MS = 60_000L
         private const val RETRY_MS = 15_000L
         private const val NET_SETTLE_MS = 2_000L
-        private const val BATTERY_SAMPLE_MS = 10 * 60_000L
         private const val UPDATE_SETTLE_MS = 5 * 60_000L
 
         /** The service is up (the proxy may still be starting or retrying). */
@@ -97,7 +95,6 @@ class PassageService : Service() {
     // Touched on the worker thread only.
     private var lastNet: Pair<List<String>, String>? = null
     private var lastNotification: Pair<String, String>? = null
-    private var lastBatterySample = 0L
     private val startedAt = System.currentTimeMillis()
 
     private val tick = object : Runnable {
@@ -109,7 +106,6 @@ class PassageService : Service() {
                     Diagnostics.routerEvents(status)
                     updateWakeLock(status)
                     updateNotification(status)
-                    sampleBattery()
                     checkForUpdate()
                 } finally {
                     // With a Soar route, check often: its polling needs the
@@ -229,28 +225,6 @@ class PassageService : Service() {
         }
     }
 
-    /** One battery sample every BATTERY_SAMPLE_MS for the report (while the proxy runs). */
-    private fun sampleBattery() {
-        val now = System.currentTimeMillis()
-        if (now - lastBatterySample < BATTERY_SAMPLE_MS) return
-        lastBatterySample = now
-        try {
-            val bm = getSystemService(BatteryManager::class.java)
-            val pm = getSystemService(PowerManager::class.java)
-            fun prop(id: Int): Any = bm.getIntProperty(id).let { if (it == 0 || it == Int.MIN_VALUE) JSONObject.NULL else it }
-            Diagnostics.battery(JSONObject()
-                .put("level", bm.getIntProperty(BatteryManager.BATTERY_PROPERTY_CAPACITY))
-                .put("charge_uah", prop(BatteryManager.BATTERY_PROPERTY_CHARGE_COUNTER))
-                .put("current_ua", prop(BatteryManager.BATTERY_PROPERTY_CURRENT_NOW))
-                .put("charging", bm.isCharging)
-                .put("screen_on", pm.isInteractive)
-                .put("doze", pm.isDeviceIdleMode)
-                .put("wake_lock", wakeLock?.isHeld == true))
-        } catch (e: Throwable) {
-            Diagnostics.error("battery sample failed", e)
-        }
-    }
-
     /** On its own thread: a check can take most of a minute. */
     private fun checkForUpdate() {
         if (System.currentTimeMillis() - startedAt < UPDATE_SETTLE_MS || !Updater.due(this)) return
@@ -328,6 +302,9 @@ class PassageService : Service() {
                 cfg.remove("user")
                 cfg.remove("pass")
             }
+            WhatsApp.configure(cfg, s.whatsappEnabled,
+                if (s.whatsappEnabled) s.whatsappChatPort else 0,
+                if (s.whatsappEnabled) s.whatsappMediaPort else 0)
             cfg.put("mode", s.mode)
             if (s.myRoute.isNotEmpty()) cfg.put("my", s.myRoute) else cfg.remove("my")
             cfg.put("system_resolvers", JSONArray(net.dns))
@@ -392,7 +369,7 @@ class PassageService : Service() {
     private fun goForeground() {
         val localized = AppLanguage.localizedContext(this)
         val connecting = HomeSetup.Plain.CONNECTING
-        val n = buildNotification(localized.getString(R.string.status_title, localized.getString(connecting.title)), localized.getString(connecting.reason(false)))
+        val n = buildNotification(localized.getString(connecting.title), localized.getString(connecting.reason(false)))
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
             startForeground(NOTIFICATION_ID, n, ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE)
         } else {
@@ -403,7 +380,8 @@ class PassageService : Service() {
     private fun updateNotification(snapshot: JSONObject? = null, force: Boolean = false) {
         if (!active) return
         val localized = AppLanguage.localizedContext(this)
-        val content = StatusText.notification(localized, snapshot ?: status(), Settings(this).appSeen, fallbackRunning = lastError == null, display = notificationChannels)
+        val settings = Settings(this)
+        val content = StatusText.notification(localized, snapshot ?: status(), settings.appSeen, fallbackRunning = lastError == null, display = notificationChannels, hasLink = settings.hasLink)
         if (!force && content == lastNotification) return
         val nm = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
         nm.notify(NOTIFICATION_ID, buildNotification(content.first, content.second))

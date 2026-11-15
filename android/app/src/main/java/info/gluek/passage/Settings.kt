@@ -231,6 +231,59 @@ class Settings(context: Context) {
      * Require the SOCKS5 username and password. Off ("open mode") is for
      * clients that can't send them: then any app on the phone can use the port.
      */
+    fun setAuthentication(context: Context, required: Boolean) {
+        auth = required
+        if (PassageService.active) PassageService.start(context, "settings changed")
+    }
+
+    var whatsappEnabled: Boolean
+        get() = prefs.getBoolean("whatsapp_enabled", false)
+        private set(v) = prefs.edit().putBoolean("whatsapp_enabled", v).apply()
+
+    fun setWhatsApp(context: Context, enabled: Boolean) {
+        if (enabled && !whatsappEnabled) dropBusyWhatsAppPorts()
+        if (enabled) ensureWhatsAppPorts()
+        whatsappEnabled = enabled
+        if (PassageService.active) PassageService.start(context, "settings changed")
+    }
+
+    val whatsappChatPort: Int
+        get() { ensureWhatsAppPorts(); return prefs.getInt("whatsapp_chat_port", 0) }
+    val whatsappMediaPort: Int
+        get() { ensureWhatsAppPorts(); return prefs.getInt("whatsapp_media_port", 0) }
+
+    /** Saved ports another process has taken since are forgotten, so new ones are chosen. */
+    private fun dropBusyWhatsAppPorts() {
+        synchronized(configLock) {
+            val edit = prefs.edit()
+            for (key in listOf("whatsapp_chat_port", "whatsapp_media_port")) {
+                val saved = prefs.getInt(key, 0)
+                if (saved != 0 && !WhatsApp.isBindable(saved)) edit.putInt(key, 0)
+            }
+            edit.apply()
+        }
+    }
+
+    private fun ensureWhatsAppPorts() {
+        while (true) {
+            val previous = synchronized(configLock) {
+                prefs.getInt("whatsapp_chat_port", 0) to prefs.getInt("whatsapp_media_port", 0)
+            }
+            if (previous.first != 0 && previous.second != 0) return
+            val socks = port
+            val chat = previous.first.takeIf { it != 0 }
+                ?: WhatsApp.choosePort(setOf(socks, previous.second))
+            val media = previous.second.takeIf { it != 0 }
+                ?: WhatsApp.choosePort(setOf(socks, chat))
+            synchronized(configLock) {
+                if (previous == (prefs.getInt("whatsapp_chat_port", 0) to prefs.getInt("whatsapp_media_port", 0)) && socks == port) {
+                    prefs.edit().putInt("whatsapp_chat_port", chat).putInt("whatsapp_media_port", media).apply()
+                    return
+                }
+            }
+        }
+    }
+
     var auth: Boolean
         get() = prefs.getBoolean("auth", true)
         set(v) = prefs.edit().putBoolean("auth", v).apply()
@@ -273,7 +326,8 @@ class Settings(context: Context) {
     /** New port, username and password; apps set up with the old ones must be updated. */
     fun newAccess() {
         prefs.edit()
-            .putInt("port", MIN_PORT + random.nextInt(MAX_PORT - MIN_PORT))
+            .putInt("port", generateSequence { MIN_PORT + random.nextInt(MAX_PORT - MIN_PORT) }
+                .first { it != prefs.getInt("whatsapp_chat_port", 0) && it != prefs.getInt("whatsapp_media_port", 0) })
             .putString("user", hex(4))
             .putString("pass", hex(16))
             .apply()

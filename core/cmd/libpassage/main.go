@@ -227,7 +227,7 @@ func Java_info_gluek_passage_Native_recheck(env *C.JNIEnv, cls C.jclass) {
 }
 
 // diagnose runs the network test (Tunnel.Diagnose) and returns it as JSON.
-// It blocks for up to about 20 seconds; the app calls it off the UI thread.
+// It waits for up to about 20 seconds; the app calls it off the UI thread.
 //
 //export Java_info_gluek_passage_Native_diagnose
 func Java_info_gluek_passage_Native_diagnose(env *C.JNIEnv, cls C.jclass) C.jbyteArray {
@@ -271,7 +271,7 @@ func updateClient(sources []string) (*update.Client, error) {
 }
 
 // updateCheck takes {"version", "target", "sources"} and returns the newer
-// release as {"version", "file"}, or {} when there is none. It blocks for up
+// release as {"version", "file"}, or {} when there is none. It waits for up
 // to about 45 seconds; the app calls it off the UI thread.
 //
 //export Java_info_gluek_passage_Native_updateCheck
@@ -305,7 +305,7 @@ func Java_info_gluek_passage_Native_updateCheck(env *C.JNIEnv, cls C.jclass, req
 	return result(env, found)
 }
 
-// updateDownload saves the last offer at the path in dest. It blocks until
+// updateDownload saves the last offer at the path in dest. It waits until
 // the file is complete, or updateCancel stops it.
 //
 //export Java_info_gluek_passage_Native_updateDownload

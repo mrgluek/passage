@@ -37,7 +37,7 @@ func TestPreviousNetworkStart(t *testing.T) {
 		{name: "telegram", previous: true, kind: kindTelegram, wantTunnel: true},
 		{name: "no state file", previous: true, noState: true},
 		{name: "known clean", previous: true, here: "clean"},
-		{name: "known blocked", here: "blocked", wantTunnel: true},
+		{name: "known filtered", here: "blocked", wantTunnel: true},
 		{name: "expired previous", previous: true, age: previousNetworkMemory + time.Second},
 		{name: "previous at boundary", previous: true, age: previousNetworkMemory},
 		{name: "other", previous: true, kind: kindOther},
@@ -121,7 +121,7 @@ func TestInheritedNetworkRecovery(t *testing.T) {
 	}
 	blocked, clean := knownNetworkGroup(cfg, g.name, now)
 	if g.route != RouteDirect || blocked || !clean {
-		t.Fatalf("recovery: route %v, blocked %v, clean %v", g.route, blocked, clean)
+		t.Fatalf("recovery: route %v, filtered %v, clean %v", g.route, blocked, clean)
 	}
 	last := previousNetwork(cfg)
 	if last.Network != networkKey(cfg) || last.Groups[groupKey(g.name)] || !last.At.Equal(now) {
@@ -144,7 +144,7 @@ func TestInheritedNetworkBlockedProbe(t *testing.T) {
 	g := tt.relayLocked("relay.example.org")
 	tt.applyProbe(g, probeResult{Relays: 1, TunnelChecked: true, TunnelOK: true})
 	if blocked, clean := knownNetworkGroup(cfg, g.name, now); !blocked || clean {
-		t.Fatal("blocked probe did not establish a network verdict")
+		t.Fatal("filtered probe did not establish a network verdict")
 	}
 }
 
@@ -216,7 +216,7 @@ func TestOldNetworkStateLoads(t *testing.T) {
 		t.Fatal(err)
 	}
 	if blocked, clean := knownNetworkGroup(cfg, "relay.example.org", now); !blocked || clean {
-		t.Fatal("old blocked verdict did not load")
+		t.Fatal("old filtered verdict did not load")
 	}
 	if knownStrategyName(cfg) != "split:2" || !previousNetwork(cfg).At.IsZero() {
 		t.Fatal("old strategy or absent last network loaded incorrectly")

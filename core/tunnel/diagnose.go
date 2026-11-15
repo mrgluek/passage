@@ -184,6 +184,8 @@ func shortError(err error) string {
 		return "timeout"
 	case strings.Contains(err.Error(), "no such host"):
 		return "no such host"
+	case probeReachable(err):
+		return "answered, untrusted chain"
 	case strings.Contains(err.Error(), "certificate"):
 		return "bad certificate"
 	}

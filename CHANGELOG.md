@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.9.0
+
+- A proxy for WhatsApp on Android, Windows and macOS: turn it on in the new
+  WhatsApp tab or in Settings, then enter the address and the two ports it
+  shows in WhatsApp's proxy settings.
+- A Molly tab on Android with its settings, and a switch for apps that cannot
+  send a password. Velta moved into the Delta Chat tab.
+- The status line lists the channels separately (Mail, Tg, WA, Molly), and
+  shortens to route names when three or more are active. The user's own route
+  reads "via my route".
+- The status title reads "Proxy works" without the app name, and the green dot
+  gets a ripple while traffic flows.
+- Servers with their own certificates are no longer treated as unreachable, so
+  such apps stay on the direct route when it works.
+- With the password off, apps that always send one still connect.
+- Android: the notification and the home screen ask for a link while there is
+  none; the battery samples are gone from the report.
+- Windows: the window is taller.
+
 ## 0.8.2
 
 - The status line shows which way each channel goes, for example "Mail:

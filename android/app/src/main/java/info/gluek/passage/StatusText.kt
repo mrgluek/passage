@@ -14,10 +14,10 @@ object StatusText {
         return listOfNotNull(routes(c, s), network(c, s), tunnelState(c, s)).joinToString(" · ")
     }
 
-    fun notification(c: Context, s: JSONObject?, appSeen: Boolean, fallbackRunning: Boolean, display: StatusChannels.Display = StatusChannels.Display()): Pair<String, String> {
-        val plain = notificationPlain(s, fallbackRunning)
+    fun notification(c: Context, s: JSONObject?, appSeen: Boolean, fallbackRunning: Boolean, display: StatusChannels.Display = StatusChannels.Display(), hasLink: Boolean? = null): Pair<String, String> {
+        val plain = notificationPlain(s, fallbackRunning, hasLink)
         val channels = s?.takeIf { it.optBoolean("running") }?.let { channels(c, it, display) }.orEmpty()
-        return c.getString(R.string.status_title, c.getString(plain.title)) to plain.detail(c.getString(plain.reason(appSeen)), channels)
+        return c.getString(plain.title) to plain.detail(c.getString(plain.reason(appSeen)), channels)
     }
 
     fun channels(c: Context, s: JSONObject, display: StatusChannels.Display): String {
@@ -25,25 +25,26 @@ object StatusText {
         val format = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ssXXX", Locale.ROOT)
         val list = groups.keys().asSequence().mapNotNull { name -> groups.optJSONObject(name)?.let { g ->
             val stamp = try { format.parse(g.optString("last_conn").replace(Regex("\\.\\d+"), ""))?.time ?: 0L } catch (_: Exception) { 0L }
-            StatusChannels.Group(name, g.optString("kind"), g.optString("route"), g.optString("route_id"), g.optString("via"), stamp, (g.optJSONArray("targets")?.length() ?: 0) > 0)
+            StatusChannels.Group(name, g.optString("kind"), g.optString("route"), g.optString("route_id"), g.optString("via"), stamp, (g.optJSONArray("targets")?.length() ?: 0) > 0, g.optString("app"))
         } }.toList()
         val labels = StatusChannels.Labels(c.getString(R.string.channel_mail), c.getString(R.string.channel_telegram), c.getString(R.string.channel_other),
             c.getString(R.string.channel_shared), c.getString(R.string.route_direct), c.getString(R.string.channel_smart),
-            listOf(R.string.channel_tunnel, R.string.channel_tunnel_type, R.string.channel_tunnel_id, R.string.channel_tunnel_plain).map { c.getString(it) })
+            listOf(R.string.channel_tunnel, R.string.channel_tunnel_type, R.string.channel_tunnel_id, R.string.channel_tunnel_plain).map { c.getString(it) },
+            c.getString(R.string.channel_whatsapp), c.getString(R.string.channel_signal), c.getString(R.string.channel_and), c.getString(R.string.route_tunnel), c.getString(R.string.channel_my))
         return display.sample(list, s.optString("mode"), s.optString("route"), s.optString("via").ifEmpty { onlyType(s) }, labels, System.currentTimeMillis())
     }
 
-    internal fun notificationResources(s: JSONObject?, appSeen: Boolean, fallbackRunning: Boolean): Pair<Int, Int> {
-        val plain = notificationPlain(s, fallbackRunning)
+    internal fun notificationResources(s: JSONObject?, appSeen: Boolean, fallbackRunning: Boolean, hasLink: Boolean? = null): Pair<Int, Int> {
+        val plain = notificationPlain(s, fallbackRunning, hasLink)
         return plain.title to plain.reason(appSeen)
     }
 
-    private fun notificationPlain(s: JSONObject?, fallbackRunning: Boolean): HomeSetup.Plain {
+    private fun notificationPlain(s: JSONObject?, fallbackRunning: Boolean, hasLink: Boolean?): HomeSetup.Plain {
         val health = s?.optJSONObject("health")
         return HomeSetup.plain(
             running = s?.optBoolean("running", fallbackRunning) ?: fallbackRunning,
             startFailed = false,
-            hasLink = true,
+            hasLink = hasLink ?: (s == null || !s.has("route_count") || s.optInt("route_count") > 0 || (s.optJSONArray("subscriptions")?.length() ?: 0) > 0),
             health = health?.optString("state").orEmpty(),
             reason = health?.optString("reason").orEmpty(),
         )
@@ -113,34 +114,6 @@ object StatusText {
             .mapNotNull { name -> groups.optJSONObject(name)?.takeIf { it.optString("kind") == "relay" }?.let { name to it } }
             .sortedBy { it.first }
             .toList()
-
-    /**
-     * Battery drain from consecutive samples while not charging, split by
-     * whether the wake lock was held at the start of each interval.
-     */
-    fun batterySummary(samples: JSONArray): JSONObject {
-        val hours = doubleArrayOf(0.0, 0.0)
-        val drop = doubleArrayOf(0.0, 0.0)
-        val format = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss", Locale.US).apply { timeZone = java.util.TimeZone.getTimeZone("UTC") }
-        fun time(s: JSONObject) = try { format.parse(s.optString("t").take(19))?.time } catch (_: Exception) { null }
-        for (i in 1 until samples.length()) {
-            val a = samples.getJSONObject(i - 1)
-            val b = samples.getJSONObject(i)
-            if (a.optBoolean("charging") || b.optBoolean("charging")) continue
-            val ta = time(a) ?: continue
-            val tb = time(b) ?: continue
-            val h = (tb - ta) / 3_600_000.0
-            // Samples need the CPU awake, so without the lock they come late;
-            // longer gaps likely span time with the proxy off.
-            if (h <= 0 || h > 3.0 || b.optInt("level") > a.optInt("level")) continue
-            val k = if (a.optBoolean("wake_lock")) 1 else 0
-            hours[k] += h
-            drop[k] += (a.optInt("level") - b.optInt("level")).toDouble()
-        }
-        fun part(k: Int) = JSONObject().put("hours", "%.1f".format(Locale.US, hours[k])).put("percent", drop[k].toInt())
-            .put("percent_per_hour", if (hours[k] > 0) "%.2f".format(Locale.US, drop[k] / hours[k]) else JSONObject.NULL)
-        return JSONObject().put("with_wake_lock", part(1)).put("without_wake_lock", part(0))
-    }
 
     /** The network test in one line for the log: "12 ok, 3 failed". */
     fun diagnosisSummary(d: JSONObject): String {
@@ -358,7 +331,6 @@ object StatusText {
             diagnostics.opt(key)?.let { redactReportValue(it, Diagnostics::redact) }
         }
         r.put("diagnostics", diagnostics)
-        diagnostics.optJSONArray("battery")?.let { r.put("battery_summary", batterySummary(it)) }
         if (networkTest != null) r.put("network_test", JSONArray(networkTest.trimEnd().lines()))
         r.put("device_network", JSONObject()
             .put("transport", net.transport)
@@ -403,7 +375,7 @@ object StatusText {
     private fun working(p: JSONObject) =
         p.optBoolean("verified") && !p.optBoolean("suspended")
 
-    /** "77.88.8.8:853" -> "77.88.8.8", "[2a0c::1]:53" -> "2a0c::1": the port shows in the transport column. */
+    /** "192.0.2.1:853" -> "192.0.2.1", "[2001:db8::1]:53" -> "2001:db8::1": the port shows in the transport column. */
     private fun shortResolver(r: String): String {
         val m = Regex("^\\[?(.*?)\\]?:(53|853)$").find(r) ?: return r
         return m.groupValues[1]

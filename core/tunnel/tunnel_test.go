@@ -25,7 +25,7 @@ var testKey = base64.StdEncoding.EncodeToString(bytes.Repeat([]byte{7}, 32))
 
 func TestParseLink(t *testing.T) {
 	urlKey := base64.RawURLEncoding.EncodeToString(bytes.Repeat([]byte{0xfb}, 32)) // has '-'/'_'
-	cfg, err := ParseLink("passage://tunnel?v=1&zone=T.Example.ORG.&key=" + urlKey + "&r=1.2.3.4:53,1.2.3.4:53,%5B2001:db8::1%5D:853,9.9.9.9&c=example.com:443,example.net")
+	cfg, err := ParseLink("passage://tunnel?v=1&zone=T.Example.ORG.&key=" + urlKey + "&r=192.0.2.4:53,192.0.2.4:53,%5B2001:db8::1%5D:853,203.0.113.9&c=example.org:443,example.net")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -35,10 +35,10 @@ func TestParseLink(t *testing.T) {
 	if want := base64.StdEncoding.EncodeToString(bytes.Repeat([]byte{0xfb}, 32)); cfg.Key != want {
 		t.Errorf("key not normalized: %q", cfg.Key)
 	}
-	if got := strings.Join(cfg.Resolvers, ","); got != "1.2.3.4:53,[2001:db8::1]:853,9.9.9.9:53" {
+	if got := strings.Join(cfg.Resolvers, ","); got != "192.0.2.4:53,[2001:db8::1]:853,203.0.113.9:53" {
 		t.Errorf("resolvers %q", got)
 	}
-	if strings.Join(cfg.Canaries, ",") != "example.com:443,example.net:443" || cfg.Mode != ModeAuto || cfg.Listen != "127.0.0.1:0" {
+	if strings.Join(cfg.Canaries, ",") != "example.org:443,example.net:443" || cfg.Mode != ModeAuto || cfg.Listen != "127.0.0.1:0" {
 		t.Errorf("defaults: %+v", cfg)
 	}
 
@@ -67,7 +67,7 @@ func TestParseLink(t *testing.T) {
 		"passage://tunnel?zone=bad_label.example.org&key=" + testKey,
 		"passage://tunnel?zone=t.example.org&key=c2hvcnQ=",
 		"passage://tunnel?zone=t.example.org&key=" + testKey + "&r=dns.example.org:53",
-		"passage://tunnel?zone=t.example.org&key=" + testKey + "&r=1.2.3.4:0",
+		"passage://tunnel?zone=t.example.org&key=" + testKey + "&r=192.0.2.4:0",
 	} {
 		if _, err := ParseLink(bad); err == nil {
 			t.Errorf("accepted %q", bad)
@@ -82,11 +82,11 @@ func TestDecide(t *testing.T) {
 
 	r, f, _, s := decide(RouteDirect, blocked, 0, 0, true)
 	if r != RouteDirect || f != 1 || s != "blocked" {
-		t.Fatalf("one blocked probe must not switch yet: %v %d %s", r, f, s)
+		t.Fatalf("one filtered probe must not switch yet: %v %d %s", r, f, s)
 	}
 	r, f, _, _ = decide(r, blocked, f, 0, true)
 	if r != RouteTunnel {
-		t.Fatalf("second blocked probe must switch to the tunnel")
+		t.Fatalf("second filtered probe must switch to the tunnel")
 	}
 	r, f, _, s = decide(r, offline, f, 0, true)
 	if r != RouteTunnel || s != "offline" {
@@ -151,7 +151,7 @@ func echoDialer(prefix string, calls *atomic.Int32) dialFunc {
 func failDialer(calls *atomic.Int32) dialFunc {
 	return func(context.Context, string, string) (net.Conn, error) {
 		calls.Add(1)
-		return nil, errors.New("blocked")
+		return nil, errors.New("filtered")
 	}
 }
 
@@ -315,24 +315,32 @@ func TestAnyCanaryMeansBlocked(t *testing.T) {
 }
 
 func TestEffectiveOrder(t *testing.T) {
+	var operator string
+	for code := range OperatorResolvers {
+		operator = code
+		break
+	}
+	if operator == "" {
+		t.Fatal("no operator resolver data")
+	}
 	cfg, err := Config{
 		Zone: "t.example.org", Key: testKey,
-		Resolvers:       []string{"77.88.8.8:53", "10.0.0.1:53"},
-		SystemResolvers: []string{"10.0.0.1:53", "fe80::1%wlan0", "garbage", "2001:db8::53"},
-		Operator:        "25001",
+		Resolvers:       []string{DefaultResolvers[0], "192.0.2.53:53"},
+		SystemResolvers: []string{"192.0.2.53:53", "fe80::1%wlan0", "garbage", "2001:db8::53"},
+		Operator:        operator,
 	}.Normalize()
 	if err != nil {
 		t.Fatal(err)
 	}
 	eff := cfg.Effective()
-	if eff[0] != "10.0.0.1:53" || eff[1] != "[2001:db8::53]:53" {
+	if eff[0] != "192.0.2.53:53" || eff[1] != "[2001:db8::53]:53" {
 		t.Fatalf("network resolvers must come first: %v", eff)
 	}
-	if eff[2] != OperatorResolvers["25001"][0] {
+	if eff[2] != OperatorResolvers[operator][0] {
 		t.Fatalf("operator resolvers must follow: %v", eff)
 	}
-	// link extras (77.88.8.8 is also a default: listed once), then defaults
-	if eff[2+len(OperatorResolvers["25001"])] != "77.88.8.8:53" {
+	// Link extras overlap the defaults and are listed once.
+	if eff[2+len(OperatorResolvers[operator])] != DefaultResolvers[0] {
 		t.Fatalf("link resolvers must follow the operator's: %v", eff)
 	}
 	seen := map[string]bool{}
@@ -342,10 +350,10 @@ func TestEffectiveOrder(t *testing.T) {
 		}
 		seen[r] = true
 	}
-	if len(eff) != 2+len(OperatorResolvers["25001"])+len(DefaultResolvers) {
+	if len(eff) != 2+len(OperatorResolvers[operator])+len(DefaultResolvers) {
 		t.Fatalf("network + operator + defaults (link entries overlap them): %d %v", len(eff), eff)
 	}
-	other, _ := Config{Zone: "t.example.org", Key: testKey, Operator: "99999"}.Normalize()
+	other, _ := Config{Zone: "t.example.org", Key: testKey, Operator: "00101"}.Normalize()
 	if len(other.Effective()) != len(DefaultResolvers) {
 		t.Fatalf("unknown operator adds nothing")
 	}
@@ -447,24 +455,24 @@ func TestFixedProbeTargets(t *testing.T) {
 }
 
 func TestWithoutIPv6(t *testing.T) {
-	in := []string{"77.88.8.8:53", "[2a02:6b8::feed:ff]:53", "77.88.8.8:853", "[2a0c:a9c7:8::1]:53"}
+	in := []string{"192.0.2.8:53", "[2001:db8::2]:53", "192.0.2.8:853", "[2001:db8::1]:53"}
 	out, n := withoutIPv6(in)
-	if n != 2 || strings.Join(out, ",") != "77.88.8.8:53,77.88.8.8:853" {
+	if n != 2 || strings.Join(out, ",") != "192.0.2.8:53,192.0.2.8:853" {
 		t.Fatalf("got %v (%d dropped)", out, n)
 	}
 }
 
 func TestPrivateResolversOnlyFromTheNetwork(t *testing.T) {
-	in := []string{"10.0.0.1:53", "77.88.8.8:53", "10.77.135.4:53", "100.64.1.1:53", "[fd00::1]:53", "192.168.8.1:53"}
+	in := []string{"10.0.0.1:53", "192.0.2.8:53", "10.77.135.4:53", "100.64.1.1:53", "[fd00::1]:53", "192.168.8.1:53"}
 	out, n := withoutForeignPrivate(in, []string{"10.0.0.1:53", "192.168.8.1:53"})
-	if n != 3 || strings.Join(out, ",") != "10.0.0.1:53,77.88.8.8:53,192.168.8.1:53" {
+	if n != 3 || strings.Join(out, ",") != "10.0.0.1:53,192.0.2.8:53,192.168.8.1:53" {
 		t.Fatalf("got %v (%d dropped)", out, n)
 	}
 }
 
 func TestIPv4First(t *testing.T) {
-	in := []string{"[2a00::1]:53", "10.0.0.1:53", "[2a02::2]:53", "77.88.8.8:853"}
-	if got := strings.Join(ipv4First(in), ","); got != "10.0.0.1:53,77.88.8.8:853,[2a00::1]:53,[2a02::2]:53" {
+	in := []string{"[2001:db8::1]:53", "198.51.100.1:53", "[2001:db8::2]:53", "192.0.2.8:853"}
+	if got := strings.Join(ipv4First(in), ","); got != "198.51.100.1:53,192.0.2.8:853,[2001:db8::1]:53,[2001:db8::2]:53" {
 		t.Fatalf("got %s", got)
 	}
 }
@@ -514,15 +522,15 @@ func TestRelaysDownThroughTheTunnelKeepTheRoute(t *testing.T) {
 	down := probeResult{Relays: 1, NetworkOK: true, CanaryOK: true, TunnelChecked: true}
 	r, f, _, s := decide(RouteDirect, down, blockedAfter-1, 0, true)
 	if r != RouteDirect || s != stateRelaysDown || f != blockedAfter {
-		t.Fatalf("relays failing through a live tunnel too are down, not blocked: %v %d %s", r, f, s)
+		t.Fatalf("relays failing through a live tunnel too are down, not filtered: %v %d %s", r, f, s)
 	}
 	up := probeResult{Relays: 1, NetworkOK: true, CanaryOK: true, TunnelChecked: true, TunnelOK: true}
 	if r, _, _, _ := decide(RouteDirect, up, blockedAfter-1, 0, true); r != RouteTunnel {
-		t.Fatal("a relay answering through the tunnel means blocked: switch")
+		t.Fatal("a relay answering through the tunnel means filtered: switch")
 	}
 }
 
-// relayDownTunnel is a test tunnel in auto mode one blocked probe away from
+// relayDownTunnel is a test tunnel in auto mode one filtered probe away from
 // switching, with relay.example.org failing directly and a canary answering.
 func relayDownTunnel(t *testing.T, viaTunnel error, session bool) (*Tunnel, *atomic.Int32) {
 	var n atomic.Int32
@@ -565,7 +573,7 @@ func TestRelayReachableThroughTheTunnelSwitches(t *testing.T) {
 	tt, _ := relayDownTunnel(t, nil, true)
 	tt.check()
 	if s := tt.Status(0); s.Route != "tunnel" || s.State != "blocked" {
-		t.Fatalf("relay blocked directly but reachable through the tunnel: route %s state %s", s.Route, s.State)
+		t.Fatalf("relay filtered directly but reachable through the tunnel: route %s state %s", s.Route, s.State)
 	}
 }
 
@@ -814,10 +822,10 @@ func TestDecideUsesTheSmartRoute(t *testing.T) {
 	noSmart := probeResult{Relays: 1, NetworkOK: true, CanaryOK: true, CanaryChecked: true, SmartChecked: true}
 
 	if r, _, _, _ := decide(RouteDirect, smart, 0, 0, true); r != RouteDirect {
-		t.Fatalf("one blocked probe must not switch yet, got %v", r)
+		t.Fatalf("one filtered probe must not switch yet, got %v", r)
 	}
 	if r, _, _, s := decide(RouteDirect, smart, blockedAfter-1, 0, true); r != RouteSmart || s != "blocked" {
-		t.Fatalf("blocked with a working strategy goes smart, got %v %s", r, s)
+		t.Fatalf("filtered with a working strategy goes smart, got %v %s", r, s)
 	}
 	if r, _, _, _ := decide(RouteTunnel, smart, 5, 0, true); r != RouteSmart {
 		t.Fatalf("from the tunnel a working strategy is preferred, got %v", r)
@@ -843,7 +851,7 @@ func TestSmartCheckFindsAndKeepsAStrategy(t *testing.T) {
 	probeRoots = pool
 	defer func() { probeRoots = nil }()
 
-	down := func(context.Context, string, string) (net.Conn, error) { return nil, errors.New("blocked") }
+	down := func(context.Context, string, string) (net.Conn, error) { return nil, errors.New("filtered") }
 	tt := newTestTunnel(t, ModeAuto, down, down)
 	defer tt.Close()
 	var d net.Dialer
@@ -1040,7 +1048,7 @@ func waitKnownBlocked(t *testing.T, cfg Config, group string, want bool) {
 	t.Helper()
 	for deadline := time.Now().Add(2 * time.Second); knownBlocked(cfg, group) != want; {
 		if time.Now().After(deadline) {
-			t.Fatalf("%s known blocked: want %v", group, want)
+			t.Fatalf("%s known filtered: want %v", group, want)
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
@@ -1073,7 +1081,7 @@ func TestBlockedNetworkStartsOnTheTunnel(t *testing.T) {
 		t.Fatalf("on the same network: route %v state %s, want the tunnel at once", g.route, g.state)
 	}
 	if g := again.testGroup("other.example.org:443"); g.route != RouteDirect {
-		t.Fatal("a relay never blocked here must start direct")
+		t.Fatal("a relay never filtered here must start direct")
 	}
 	again.SetMode(ModeOff)
 	again.SetMode(ModeAuto)
@@ -1101,7 +1109,7 @@ func TestStrategySurvivesARestart(t *testing.T) {
 	resetKnownStrategies()
 	defer resetKnownStrategies()
 	file := filepath.Join(t.TempDir(), "state.json")
-	cfg := Config{SystemResolvers: []string{"192.0.2.53:53"}, Operator: "25001", StateFile: file}
+	cfg := Config{SystemResolvers: []string{"192.0.2.53:53"}, Operator: "00101", StateFile: file}
 	rememberStrategy(cfg, "split:2")
 	flushKnownState(file)
 
@@ -1109,7 +1117,7 @@ func TestStrategySurvivesARestart(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Contains(string(b), "192.0.2.53") || strings.Contains(string(b), "25001") {
+	if strings.Contains(string(b), "192.0.2.53") || strings.Contains(string(b), "00101") {
 		t.Fatalf("the state file must not name the network: %s", b)
 	}
 	resetKnownStrategies() // the app was stopped

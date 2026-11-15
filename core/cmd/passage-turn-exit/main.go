@@ -12,11 +12,11 @@ import (
 	"net/netip"
 	"os"
 	"os/signal"
-	"strconv"
 	"strings"
 	"syscall"
 	"time"
 
+	"github.com/mrgluek/passage/core/internal/exitdial"
 	"github.com/mrgluek/passage/core/tunnel"
 )
 
@@ -89,11 +89,9 @@ func policy(rules []rule) (func(string, uint16) (net.Conn, byte), error) {
 				return nil, 1
 			}
 		}
-		for _, addr := range ips {
-			conn, err := (&net.Dialer{Timeout: 3 * time.Second}).DialContext(ctx, "tcp", net.JoinHostPort(addr.String(), strconv.Itoa(int(port))))
-			if err == nil {
-				return conn, 0
-			}
+		conn, err := exitdial.Dial(ctx, ips, port)
+		if err == nil {
+			return conn, 0
 		}
 		return nil, 2
 	}, nil

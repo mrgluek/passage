@@ -1,5 +1,8 @@
 package info.gluek.passage
 
+import java.io.File
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
 import org.junit.Test
@@ -53,4 +56,37 @@ class NotificationStatusTest {
             StatusText.notificationResources(null, appSeen = false, fallbackRunning = false),
         )
     }
+    @Test fun notificationAndPublicVersionShareTheStandaloneTitle() {
+        val status = File("src/main/java/info/gluek/passage/StatusText.kt").readText()
+        val service = File("src/main/java/info/gluek/passage/PassageService.kt").readText()
+        assertTrue(status.contains("return c.getString(plain.title) to"))
+        assertFalse(status.contains("R.string.status_title"))
+        assertFalse(service.contains("R.string.status_title"))
+        assertEquals(2, Regex("setContentTitle\\(title\\)").findAll(service).count())
+        assertTrue(service.contains(".setPublicVersion("))
+    }
+
+    @Test
+    fun asksForALinkWhileThereAreNoRoutes() {
+        val status = JSONObject().put("running", true).put("route_count", 0).put("subscriptions", org.json.JSONArray())
+            .put("health", JSONObject().put("state", "starting"))
+        assertEquals(
+            HomeSetup.Plain.NOT_SET_UP.title to HomeSetup.Plain.NOT_SET_UP.reason(false),
+            StatusText.notificationResources(status, appSeen = false, fallbackRunning = true),
+        )
+        status.put("route_count", 3)
+        assertEquals(
+            HomeSetup.Plain.CONNECTING.title to HomeSetup.Plain.CONNECTING.reason(false),
+            StatusText.notificationResources(status, appSeen = false, fallbackRunning = true),
+        )
+    }
+    @Test fun savedLinkOverridesEmptyCoreRoutes() {
+        val status = JSONObject().put("running", true).put("route_count", 0).put("subscriptions", org.json.JSONArray())
+        for ((state, title) in listOf("starting" to R.string.home_connecting_title, "working" to R.string.home_working_title)) {
+            status.put("health", JSONObject().put("state", state))
+            assertEquals(title, StatusText.notificationResources(status, false, true, hasLink = true).first)
+            assertEquals(HomeSetup.Plain.NOT_SET_UP.title, StatusText.notificationResources(status, false, true, hasLink = false).first)
+        }
+    }
+
 }

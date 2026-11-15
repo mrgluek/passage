@@ -32,16 +32,19 @@ const (
 
 // Settings is what passage.ini keeps. The link is in link.txt.
 type Settings struct {
-	Port         int
-	User         string
-	Pass         string
-	Auth         bool
-	Mode         string
-	My           string
-	Running      bool
-	AutoUpdate   bool
-	NextUpdate   time.Time
-	RoutesNotice string
+	Port              int
+	User              string
+	Pass              string
+	WhatsApp          bool
+	WhatsAppChatPort  int
+	WhatsAppMediaPort int
+	Auth              bool
+	Mode              string
+	My                string
+	Running           bool
+	AutoUpdate        bool
+	NextUpdate        time.Time
+	RoutesNotice      string
 	// AppSeen is set once a chat app has sent traffic through the proxy.
 	AppSeen bool
 	// Lang is "en" or "ru" when chosen in the settings; empty follows the system.
@@ -61,6 +64,9 @@ func defaultSettings() Settings {
 func (s *Settings) newAccess() {
 	n, _ := rand.Int(rand.Reader, big.NewInt(maxPort-minPort))
 	s.Port = minPort + int(n.Int64())
+	for s.Port == s.WhatsAppChatPort || s.Port == s.WhatsAppMediaPort {
+		s.Port = minPort + (s.Port-minPort+1)%(maxPort-minPort)
+	}
 	s.User = randomHex(4)
 	s.Pass = randomHex(16)
 }
@@ -149,6 +155,12 @@ func loadSettings(path string) (Settings, bool, error) {
 			s.User = v
 		case "pass":
 			s.Pass = v
+		case "whatsapp":
+			s.WhatsApp = v == "true" || v == "1"
+		case "whatsapp_chat_port":
+			s.WhatsAppChatPort, _ = strconv.Atoi(v)
+		case "whatsapp_media_port":
+			s.WhatsAppMediaPort, _ = strconv.Atoi(v)
 		case "auth":
 			s.Auth = v != "false" && v != "0"
 		case "mode":
@@ -234,6 +246,9 @@ port=%d
 user=%s
 pass=%s
 auth=%t
+whatsapp=%t
+whatsapp_chat_port=%d
+whatsapp_media_port=%d
 mode=%s
 my_route=%s
 running=%t
@@ -242,7 +257,7 @@ next_update=%s
 routes_notice=%s
 app_seen=%t
 lang=%s
-`, s.Port, s.User, s.Pass, s.Auth, s.Mode, s.My, s.Running, s.AutoUpdate, s.NextUpdate.Format(time.RFC3339), s.RoutesNotice, s.AppSeen, s.Lang)
+`, s.Port, s.User, s.Pass, s.Auth, s.WhatsApp, s.WhatsAppChatPort, s.WhatsAppMediaPort, s.Mode, s.My, s.Running, s.AutoUpdate, s.NextUpdate.Format(time.RFC3339), s.RoutesNotice, s.AppSeen, s.Lang)
 	text += s.editLines()
 	return writeFile(path, []byte(text))
 }

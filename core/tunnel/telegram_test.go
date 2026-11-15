@@ -174,7 +174,7 @@ func TestMailBlockedKeepsTelegramDirect(t *testing.T) {
 	}
 	s := tt.Status(0)
 	if s.Route != "tunnel" || s.Groups["telegram"].Route != "direct" {
-		t.Fatalf("mail blocked must not move telegram: mail %s telegram %+v", s.Route, s.Groups["telegram"])
+		t.Fatalf("mail filtered must not move telegram: mail %s telegram %+v", s.Route, s.Groups["telegram"])
 	}
 }
 

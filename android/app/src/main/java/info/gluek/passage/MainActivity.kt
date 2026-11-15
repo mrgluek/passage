@@ -1,5 +1,7 @@
 package info.gluek.passage
 
+import android.animation.ObjectAnimator
+import android.animation.PropertyValuesHolder
 import android.animation.ValueAnimator
 import android.graphics.drawable.GradientDrawable
 import android.os.SystemClock
@@ -17,7 +19,9 @@ import android.view.Gravity
 import android.view.Menu
 import android.view.MenuItem
 import android.view.View
+import android.widget.Switch
 import android.widget.Button
+import android.widget.FrameLayout
 import android.widget.LinearLayout
 import android.widget.TextView
 import android.widget.Toast
@@ -31,6 +35,7 @@ class MainActivity : ThemedActivity() {
     private lateinit var stateView: TextView
     private lateinit var reasonView: TextView
     private lateinit var statusDot: View
+    private lateinit var statusRing: View
     private lateinit var primary: Button
     private lateinit var secondary: Button
     private lateinit var manual: TextView
@@ -40,7 +45,7 @@ class MainActivity : ThemedActivity() {
     private lateinit var routesNoticeBox: LinearLayout
     private lateinit var updateNotice: Button
     private var resumed = false
-    private var dotAnimator: ValueAnimator? = null
+    private var dotAnimator: ObjectAnimator? = null
     private var previousTraffic: HomeSetup.TrafficCounters? = null
     private var trafficUntil = 0L
     private var setupKey = ""
@@ -137,7 +142,16 @@ class MainActivity : ThemedActivity() {
         statusDot = Ui.dot(this, getColor(R.color.proxy_off_dot)).apply {
             importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_YES
         }
-        row.addView(statusDot)
+        val dotBox = FrameLayout(this).apply {
+            layoutParams = LinearLayout.LayoutParams(Ui.dp(this@MainActivity, 32), Ui.dp(this@MainActivity, 32)).apply {
+                marginEnd = Ui.dp(this@MainActivity, 2)
+            }
+        }
+        statusRing = Ui.dot(this, getColor(R.color.proxy_traffic_dot)).apply { alpha = 0f }
+        for (dot in listOf(statusRing, statusDot)) {
+            dotBox.addView(dot, FrameLayout.LayoutParams(Ui.dp(this, 14), Ui.dp(this, 14), Gravity.CENTER))
+        }
+        row.addView(dotBox)
         stateView = Ui.cardHeading(this, "")
         row.addView(stateView, LinearLayout.LayoutParams(0, -2, 1f))
         status.addView(row)
@@ -212,9 +226,10 @@ class MainActivity : ThemedActivity() {
 
     private fun renderSetup() {
         val step = HomeSetup.step(settings.hasLink, PassageService.active, settings.appSeen)
-        val key = "$step ${settings.appSeen} $expanded $appTab $passwordVisible ${settings.auth} ${settings.port} ${settings.user} ${settings.pass}"
+        val key = "$step ${settings.appSeen} $expanded $appTab $passwordVisible ${settings.whatsappEnabled} ${settings.auth} ${settings.port} ${settings.user} ${settings.pass}"
         if (setupKey == key) return
         setupKey = key
+        whatsappStatusView = null
         setup.removeAllViews()
         setup.addView(Ui.heading(this, getString(HomeSetup.heading(settings.hasLink, PassageService.active, settings.appSeen))).apply { setPadding(0, 0, 0, 0) })
         val labels = listOf(R.string.home_step_link, R.string.home_step_on, R.string.home_step_app)
@@ -241,31 +256,51 @@ class MainActivity : ThemedActivity() {
             }
             setup.addView(tabContent)
             val content = HomeSetup.connect(appTab, settings.socksLink(), settings.tgLink(), settings.veltaLink())
-            content.instruction?.let { instruction ->
-                tabContent.addView(Ui.hint(this, getString(instruction)))
+            for ((blockIndex, block) in listOfNotNull(content, content.secondary).withIndex()) {
+                block.instruction?.takeIf { appTab != HomeSetup.AppTab.OTHER && appTab != HomeSetup.AppTab.WHATSAPP }?.let { instruction ->
+                    tabContent.addView(Ui.hint(this, getString(instruction)).apply {
+                        if (blockIndex > 0) setPadding(paddingLeft, paddingTop + Ui.dp(this@MainActivity, 16), paddingRight, paddingBottom)
+                    })
+                }
+                block.action?.let { action ->
+                    tabContent.addView(Ui.outlinedButton(this, getString(action)) {
+                        block.clipboard?.let { Ui.copy(this, "Passage proxy", it, getString(R.string.proxy_link_copied), sensitive = HomeSetup.isCredentialLink(it)) }
+                        block.open?.let { openProxyLink(it, getString(action)) }
+                    }.apply {
+                        layoutParams = LinearLayout.LayoutParams(-1, -2).apply { topMargin = Ui.dp(this@MainActivity, 12) }
+                    })
+                }
+                block.download?.let { url ->
+                    tabContent.addView(Ui.downloadLine(this, getString(R.string.home_download), url).apply {
+                        setPadding(0, Ui.dp(this@MainActivity, 10), 0, 0)
+                    })
+                }
             }
-            content.action?.let { action ->
-                tabContent.addView(Ui.outlinedButton(this, getString(action)) {
-                    content.clipboard?.let { Ui.copy(this, "Passage proxy", it, getString(R.string.proxy_link_copied), sensitive = HomeSetup.isCredentialLink(it)) }
-                    content.open?.let { openProxyLink(it, getString(action)) }
-                }.apply {
-                    layoutParams = LinearLayout.LayoutParams(-1, -2).apply { topMargin = Ui.dp(this@MainActivity, 12) }
+            if (appTab == HomeSetup.AppTab.WHATSAPP) {
+                tabContent.addView(WhatsAppUi.controls(this, settings, true) {
+                    whatsappStarted = if (settings.whatsappEnabled && PassageService.active) SystemClock.elapsedRealtime() else 0L
+                    whatsappForwards = null
+                    renderSetup()
                 })
-            }
-            content.download?.let { url ->
-                tabContent.addView(Ui.downloadLine(this, getString(R.string.home_download), url).apply {
-                    setPadding(0, Ui.dp(this@MainActivity, 10), 0, 0)
-                })
+                whatsappStatusView = Ui.hint(this, "").also { tabContent.addView(it) }
+                renderWhatsAppStatus()
             }
             if (appTab == HomeSetup.AppTab.OTHER) {
-                val rows = mutableListOf(getString(R.string.proxy_host) to Settings.HOST, getString(R.string.proxy_port) to settings.port.toString())
-                if (settings.auth) rows += getString(R.string.proxy_user) to settings.user
-                tabContent.addView(Ui.valueBlock(this, rows, if (settings.auth) null else getString(R.string.proxy_no_password)).apply {
-                    layoutParams = LinearLayout.LayoutParams(-1, -2).apply { topMargin = Ui.dp(this@MainActivity, 12) }
-                    if (settings.auth) addView(Ui.passwordRow(this@MainActivity, settings.pass, passwordVisible) {
-                        passwordVisible = !passwordVisible; renderSetup()
-                    })
+                tabContent.addView(Ui.hint(this, getString(R.string.home_molly_how)))
+                tabContent.addView(Ui.valueBlock(this, listOf(
+                    getString(R.string.proxy_host) to "127.0.0.1",
+                    getString(R.string.proxy_port) to settings.port.toString()
+                ), null))
+                tabContent.addView(Switch(this).apply {
+                    text = getString(R.string.allow_no_password)
+                    isChecked = !settings.auth
+                    setOnCheckedChangeListener { _, on ->
+                        settings.setAuthentication(this@MainActivity, !on)
+                        renderSetup()
+                    }
                 })
+                tabContent.addView(Ui.hint(this, getString(R.string.allow_no_password_help)))
+                tabContent.addView(Ui.hint(this, getString(R.string.home_molly_other_apps)))
             }
             if (!settings.appSeen) {
                 setup.addView(Ui.hint(this, getString(R.string.home_app_not_seen)).apply {
@@ -425,11 +460,18 @@ class MainActivity : ThemedActivity() {
         } ?: getString(R.string.sub_routes_updated, notice.added, notice.removed)
         batteryCard.visibility = if (hasLink && active && !Ui.batteryExempt(this)) View.VISIBLE else View.GONE
         renderSetup()
+        if (!active) {
+            whatsappStarted = 0L
+            whatsappForwards = null
+            renderWhatsAppStatus()
+        } else if (whatsappStarted == 0L) whatsappStarted = SystemClock.elapsedRealtime()
         if (active) worker.execute {
             var health = "" to ""
             var channels = ""
+            var forwards: org.json.JSONArray? = null
             val counters = try {
                 val status = Native.status()
+                forwards = status.optJSONArray("forwards")
                 channels = StatusText.channels(this, status, homeChannels)
                 status.optJSONObject("health")?.let { health = it.optString("state") to it.optString("reason") }
                 val stats = status.optJSONObject("stats")
@@ -441,6 +483,8 @@ class MainActivity : ThemedActivity() {
                 healthState = health.first
                 healthReason = health.second
                 channelLine = channels
+                whatsappForwards = forwards
+                renderWhatsAppStatus()
                 if (counters != null) {
                     trafficUntil = HomeSetup.trafficDeadline(previousTraffic, counters, SystemClock.elapsedRealtime(), trafficUntil)
                     previousTraffic = counters
@@ -455,6 +499,25 @@ class MainActivity : ThemedActivity() {
         }
     }
 
+    private var whatsappStatusView: TextView? = null
+    private var whatsappForwards: org.json.JSONArray? = null
+    private var whatsappStarted = 0L
+
+    private fun renderWhatsAppStatus() {
+        val view = whatsappStatusView ?: return
+        if (!PassageService.active || !settings.whatsappEnabled) {
+            view.text = ""
+            return
+        }
+        val status = WhatsApp.status(whatsappForwards, WhatsApp.Labels(
+            getString(R.string.whatsapp_chat), getString(R.string.whatsapp_media),
+            getString(R.string.whatsapp_waiting), getString(R.string.whatsapp_last), getString(R.string.whatsapp_down)))
+        val lines = (status.lines + status.warnings).toMutableList()
+        if (WhatsApp.showHint(settings.whatsappEnabled, PassageService.active, status.connected,
+                SystemClock.elapsedRealtime() - whatsappStarted)) lines += getString(R.string.whatsapp_check)
+        view.text = lines.joinToString("\n")
+    }
+
     private val homeChannels = StatusChannels.Display()
     private var channelLine = ""
     @Volatile private var healthState = ""
@@ -464,23 +527,26 @@ class MainActivity : ThemedActivity() {
         val active = PassageService.active
         val error = PassageService.lastError != null
         val plain = HomeSetup.plain(active, error, settings.hasLink, healthState, healthReason)
-        stateView.text = getString(R.string.status_title, getString(plain.title))
+        stateView.text = getString(plain.title)
         val reason = getString(plain.reason(settings.appSeen))
         reasonView.text = if (active) plain.detail(reason, channelLine) else reason
         renderDot(HomeSetup.dotFor(plain, SystemClock.elapsedRealtime() < trafficUntil))
     }
 
     private fun cancelDotAnimation() {
-        val animator = dotAnimator ?: return
-        animator.cancel()
+        dotAnimator?.cancel()
         dotAnimator = null
-        if (::statusDot.isInitialized) (statusDot.background as GradientDrawable).setColor(getColor(R.color.proxy_on_dot))
+        if (::statusRing.isInitialized) {
+            statusRing.alpha = 0f
+            statusRing.scaleX = 1f
+            statusRing.scaleY = 1f
+        }
     }
 
     private fun renderDot(state: HomeSetup.DotState) {
         val color = getColor(when (state) {
             HomeSetup.DotState.OFF -> R.color.proxy_off_dot
-            HomeSetup.DotState.ON, HomeSetup.DotState.TRAFFIC -> R.color.proxy_on_dot
+            HomeSetup.DotState.ON, HomeSetup.DotState.TRAFFIC -> R.color.proxy_traffic_dot
             HomeSetup.DotState.WARN -> R.color.proxy_warn_dot
             HomeSetup.DotState.PROBLEM -> R.color.proxy_problem_dot
         })
@@ -493,18 +559,18 @@ class MainActivity : ThemedActivity() {
         })
         val enabled = android.provider.Settings.Global.getFloat(contentResolver,
             android.provider.Settings.Global.ANIMATOR_DURATION_SCALE, 1f) > 0f
-        val drawable = statusDot.background as GradientDrawable
-        if (state == HomeSetup.DotState.TRAFFIC && resumed && PassageService.active && enabled) {
-            if (dotAnimator == null) dotAnimator = ValueAnimator.ofArgb(color, getColor(R.color.proxy_traffic_dot)).apply {
-                duration = 900
+        (statusDot.background as GradientDrawable).setColor(color)
+        if (HomeSetup.ringRequested(state, resumed) && PassageService.active && enabled) {
+            if (dotAnimator == null) dotAnimator = ObjectAnimator.ofPropertyValuesHolder(statusRing,
+                PropertyValuesHolder.ofFloat(View.SCALE_X, 1f, 2.2f),
+                PropertyValuesHolder.ofFloat(View.SCALE_Y, 1f, 2.2f),
+                PropertyValuesHolder.ofFloat(View.ALPHA, .5f, 0f)).apply {
+                duration = 1_200
                 repeatCount = ValueAnimator.INFINITE
-                repeatMode = ValueAnimator.REVERSE
-                addUpdateListener { drawable.setColor(it.animatedValue as Int) }
                 start()
             }
         } else {
             cancelDotAnimation()
-            drawable.setColor(color)
         }
     }
 

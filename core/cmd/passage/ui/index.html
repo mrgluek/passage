@@ -9,13 +9,13 @@
   --bg: #ffffff; --fg: #1b1c1e; --muted: #5f6368; --accent: #185FA5; --on-accent: #ffffff;
   --shade: rgba(0,0,0,.055); --line: rgba(0,0,0,.12); --warn: #a4372a;
   --page: #e5e5e1; --card: #f2f2ee; --border: rgba(0,0,0,.10);
-  --dot-off: #9aa0a6; --dot-on: #8fb59a; --dot-bright: #2ecc40; --dot-error: #d98f86; --dot-warn: #e0c070; --hint: rgba(95,99,104,.7);
+  --dot-off: #9aa0a6; --dot-on: #2ecc40; --dot-bright: #2ecc40; --dot-error: #d98f86; --dot-warn: #e0c070; --hint: rgba(95,99,104,.7);
 }
 @media (prefers-color-scheme: dark) {
   :root { --bg: #1d1e20; --fg: #e8e9eb; --muted: #a0a4a8; --accent: #85B7EB; --on-accent: #0d2440;
     --shade: rgba(255,255,255,.07); --line: rgba(255,255,255,.14); --warn: #f08b7e;
     --page: #151617; --card: #232527; --border: rgba(255,255,255,.10);
-    --dot-off: #6f757b; --dot-on: #7fa48a; --dot-bright: #3ddc58; --dot-error: #c9786f; --dot-warn: #c4a455; --hint: rgba(160,164,168,.6); }
+    --dot-off: #6f757b; --dot-on: #3ddc58; --dot-bright: #3ddc58; --dot-error: #c9786f; --dot-warn: #c4a455; --hint: rgba(160,164,168,.6); }
 }
 * { box-sizing: border-box; }
 html, body { margin: 0; background: var(--page); color: var(--fg); }
@@ -29,13 +29,15 @@ main { padding: 14px 16px 24px; max-width: 720px; margin: 0 auto; }
 .card > h2:not(:first-child) { margin-top: 18px; }
 .ctitle { font-size: 20px; font-weight: 600; color: var(--muted); }
 .titleRow { display: flex; align-items: center; gap: 10px; margin-bottom: 6px; }
-.dot { width: 14px; height: 14px; border-radius: 50%; background: var(--dot-off); flex: none; }
+.dot { position: relative; width: 14px; height: 14px; border-radius: 50%; background: var(--dot-off); flex: none; }
 .dot.on { background: var(--dot-on); }
 .dot.error { background: var(--dot-error); }
 .dot.warn { background: var(--dot-warn); }
-.dot.flow { animation: flow 1.8s ease-in-out infinite; }
-@keyframes flow { 0%, 100% { background: var(--dot-on); } 50% { background: var(--dot-bright); } }
-@media (prefers-reduced-motion: reduce) { .dot.flow { animation: none; } }
+.dot.flow::after { content: ""; position: absolute; inset: 0; border-radius: 50%;
+  background: var(--dot-bright); opacity: 0; pointer-events: none; animation: dot-ripple 1.2s ease-out infinite; }
+@keyframes dot-ripple { from { transform: scale(1); opacity: .5; } to { transform: scale(2.2); opacity: 0; } }
+.window-hidden .dot.flow::after, .hidden .dot.flow::after { animation: none; }
+@media (prefers-reduced-motion: reduce) { .dot.flow::after { animation: none; } }
 button.wide { display: block; width: 100%; padding: 11px 14px; margin: 12px 0 4px; border-radius: 22px; }
 button.textbtn { display: block; margin: 10px auto 0; border: none; padding: 8px 14px; }
 .steps { margin: 0 0 6px; }
@@ -53,6 +55,7 @@ button.textbtn { display: block; margin: 10px auto 0; border: none; padding: 8px
 .tabpane p { margin: 8px 0; }
 .tabpane button.wide { margin: 10px 0 8px; }
 .dl { color: var(--muted); font-size: 13px; margin: 6px 0; }
+.dl + p { margin-top: 20px; }
 .waiting { color: var(--muted); font-size: 13px; margin: 12px 0 0; }
 .values .v span:last-child { font: 13px Consolas, "SF Mono", monospace; }
 .values .v { align-items: center; }
@@ -226,6 +229,10 @@ a { color: var(--accent); cursor: pointer; text-decoration: underline; }
   <button id="newAccess" data-t="new_access"></button>
   <p class="hint" data-t="new_access_help"></p>
 
+  </section>
+  <section class="card">
+  <h2 data-t="whatsapp"></h2>
+  <div id="whatsappSettings"></div>
   </section>
   <section class="card hidden" id="updateSettings"><h2 data-t="updates"></h2><button id="updateCheck" data-t="update_check"></button><p id="updateStatus" aria-live="polite"></p><p id="updateDetail" class="hint hidden"></p><progress id="updateProgress" class="hidden"></progress><div><button id="updateDownload" data-t="update_download"></button><button id="updateCancel" data-t="cancel"></button><button id="updateInstall" data-t="update_install"></button></div><label class="check"><input type="checkbox" id="autoUpdate"><span data-t="update_auto"></span></label><p class="hint" data-t="update_help"></p></section>
   <section class="card"><h2 data-t="language_label"></h2><div class="segments" id="langSeg"></div></section>
@@ -420,6 +427,7 @@ function render(v) {
     segments($("settingsRoutes"), v);
   }
   renderHome(v);
+  renderWhatsApp($("whatsappSettings"), v, false);
   $("status").textContent = v.full;
 }
 
@@ -448,7 +456,7 @@ function renderHome(v) {
   const h = running && hasLink && v.health && v.health.state ? v.health : null;
   const hs = h ? h.state : "", hr = h ? h.reason : "";
   let tone = v.error || (hs === "problem" && hr === "no_route") ? " error" : (hs === "starting" || hs === "problem") ? " warn" : running && hasLink ? " on" : "";
-  dot.className = "dot" + tone + (flowing && !tone.includes("error") && !tone.includes("warn") ? " flow" : "");
+  dot.className = "dot" + tone + (flowing && tone === " on" ? " flow" : "");
   let title, reason, main = null, second = null;
   if (v.error) { title = t("h_title_error"); reason = ""; }
   else if (!hasLink) { title = t("h_title_nolink"); reason = t("h_reason_nolink"); }
@@ -462,7 +470,7 @@ function renderHome(v) {
   if (running) second = [t("h_turn_off"), () => call("stop").then(refresh, fail)];
   else if (!hasLink) second = [t("h_turn_on"), () => call("start").then(refresh, fail)];
   $("sTitle").textContent = v.title;
-  document.title = v.title;
+  document.title = v.caption;
   $("sReason").textContent = v.channels || reason;
   setHidden("sReason", !(v.channels || reason));
   $("sError").textContent = v.error || "";
@@ -473,7 +481,7 @@ function renderHome(v) {
   if (second) { $("sSecond").textContent = second[0]; $("sSecond").onclick = second[1]; }
   const done = hasLink && running && seen;
   $("setupHead").textContent = t(done ? "h_steps_done" : "h_steps_pending");
-  const key = JSON.stringify([hasLink, running, seen, hs, hr, tab, tabsOpen, showPass, v.host, v.port, v.user, v.pass, v.auth, v.lang, v.proxy_link, v.velta_link]);
+  const key = JSON.stringify([hasLink, running, seen, hs, hr, tab, tabsOpen, showPass, v.host, v.port, v.user, v.pass, v.auth, v.lang, v.proxy_link, v.velta_link, v.whatsapp, v.whatsapp_chat_port, v.whatsapp_media_port, v.whatsapp_error, v.whatsapp_status]);
   if (key === shownHome) return;
   shownHome = key;
   const steps = $("steps");
@@ -504,13 +512,13 @@ function renderHome(v) {
   if (open) renderTabs(v);
 }
 function renderTabs(v) {
-  const names = ["tab_delta", "tab_velta", "tab_tg", "tab_other"];
+  const names = ["tab_delta", "tab_tg", "whatsapp"];
   const strip = $("tabs");
   strip.textContent = "";
   names.forEach((k, i) => {
     const d = document.createElement("div");
     d.textContent = t(k);
-    if (i === tab) d.className = "on"; else d.onclick = () => { tab = i; shownHome = ""; renderHome(last); };
+    if (i === tab) d.className = "on"; else d.onclick = () => { tab = i; if (i === 2) call("whatsappPorts").then(refresh, fail); shownHome = ""; renderHome(last); };
     strip.append(d);
   });
   const pane = $("tabpane");
@@ -523,35 +531,49 @@ function renderTabs(v) {
     p.append(t("h_download") + " ", a);
     return p;
   };
-  if (tab === 0) pane.append(para(t("tab_delta_text")), button(t("h_copy_link"), () => copy(v.proxy_link, t("proxy_link_copied"))), download(DOWNLOADS.delta));
-  else if (tab === 1) pane.append(para(t("tab_velta_text")), button(t("h_open_velta"), () =>
+  if (tab === 0) { pane.append(para(t("tab_delta_text")), button(t("h_copy_link"), () => copy(v.proxy_link, t("proxy_link_copied"))), download(DOWNLOADS.delta));
+    pane.append(para(t("tab_velta_text")), button(t("h_open_velta"), () =>
     call("openVelta").then(opened => copy(v.velta_link, t(opened ? "velta_link_opened" : "velta_link_copied")), fail)), download(DOWNLOADS.velta));
-  else if (tab === 2) pane.append(para(t("tab_tg_text")), button(t("h_open_tg"), () =>
+  } else if (tab === 1) pane.append(para(t("tab_tg_text")), button(t("h_open_tg"), () =>
     call("openTg").then(opened => copy(v.tg_link, t(opened ? "tg_link_opened" : "tg_link_copied")), fail)));
-  else {
-    pane.append(para(t("tab_other_text")));
-    const box = document.createElement("div");
-    box.className = "values";
-    const rows = [[t("proxy_host"), v.host, v.host], [t("proxy_port"), String(v.port), String(v.port)]];
-    if (v.auth) rows.push([t("proxy_user"), v.user, v.user], [t("proxy_pass"), showPass ? v.pass : "•".repeat(8), v.pass]);
-    for (const [label, shown, value] of rows) {
-      const r = document.createElement("div");
-      r.className = "v";
-      r.innerHTML = "<span></span><span></span>";
-      r.children[0].textContent = label;
-      r.children[1].textContent = shown;
-      r.onclick = () => copy(value, t("value_copied", label));
-      if (label === t("proxy_pass")) {
-        const sp = document.createElement("span");
-        sp.className = "showpw";
-        sp.textContent = t(showPass ? "h_hide" : "h_show");
-        sp.onclick = e => { e.stopPropagation(); showPass = !showPass; shownHome = ""; renderHome(last); };
-        r.append(sp);
-      }
-      box.append(r);
-    }
-    if (!v.auth) { const n = document.createElement("p"); n.className = "hint"; n.textContent = t("proxy_no_password"); box.append(n); }
-    pane.append(box);
+  else if (tab === 2) renderWhatsApp(pane, v, true);
+}
+function renderWhatsApp(pane, v, home) {
+  // The settings pane is redrawn on every poll; the home pane is already memoized by renderHome.
+  if (!home) {
+    const key = JSON.stringify([v.whatsapp, v.whatsapp_error, v.whatsapp_chat_port, v.whatsapp_media_port, v.lang]);
+    if (pane.dataset.key === key && pane.firstChild) return;
+    pane.dataset.key = key;
+  }
+  pane.textContent = "";
+  const para = (text, warning = false) => {
+    const p = document.createElement("p"); p.className = warning ? "hint warn" : "hint"; p.textContent = text; pane.append(p);
+  };
+  const label = document.createElement("label"); label.className = "check";
+  const toggle = document.createElement("input"); toggle.type = "checkbox"; toggle.setAttribute("role", "switch");
+  toggle.checked = v.whatsapp; toggle.disabled = !!v.whatsapp_error;
+  toggle.onchange = () => call("setWhatsApp", toggle.checked).then(refresh, e => { refresh(); fail(e); });
+  label.append(toggle, t("whatsapp_switch")); pane.append(label);
+  if (v.whatsapp_error) { para(v.whatsapp_error, true); return; }
+  if (home && !v.whatsapp) { para(t("whatsapp_turn_on")); return; }
+  if (home) para(t("whatsapp_how"));
+  const box = document.createElement("div"); box.className = "values";
+  const rows = home ? [[t("proxy_host"), "127.0.0.1"]] : [];
+  rows.push([t("whatsapp_chat_port"), v.whatsapp_chat_port], [t("whatsapp_media_port"), v.whatsapp_media_port]);
+  for (const [name, value] of rows) {
+    const row = document.createElement("div"); row.className = "v";
+    const key = document.createElement("span"), text = document.createElement("span");
+    key.textContent = name; text.textContent = value || "—"; row.append(key, text);
+    if (value) row.onclick = () => copy(String(value), t("value_copied", name));
+    box.append(row);
+  }
+  pane.append(box);
+  if (!home) para(t("whatsapp_ports_help"));
+  if (home && v.running && v.whatsapp) {
+    const status = v.whatsapp_status || {};
+    for (const line of status.lines || []) para(line);
+    for (const warning of status.warnings || []) para(warning, true);
+    if (status.hint) para(t("whatsapp_check"));
   }
 }
 function renderSubscriptions(rows) {
@@ -638,6 +660,7 @@ function showLink(open) {
   }, fail);
 }
 function showSettings() {
+  call("whatsappPorts").then(refresh, fail);
   renderLang();
   call("settings").then(s => {
     $("autoUpdate").checked = s.auto_update;
@@ -764,6 +787,10 @@ function renderLang() {
     box.append(d);
   }
 }
+document.addEventListener("visibilitychange", () => {
+  document.documentElement.classList.toggle("window-hidden", document.hidden);
+});
+document.documentElement.classList.toggle("window-hidden", document.hidden);
 const initialized = call("init").then(i => {
   applyStrings(i);
   page("home");

@@ -151,7 +151,7 @@ func TestStallBackoffPerNetwork(t *testing.T) {
 	poolStall(t, p, 1, "a")
 	poolStall(t, p, 1, "a")
 	if len(p.order(nil)) != 2 {
-		t.Fatal("blocked routes unavailable as last resort")
+		t.Fatal("filtered routes unavailable as last resort")
 	}
 	states := p.states()
 	if states[0].State != routeFailed || states[0].Reason != "stalled" || states[0].Stalls != 10 {
@@ -1000,6 +1000,6 @@ func TestStallHoldDoesNotEscalateOrRememberBlocked(t *testing.T) {
 		tt.applyProbe(g, probeResult{Relays: 1, RelayOK: 1, NetworkOK: true})
 	}
 	if knownBlocked(tt.cfg, g.name) {
-		t.Fatal("hold wrote blocked memory")
+		t.Fatal("hold wrote filtered memory")
 	}
 }

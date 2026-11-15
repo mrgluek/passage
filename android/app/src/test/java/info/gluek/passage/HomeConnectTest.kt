@@ -32,30 +32,39 @@ class HomeConnectTest {
     @Test fun otherAppUsesManualValuesWithoutLinkActions() {
         val content = HomeSetup.connect(HomeSetup.AppTab.OTHER, "socks-link", "telegram-link", "velta-link")
         assertNull(content.download)
-        assertEquals(R.string.home_other_how, content.instruction)
+        assertEquals(R.string.home_molly_other_apps, content.instruction)
         assertNull(content.action)
         assertNull(content.clipboard)
         assertNull(content.open)
     }
     @Test fun veltaCopiesAndOpensItsOwnFormat() {
-        val content = HomeSetup.connect(HomeSetup.AppTab.VELTA, "socks-link", "telegram-link", "velta-link")
+        val content = HomeSetup.connect(HomeSetup.AppTab.DELTA_CHAT, "socks-link", "telegram-link", "velta-link").secondary!!
         assertEquals(R.string.home_velta_how, content.instruction)
         assertEquals(R.string.home_velta_open, content.action)
         assertEquals("velta-link", content.clipboard)
         assertEquals(content.clipboard, content.open)
-        assertEquals(listOf(HomeSetup.AppTab.DELTA_CHAT, HomeSetup.AppTab.VELTA, HomeSetup.AppTab.TELEGRAM, HomeSetup.AppTab.OTHER), HomeSetup.AppTab.entries)
+        assertEquals(listOf(HomeSetup.AppTab.DELTA_CHAT, HomeSetup.AppTab.TELEGRAM, HomeSetup.AppTab.WHATSAPP, HomeSetup.AppTab.OTHER), HomeSetup.AppTab.entries)
+    }
+    @Test fun whatsAppHasItsOwnManualFormWithoutSocksLinks() {
+        val content = HomeSetup.connect(HomeSetup.AppTab.WHATSAPP, "socks", "telegram", "velta")
+        assertEquals(R.string.whatsapp_how, content.instruction)
+        assertNull(content.action)
+        assertNull(content.clipboard)
+        assertNull(content.open)
+        assertNull(content.download)
+        assertNull(content.secondary)
     }
     @Test fun tabsUseTwoRowsForLargeFontsOrNarrowLabels() {
         assertEquals(4, HomeSetup.appTabColumns(1f, 288, 60))
         assertEquals(2, HomeSetup.appTabColumns(1.5f, 288, 60))
-        assertEquals(2, HomeSetup.appTabColumns(1f, 200, 60))
+        assertEquals(2, HomeSetup.appTabColumns(1f, 170, 60))
     }
     @Test fun tabsExposeOnlyTheRequestedInstructionsActionsAndDownloads() {
         val delta = HomeSetup.connect(HomeSetup.AppTab.DELTA_CHAT, "socks-link", "telegram-link", "velta-link")
         assertNotNull(delta.instruction)
         assertEquals(R.string.copy_proxy_link, delta.action)
         assertEquals(HomeSetup.DELTA_CHAT_DOWNLOAD, delta.download)
-        val velta = HomeSetup.connect(HomeSetup.AppTab.VELTA, "socks-link", "telegram-link", "velta-link")
+        val velta = HomeSetup.connect(HomeSetup.AppTab.DELTA_CHAT, "socks-link", "telegram-link", "velta-link").secondary!!
         assertNotNull(velta.instruction)
         assertEquals(R.string.home_velta_open, velta.action)
         assertEquals("https://velta.cc/#download", velta.download)
@@ -64,7 +73,7 @@ class HomeConnectTest {
         assertEquals(R.string.home_telegram_open, telegram.action)
         assertNull(telegram.download)
         val other = HomeSetup.connect(HomeSetup.AppTab.OTHER, "socks-link", "telegram-link", "velta-link")
-        assertEquals(R.string.home_other_how, other.instruction)
+        assertEquals(R.string.home_molly_other_apps, other.instruction)
         assertNull(other.action)
         assertNull(other.download)
     }

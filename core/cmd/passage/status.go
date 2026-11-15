@@ -77,6 +77,9 @@ func routesLine(t tr, s tunnel.Status) string {
 // onlyType is the route type a tunnel connection must use: the chosen one,
 // or the only type set up.
 func onlyType(s tunnel.Status) string {
+	if s.Mode == "my" {
+		return "my"
+	}
 	if slices.Contains(tunnel.RouteKinds, s.Mode) {
 		return s.Mode
 	}

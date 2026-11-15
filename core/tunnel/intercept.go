@@ -34,10 +34,8 @@ func detectInterception(ctx context.Context, timeout time.Duration) bool {
 	return false
 }
 
-// dnsWhoami asks resolver for whoami.akamai.net, whose A record is the
-// address of the resolver that actually queried Akamai: on an intercepting
-// network, the interceptor's upstream.
-func dnsWhoami(ctx context.Context, resolver string) (net.IP, error) {
+// dnsResolverEgress queries the address used for outgoing DNS requests.
+func dnsResolverEgress(ctx context.Context, resolver string) (net.IP, error) {
 	ips, err := dnsExchangeA(ctx, resolver, "whoami.akamai.net")
 	if err != nil {
 		return nil, err

@@ -3,7 +3,7 @@ name: VirusTotal
 # Sends a release's apps to VirusTotal, so the antivirus engines see them, and
 # prints their verdicts in the job summary. release.yml calls it for each new
 # release; run it by hand for an older tag. It is informational and never
-# blocks a release. Without the VT_API_KEY repository secret it does nothing.
+# prevents a release. Without the VT_API_KEY repository secret it does nothing.
 on:
   workflow_dispatch:
     inputs:

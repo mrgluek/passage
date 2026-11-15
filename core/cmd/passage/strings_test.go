@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"strings"
 	"testing"
 )
 
@@ -112,6 +113,35 @@ func TestRouteStateWords(t *testing.T) {
 					t.Fatalf("got %q, want %q", got, want)
 				}
 			})
+		}
+	}
+}
+
+func TestStandaloneHomeTitles(t *testing.T) {
+	for _, lang := range []string{"en", "ru"} {
+		tr := tr(table(lang))
+		for key, title := range texts[lang] {
+			if !strings.HasPrefix(key, "h_title_") {
+				continue
+			}
+			if strings.Contains(title, "Passage:") || title == strings.ToLower(title) {
+				t.Errorf("%s/%s is not a standalone title: %q", lang, key, title)
+			}
+		}
+		want := "Proxy works"
+		if lang == "ru" {
+			want = "Прокси работает"
+		}
+		if got := tr.f("h_title_working"); got != want {
+			t.Errorf("%s working = %q", lang, got)
+		}
+		for _, key := range []string{"tab_delta", "tab_tg", "tab_velta_text"} {
+			if tr.f(key) == "" {
+				t.Errorf("%s missing %s", lang, key)
+			}
+		}
+		if _, exists := texts[lang]["tab_velta"]; exists {
+			t.Errorf("%s still has a Velta tab", lang)
 		}
 	}
 }

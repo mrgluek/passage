@@ -58,3 +58,11 @@ func TestServerIPv6DoesNotFilterResolvers(t *testing.T) {
 		}
 	}
 }
+
+func TestNormalizeRejectsHalfCredentials(t *testing.T) {
+	for _, c := range []Config{{User: "u"}, {Pass: "p"}} {
+		if _, err := c.Normalize(); err == nil {
+			t.Fatalf("Normalize accepted %+v", c)
+		}
+	}
+}
