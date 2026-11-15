@@ -546,9 +546,13 @@ func TestStallHistory(t *testing.T) {
 				log := newEventLog(20)
 				now := time.Unix(1000, 0)
 				state := &hold{}
+				// Keys must stay distinct: a closed pipe's address can be reused by the
+				// next one, and a repeated key counts as a duplicate stall point.
+				sockets := 0
 				feedback := func(stalled, first bool, socket net.Conn) {
 					if stalled {
-						state.onStall(now, log, route, first, fmt.Sprintf("%p", socket))
+						sockets++
+						state.onStall(now, log, route, first, fmt.Sprintf("socket-%d", sockets))
 					} else {
 						state.onReply(log, route)
 					}
