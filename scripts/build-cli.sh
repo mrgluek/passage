@@ -57,8 +57,11 @@ for target in "${targets[@]}"; do
   name="passage-cli-$version-$goos-$goarch"
   [[ $goos == windows ]] && name="passage-$version-$goos-$goarch"
   mkdir "$work/$name"
+  # Windows files keep their symbols: stripped Go executables are what antivirus heuristics flag.
+  strip="-s -w"
+  [[ $goos == windows ]] && strip=""
   CGO_ENABLED=0 GOOS=$goos GOARCH=$goarch \
-    go build -trimpath -buildvcs=false -ldflags="$link_flags -X main.version=$version -s -w -buildid=" \
+    go build -trimpath -buildvcs=false -ldflags="$link_flags -X main.version=$version $strip -buildid=" \
     -o "$work/$name/passage-cli$exe" ./cmd/passage-cli
   if [[ $goos == windows ]]; then
     # The icon (resource ID 1, which the window uses), version info and a
@@ -68,7 +71,7 @@ for target in "${targets[@]}"; do
       --product-name Passage --file-description Passage --original-filename passage.exe \
       --product-version "$file_version" --file-version "$file_version")
     CGO_ENABLED=0 GOOS=$goos GOARCH=$goarch \
-      go build -trimpath -buildvcs=false -ldflags="$link_flags -X main.version=$version -s -w -buildid= -H windowsgui" \
+      go build -trimpath -buildvcs=false -ldflags="$link_flags -X main.version=$version $strip -buildid= -H windowsgui" \
       -o "$work/$name/passage.exe" ./cmd/passage
     rm -f "$syso"
   fi
