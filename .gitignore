@@ -20,3 +20,7 @@ android/app/src/main/nativeLibs/.iroh-build
 
 # Made by scripts/build-cli.sh for passage.exe
 core/cmd/passage/*.syso
+
+# iOS core build artifacts
+ios/build/
+ios/Passage.xcodeproj/
