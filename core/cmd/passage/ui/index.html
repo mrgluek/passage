@@ -512,7 +512,7 @@ function renderHome(v) {
   if (open) renderTabs(v);
 }
 function renderTabs(v) {
-  const names = ["tab_delta", "tab_tg", "whatsapp", "tab_other"];
+  const names = ["tab_delta", "tab_tg", "whatsapp"];
   const strip = $("tabs");
   strip.textContent = "";
   names.forEach((k, i) => {
@@ -537,31 +537,6 @@ function renderTabs(v) {
   } else if (tab === 1) pane.append(para(t("tab_tg_text")), button(t("h_open_tg"), () =>
     call("openTg").then(opened => copy(v.tg_link, t(opened ? "tg_link_opened" : "tg_link_copied")), fail)));
   else if (tab === 2) renderWhatsApp(pane, v, true);
-  else {
-    pane.append(para(t("molly_text")));
-    const molly = document.createElement("div");
-    molly.className = "values";
-    for (const [label, value] of [[t("proxy_host"), "localhost"], [t("proxy_port"), String(v.port)]]) {
-      const row = document.createElement("div");
-      row.className = "v";
-      const name = document.createElement("span"), text = document.createElement("span");
-      name.textContent = label;
-      text.textContent = value;
-      row.append(name, text);
-      row.onclick = () => copy(value, t("value_copied", label));
-      molly.append(row);
-    }
-    const allow = document.createElement("label");
-    allow.className = "check";
-    const toggle = document.createElement("input");
-    toggle.type = "checkbox";
-    toggle.setAttribute("role", "switch");
-    toggle.id = "allowNoPassword";
-    toggle.checked = !v.auth;
-    toggle.onchange = () => call("setAuth", !toggle.checked).then(refresh, fail);
-    allow.append(toggle, t("allow_no_password"));
-    pane.append(molly, allow, para(t("allow_no_password_help")), para(t("molly_other_apps")));
-  }
 }
 function renderWhatsApp(pane, v, home) {
   pane.textContent = "";
@@ -577,7 +552,7 @@ function renderWhatsApp(pane, v, home) {
   if (home && !v.whatsapp) { para(t("whatsapp_turn_on")); return; }
   if (home) para(t("whatsapp_how"));
   const box = document.createElement("div"); box.className = "values";
-  const rows = home ? [[t("proxy_host"), "localhost"]] : [];
+  const rows = home ? [[t("proxy_host"), "127.0.0.1"]] : [];
   rows.push([t("whatsapp_chat_port"), v.whatsapp_chat_port], [t("whatsapp_media_port"), v.whatsapp_media_port]);
   for (const [name, value] of rows) {
     const row = document.createElement("div"); row.className = "v";

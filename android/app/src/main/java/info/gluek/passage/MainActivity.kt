@@ -288,7 +288,7 @@ class MainActivity : ThemedActivity() {
             if (appTab == HomeSetup.AppTab.OTHER) {
                 tabContent.addView(Ui.hint(this, getString(R.string.home_molly_how)))
                 tabContent.addView(Ui.valueBlock(this, listOf(
-                    getString(R.string.proxy_host) to "localhost",
+                    getString(R.string.proxy_host) to "127.0.0.1",
                     getString(R.string.proxy_port) to settings.port.toString()
                 ), null))
                 tabContent.addView(Switch(this).apply {

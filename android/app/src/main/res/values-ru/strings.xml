@@ -321,7 +321,7 @@
     <string name="whatsapp">WhatsApp</string>
     <string name="whatsapp_switch">Включить прокси для WhatsApp</string>
     <string name="whatsapp_turn_on">Включите прокси, чтобы увидеть настройки для WhatsApp.</string>
-    <string name="whatsapp_how">WhatsApp: Вы &gt; Данные и хранилище &gt; Прокси &gt; Использовать прокси &gt; Настроить прокси. Хост localhost, TLS выключен, порты указаны ниже.</string>
+    <string name="whatsapp_how">WhatsApp: Вы &gt; Данные и хранилище &gt; Прокси &gt; Использовать прокси &gt; Настроить прокси. Хост 127.0.0.1, TLS выключен, порты указаны ниже.</string>
     <string name="whatsapp_chat_port">Порт чата</string>
     <string name="whatsapp_media_port">Порт медиа</string>
     <string name="whatsapp_chat">Чат</string>

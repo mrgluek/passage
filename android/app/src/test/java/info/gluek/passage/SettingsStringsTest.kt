@@ -62,7 +62,7 @@ class SettingsStringsTest {
         val main = File("src/main/java/info/gluek/passage/MainActivity.kt").readText()
         val settings = File("src/main/java/info/gluek/passage/SettingsActivity.kt").readText()
         org.junit.Assert.assertTrue(main.contains("getString(R.string.home_molly_how)"))
-        org.junit.Assert.assertTrue(main.contains("getString(R.string.proxy_host) to \"localhost\""))
+        org.junit.Assert.assertTrue(main.contains("getString(R.string.proxy_host) to \"127.0.0.1\""))
         org.junit.Assert.assertTrue(main.contains("isChecked = !settings.auth"))
         org.junit.Assert.assertTrue(main.contains("settings.setAuthentication(this@MainActivity, !on)"))
         org.junit.Assert.assertTrue(settings.contains("settings.setAuthentication(this@SettingsActivity, on)"))

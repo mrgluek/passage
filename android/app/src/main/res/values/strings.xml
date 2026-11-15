@@ -314,7 +314,7 @@
     <string name="whatsapp">WhatsApp</string>
     <string name="whatsapp_switch">Turn on the proxy for WhatsApp</string>
     <string name="whatsapp_turn_on">Turn it on to see the settings for WhatsApp.</string>
-    <string name="whatsapp_how">WhatsApp: You &gt; Storage and data &gt; Proxy &gt; Use proxy &gt; Set up proxy. Host localhost, Use TLS off, and the two ports below.</string>
+    <string name="whatsapp_how">WhatsApp: You &gt; Storage and data &gt; Proxy &gt; Use proxy &gt; Set up proxy. Host 127.0.0.1, Use TLS off, and the two ports below.</string>
     <string name="whatsapp_chat_port">Chat port</string>
     <string name="whatsapp_media_port">Media port</string>
     <string name="whatsapp_chat">Chat</string>

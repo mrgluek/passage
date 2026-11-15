@@ -135,7 +135,7 @@ func TestStandaloneHomeTitles(t *testing.T) {
 		if got := tr.f("h_title_working"); got != want {
 			t.Errorf("%s working = %q", lang, got)
 		}
-		for _, key := range []string{"tab_delta", "tab_tg", "tab_other", "tab_velta_text", "molly_text", "allow_no_password", "allow_no_password_help"} {
+		for _, key := range []string{"tab_delta", "tab_tg", "tab_velta_text"} {
 			if tr.f(key) == "" {
 				t.Errorf("%s missing %s", lang, key)
 			}

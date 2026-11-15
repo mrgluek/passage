@@ -32,7 +32,7 @@ object WhatsAppUi {
                 }
                 if (home) form.addView(Ui.hint(context, context.getString(R.string.whatsapp_how)))
                 val rows = mutableListOf<Pair<String, String>>()
-                if (home) rows += context.getString(R.string.proxy_host) to "localhost"
+                if (home) rows += context.getString(R.string.proxy_host) to "127.0.0.1"
                 rows += context.getString(R.string.whatsapp_chat_port) to ports.first.toString()
                 rows += context.getString(R.string.whatsapp_media_port) to ports.second.toString()
                 form.addView(Ui.valueBlock(context, rows))

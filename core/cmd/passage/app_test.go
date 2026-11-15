@@ -549,15 +549,10 @@ func TestHomeTitleAndWindowCaption(t *testing.T) {
 
 func TestHomeAppPanes(t *testing.T) {
 	for _, want := range []string{
-		`const names = ["tab_delta", "tab_tg", "whatsapp", "tab_other"]`,
+		`const names = ["tab_delta", "tab_tg", "whatsapp"]`,
 		`download(DOWNLOADS.delta));
     pane.append(para(t("tab_velta_text"))`,
 		`v.velta_link`, `call("openVelta")`,
-		`pane.append(para(t("molly_text")))`,
-		`[[t("proxy_host"), "localhost"], [t("proxy_port"), String(v.port)]]`,
-		`toggle.checked = !v.auth`,
-		`call("setAuth", !toggle.checked).then(refresh, fail)`,
-		`para(t("allow_no_password_help")), para(t("molly_other_apps"))`,
 		`document.title = v.caption`,
 	} {
 		if !strings.Contains(indexHTML, want) {
