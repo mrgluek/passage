@@ -245,3 +245,22 @@ func TestChatPortIsProbedAsItself(t *testing.T) {
 		t.Fatal("connectOnly picks the wrong ports")
 	}
 }
+
+func TestLeafFromAnUnsentAuthorityIsReachable(t *testing.T) {
+	caKey, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	ca := &x509.Certificate{SerialNumber: big.NewInt(10), Subject: pkix.Name{CommonName: "private ca"}, NotBefore: time.Now().Add(-time.Hour), NotAfter: time.Now().Add(time.Hour), KeyUsage: x509.KeyUsageCertSign, IsCA: true, BasicConstraintsValid: true}
+	key, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	leaf := &x509.Certificate{SerialNumber: big.NewInt(11), DNSNames: []string{"example.org"}, NotBefore: time.Now().Add(-time.Hour), NotAfter: time.Now().Add(time.Hour), ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth}}
+	der, err := x509.CreateCertificate(rand.Reader, leaf, ca, &key.PublicKey, caKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cert, _ := x509.ParseCertificate(der)
+	err = &tls.CertificateVerificationError{UnverifiedCertificates: []*x509.Certificate{cert}, Err: x509.UnknownAuthorityError{}}
+	if !probeReachableFor(err, "example.org") {
+		t.Fatal("a lone leaf issued by an authority the server does not send was rejected")
+	}
+	if probeReachableFor(err, "other.example.org") {
+		t.Fatal("a certificate for another host was accepted")
+	}
+}

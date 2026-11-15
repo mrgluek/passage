@@ -1802,13 +1802,17 @@ func probeReachableFor(err error, host string) bool {
 		return false
 	}
 	var verification *tls.CertificateVerificationError
-	// A private root is a chain the server sends whole: a lone certificate
-	// that vouches for itself is what an interceptor presents.
-	if !errors.As(err, &verification) || len(verification.UnverifiedCertificates) < 2 {
+	if !errors.As(err, &verification) || len(verification.UnverifiedCertificates) == 0 {
 		return false
 	}
 	{
 		certs := verification.UnverifiedCertificates
+		// A lone certificate that vouches for itself is what an interceptor
+		// presents; one issued by a private authority (the server sends only
+		// its own certificate) is a real server.
+		if len(certs) == 1 && certs[0].CheckSignature(certs[0].SignatureAlgorithm, certs[0].RawTBSCertificate, certs[0].Signature) == nil {
+			return false
+		}
 		roots, intermediates := x509.NewCertPool(), x509.NewCertPool()
 		roots.AddCert(certs[len(certs)-1])
 		for _, cert := range certs[1:] {
