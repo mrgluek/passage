@@ -233,7 +233,7 @@ func (d *desktop) runWindow() {
 		WindowOptions: webview2.WindowOptions{
 			Title:  d.app.view().Caption,
 			Width:  uint(560 * scale),
-			Height: uint(780 * scale),
+			Height: windowHeight(900, scale),
 			IconId: 1, // the program's icon (go-winres)
 			Center: true,
 		},

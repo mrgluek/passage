@@ -28,6 +28,7 @@ var (
 	emptyClipboard   = user32.NewProc("EmptyClipboard")
 	setClipboardData = user32.NewProc("SetClipboardData")
 	getDpiForSystem  = user32.NewProc("GetDpiForSystem")
+	getSystemMetrics = user32.NewProc("GetSystemMetrics")
 	setForeground    = user32.NewProc("SetForegroundWindow")
 	showWindow       = user32.NewProc("ShowWindow")
 	isIconic         = user32.NewProc("IsIconic")
@@ -157,6 +158,20 @@ func dpiScale() float64 {
 		return 1
 	}
 	return float64(dpi) / 96
+}
+
+// windowHeight is the height for the main window in device pixels: tall enough
+// for the home screen, but never more than most of the screen.
+func windowHeight(wanted, scale float64) uint {
+	h := wanted * scale
+	if getSystemMetrics.Find() == nil {
+		if screen, _, _ := getSystemMetrics.Call(1); screen > 0 { // SM_CYSCREEN
+			if limit := float64(screen) * 0.92; h > limit {
+				h = limit
+			}
+		}
+	}
+	return uint(h)
 }
 
 // bringToFront shows a hidden or minimized window above the others.
