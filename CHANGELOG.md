@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.9.1
+
+- Servers that send only their own certificate, such as the one Molly uses,
+  are no longer shown as unreachable, so such apps stay on the direct route
+  when it works.
+- Android: the Molly tab explains first why the password switch is there, and
+  lists the full details for another app below the setup steps.
+
 ## 0.9.0
 
 - A proxy for WhatsApp on Android, Windows and macOS: turn it on in the new
