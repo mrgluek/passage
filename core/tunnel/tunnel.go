@@ -17,6 +17,7 @@ import (
 	"runtime/debug"
 	"slices"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -382,6 +383,17 @@ func Start(cfg Config) (*Tunnel, error) {
 			t.client.Close()
 		}
 		return nil, err
+	}
+	if tcp, ok := ln.Addr().(*net.TCPAddr); ok {
+		for _, f := range cfg.Forwards {
+			if _, port, _ := net.SplitHostPort(f.Listen); port == strconv.Itoa(tcp.Port) && (tcp.IP.IsUnspecified() || tcp.IP.IsLoopback()) {
+				ln.Close()
+				if t.client != nil {
+					t.client.Close()
+				}
+				return nil, errors.New("a forward listens where the SOCKS listener is")
+			}
+		}
 	}
 	if cfg.My != "" && pointsAt(cfg.My, ln.Addr()) {
 		ln.Close()

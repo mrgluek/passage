@@ -186,3 +186,9 @@ func TestAppChannelTiming(t *testing.T) {
 		}
 	}
 }
+
+func TestOnlyTypeKnowsMyRoute(t *testing.T) {
+	if got := onlyType(tunnel.Status{Mode: "my"}); got != "my" {
+		t.Fatalf("onlyType=%q", got)
+	}
+}

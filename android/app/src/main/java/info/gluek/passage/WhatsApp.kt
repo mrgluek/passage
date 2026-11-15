@@ -14,17 +14,19 @@ object WhatsApp {
     private val random = SecureRandom()
     const val MIN_PORT = 20000
     const val MAX_PORT = 32767
+    private const val MAX_TRIES = 500
 
     fun choosePort(excluded: Set<Int>, start: Int = random.nextInt(MAX_PORT - MIN_PORT + 1), isBindable: (Int) -> Boolean = ::isBindable): Int {
         val count = MAX_PORT - MIN_PORT + 1
-        for (offset in 0 until count) {
+        // Bounded: this can run on the UI thread, and a free port turns up within a few tries.
+        for (offset in 0 until minOf(count, MAX_TRIES)) {
             val port = MIN_PORT + Math.floorMod(start + offset, count)
             if (port !in excluded && isBindable(port)) return port
         }
         error("No local port available")
     }
 
-    private fun isBindable(port: Int): Boolean = try {
+    internal fun isBindable(port: Int): Boolean = try {
         ServerSocket().use { it.bind(InetSocketAddress(InetAddress.getByName(Settings.HOST), port)) }
         true
     } catch (_: Exception) { false }

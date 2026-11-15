@@ -539,6 +539,12 @@ function renderTabs(v) {
   else if (tab === 2) renderWhatsApp(pane, v, true);
 }
 function renderWhatsApp(pane, v, home) {
+  // The settings pane is redrawn on every poll; the home pane is already memoized by renderHome.
+  if (!home) {
+    const key = JSON.stringify([v.whatsapp, v.whatsapp_error, v.whatsapp_chat_port, v.whatsapp_media_port, v.lang]);
+    if (pane.dataset.key === key && pane.firstChild) return;
+    pane.dataset.key = key;
+  }
   pane.textContent = "";
   const para = (text, warning = false) => {
     const p = document.createElement("p"); p.className = warning ? "hint warn" : "hint"; p.textContent = text; pane.append(p);

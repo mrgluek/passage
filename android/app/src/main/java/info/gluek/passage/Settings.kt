@@ -241,6 +241,7 @@ class Settings(context: Context) {
         private set(v) = prefs.edit().putBoolean("whatsapp_enabled", v).apply()
 
     fun setWhatsApp(context: Context, enabled: Boolean) {
+        if (enabled && !whatsappEnabled) dropBusyWhatsAppPorts()
         if (enabled) ensureWhatsAppPorts()
         whatsappEnabled = enabled
         if (PassageService.active) PassageService.start(context, "settings changed")
@@ -250,6 +251,18 @@ class Settings(context: Context) {
         get() { ensureWhatsAppPorts(); return prefs.getInt("whatsapp_chat_port", 0) }
     val whatsappMediaPort: Int
         get() { ensureWhatsAppPorts(); return prefs.getInt("whatsapp_media_port", 0) }
+
+    /** Saved ports another process has taken since are forgotten, so new ones are chosen. */
+    private fun dropBusyWhatsAppPorts() {
+        synchronized(configLock) {
+            val edit = prefs.edit()
+            for (key in listOf("whatsapp_chat_port", "whatsapp_media_port")) {
+                val saved = prefs.getInt(key, 0)
+                if (saved != 0 && !WhatsApp.isBindable(saved)) edit.putInt(key, 0)
+            }
+            edit.apply()
+        }
+    }
 
     private fun ensureWhatsAppPorts() {
         while (true) {
