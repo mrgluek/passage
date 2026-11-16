@@ -332,7 +332,7 @@
     <string name="bg_advance_title">Keep Passage from being stopped</string>
     <string name="bg_advance_reason">Some phones stop background apps on their own. If Passage is stopped, your messaging apps lose their connection until you open it again.</string>
     <string name="bg_killed_title">The system stopped Passage</string>
-    <string name="bg_killed_reason">Your phone recently stopped Passage with its own cleaner, so the proxy may not have worked until you opened the app again. These settings prevent that.</string>
+    <string name="bg_killed_reason">Your phone recently stopped Passage with its own cleaner, so the proxy may not have worked until you opened the app again. Change the settings on your phone to avoid this.</string>
     <string name="bg_open_settings">Open settings</string>
     <string name="bg_dismiss">Don\'t show again</string>
     <string name="bg_steps_xiaomi">Set the battery mode of Passage to \"No restrictions\" (Security → Battery → App battery saver, or the app\'s own Battery page), turn on Autostart for Passage, and lock Passage in the recent apps list (drag its card down, or long-press it and tap the padlock). Menu names vary by version.</string>
