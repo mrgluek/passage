@@ -38,7 +38,7 @@ class MainActivity : ThemedActivity() {
     private lateinit var statusRing: View
     private lateinit var primary: Button
     private lateinit var secondary: Button
-    private lateinit var manual: TextView
+    private lateinit var manualBox: LinearLayout
     private lateinit var setup: LinearLayout
     private lateinit var batteryCard: LinearLayout
     private lateinit var backgroundCard: LinearLayout
@@ -205,8 +205,15 @@ class MainActivity : ThemedActivity() {
         }
         status.addView(reasonView)
         status.setOnClickListener { details() }
-        manual = Ui.chip(this, getString(R.string.home_chip_manual)) { details() }
-        status.addView(manual)
+        manualBox = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            visibility = View.GONE
+            addView(Ui.hint(this@MainActivity, getString(R.string.home_manual_note)).apply {
+                setPadding(0, 0, 0, Ui.dp(this@MainActivity, 10))
+            })
+            addView(Ui.chip(this@MainActivity, getString(R.string.home_manual_back)) { backToAuto() })
+        }
+        status.addView(manualBox)
         primary = Ui.primaryButton(this, "") { if (!settings.hasLink) addLink() else onStartClicked() }
         secondary = Ui.textButton(this, "") { onStartStop() }.apply {
             minHeight = Ui.dp(this@MainActivity, 40)
@@ -511,6 +518,18 @@ class MainActivity : ThemedActivity() {
             .showStyled()
     }
 
+    /** Leaves a manually chosen route: the same change the route selector makes. */
+    private fun backToAuto() {
+        settings.mode = "auto"
+        if (PassageService.active) worker.execute {
+            try {
+                Native.setMode("auto".toByteArray(Charsets.UTF_8))
+            } catch (_: Throwable) {
+            }
+        }
+        refresh()
+    }
+
     private fun refresh() {
         if (isFinishing || isDestroyed) return
         showNetworkTest()
@@ -524,7 +543,7 @@ class MainActivity : ThemedActivity() {
         primary.setText(if (!hasLink) R.string.home_add_link else if (error) R.string.home_try_again else R.string.home_turn_on)
         secondary.visibility = if (active || !hasLink) View.VISIBLE else View.GONE
         secondary.setText(if (active) R.string.home_turn_off else R.string.home_turn_on)
-        manual.visibility = if (settings.mode == "auto") View.GONE else View.VISIBLE
+        manualBox.visibility = if (settings.mode == "auto") View.GONE else View.VISIBLE
         val notice = Subscriptions.decodeNotice(settings.routesNotice)
         routesNoticeBox.visibility = if (notice == null) View.GONE else View.VISIBLE
         if (notice != null) routesNotice.text = notice.clock()?.let {

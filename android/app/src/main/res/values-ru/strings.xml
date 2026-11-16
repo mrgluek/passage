@@ -128,7 +128,7 @@
     <string name="import_route_count">Сохранено маршрутов: %1$d (%2$s)</string>
     <string name="import_collision">Маршруты с совпадающими ID будут перезаписаны.</string>
     <string name="import_clear">Удалить все сохранённые маршруты.</string>
-    <string name="route_hint">Авто выбирает маршрут само; выбранный маршрут используется всегда.</string>
+    <string name="route_hint">Авто режим сам выбирает лучший маршрут; если же выбрать маршрут из списка вручную, всегда будет использоваться только он.</string>
     <string name="net_open">Сеть: открыта</string>
     <string name="net_restricted">Сеть: ограничена</string>
     <string name="net_relays_down">Сеть: проверочные хосты недоступны</string>
@@ -253,7 +253,8 @@
     <string name="home_turn_on">Включить</string>
     <string name="home_turn_off">Выключить</string>
     <string name="home_try_again">Повторить</string>
-    <string name="home_chip_manual">Ручной маршрут</string>
+    <string name="home_manual_note">Маршрут выбран вручную, Passage будет пытаться использовать только его.</string>
+    <string name="home_manual_back">Вернуть автовыбор маршрута</string>
     <string name="home_step_link">Добавьте ссылку</string>
     <string name="home_step_link_done">Ссылка добавлена</string>
     <string name="home_step_on">Включите прокси</string>

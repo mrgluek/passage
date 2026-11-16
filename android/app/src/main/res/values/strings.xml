@@ -128,7 +128,7 @@
     <string name="import_route_count">Saved routes: %1$d (%2$s)</string>
     <string name="import_collision">Routes with the same ID will be overwritten.</string>
     <string name="import_clear">Remove all saved routes.</string>
-    <string name="route_hint">Auto picks the route by itself; a fixed route always uses that one.</string>
+    <string name="route_hint">Auto mode picks the best route by itself; if you choose a route from the list manually, only that route is always used.</string>
     <string name="net_open">Network: open</string>
     <string name="net_restricted">Network: restricted</string>
     <string name="net_relays_down">Network: probe hosts down</string>
@@ -246,7 +246,8 @@
     <string name="home_turn_on">Turn on</string>
     <string name="home_turn_off">Turn off</string>
     <string name="home_try_again">Try again</string>
-    <string name="home_chip_manual">Manual route</string>
+    <string name="home_manual_note">The route was chosen manually. Passage will try to use only that route.</string>
+    <string name="home_manual_back">Return to automatic route choice</string>
     <string name="home_step_link">Add your link</string>
     <string name="home_step_link_done">Link added</string>
     <string name="home_step_on">Turn on the proxy</string>
