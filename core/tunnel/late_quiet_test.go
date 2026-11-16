@@ -125,7 +125,8 @@ func TestWatcherReportsTheLastReplyAndWrite(t *testing.T) {
 	time.Sleep(30 * time.Millisecond)
 	c.Write([]byte("x"))
 	read, write := c.quiet()
-	if read < 30*time.Millisecond || write <= 0 || write > read {
+	// The clock can be coarse (Windows), so the write may read as zero.
+	if read < 30*time.Millisecond || write < 0 || write >= read {
 		t.Fatalf("read %v write %v: the write must be newer than the reply", read, write)
 	}
 }
