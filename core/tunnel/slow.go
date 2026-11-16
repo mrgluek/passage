@@ -26,12 +26,14 @@ const (
 
 // Variables allow short times in tests.
 var (
-	// hedgeDelay is the first retransmission of a lost SYN on the common systems.
-	hedgeDelay = 1200 * time.Millisecond
+	// hedgeDelay is a little over the first retransmission of a lost SYN (one
+	// second on the common systems), so a clean path is not doubled.
+	hedgeDelay = 1500 * time.Millisecond
 	// A direct connect that wins the race but took this long still counts as slow.
-	slowConnect = 3 * time.Second
+	// Mobile and congested paths often need a few seconds, so this is generous.
+	slowConnect = 5 * time.Second
 	// While the tunnel is preferred, direct is started only if it takes this long.
-	preferDelay = 3 * time.Second
+	preferDelay = 5 * time.Second
 )
 
 var slowDelays = [...]time.Duration{3 * time.Minute, 10 * time.Minute, 30 * time.Minute}

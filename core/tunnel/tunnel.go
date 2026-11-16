@@ -104,6 +104,7 @@ type group struct {
 	lastDirectConn   time.Time
 	lastDirectResult connectionResult
 	slow             slowTrack
+	dnsLogged        time.Time
 }
 
 // viaLocked is the route type behind the tunnel while the group uses it.
@@ -1245,6 +1246,9 @@ func (t *Tunnel) dialWithHistory(g *group, addr string, logFailures bool) (net.C
 		if !observed && !trialFailed {
 			t.recordConnection(g, "refused", r.String())
 		}
+		if r == RouteDirect {
+			t.noteLookupFailure(g, err)
+		}
 		if next == r {
 			t.requestSubscriptionRefresh()
 			return nil, r, err
@@ -1263,6 +1267,42 @@ func (t *Tunnel) dialWithHistory(g *group, addr string, logFailures bool) (net.C
 		}
 		r = next
 	}
+}
+
+// noteLookupFailure puts a failed name lookup of a direct connect in the
+// events, by kind, at most once in lookupLogEvery for a group. A name that
+// does not exist and a lookup that gets no answer point to different causes.
+func (t *Tunnel) noteLookupFailure(g *group, err error) {
+	kind := lookupFailureKind(err)
+	if g == nil || kind == "" {
+		return
+	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	now := t.timeNow()
+	if !g.dnsLogged.IsZero() && now.Sub(g.dnsLogged) < lookupLogEvery {
+		return
+	}
+	g.dnsLogged = now
+	t.log.addAt(now, "dns: %s lookup failed (%s)", holdUnit(g, RouteDirect), kind)
+}
+
+const lookupLogEvery = 10 * time.Minute
+
+// lookupFailureKind names a failed name lookup: "no such name", "no answer"
+// or "error"; it is empty when err is not a lookup failure.
+func lookupFailureKind(err error) string {
+	var dnsErr *net.DNSError
+	if !errors.As(err, &dnsErr) {
+		return ""
+	}
+	switch {
+	case dnsErr.IsNotFound:
+		return "no such name"
+	case dnsErr.IsTimeout:
+		return "no answer"
+	}
+	return "error"
 }
 
 // hedgeAllowedLocked: another route may be started alongside the current one
