@@ -3,6 +3,7 @@ package tunnel
 import (
 	"net"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -41,6 +42,21 @@ type responseWatch struct {
 	// keepLate, when set, is asked at a later-reply expiry whether the
 	// connection should stay open: true keeps it and waits for the next write.
 	keepLate func() bool
+	// Unix nanoseconds of the last bytes read from and written to the server.
+	lastRead, lastWrite atomic.Int64
+}
+
+// quiet reports how long ago the server last sent bytes and the app last
+// wrote to it; zero when it never happened.
+func (c *responseWatch) quiet() (read, write time.Duration) {
+	now := time.Now().UnixNano()
+	if t := c.lastRead.Load(); t != 0 {
+		read = time.Duration(now - t)
+	}
+	if t := c.lastWrite.Load(); t != 0 {
+		write = time.Duration(now - t)
+	}
+	return read, write
 }
 
 func watchResponses(c net.Conn, success func(), stalled func(bool)) net.Conn {
@@ -106,6 +122,9 @@ func (c *responseWatch) Write(b []byte) (int, error) {
 	c.stopTimerLocked()
 	c.mu.Unlock()
 	n, err := c.Conn.Write(b)
+	if n > 0 {
+		c.lastWrite.Store(time.Now().UnixNano())
+	}
 	c.mu.Lock()
 	c.writing--
 	if n > 0 && err == nil {
@@ -120,6 +139,7 @@ func (c *responseWatch) Write(b []byte) (int, error) {
 func (c *responseWatch) Read(b []byte) (int, error) {
 	n, err := c.Conn.Read(b)
 	if n > 0 {
+		c.lastRead.Store(time.Now().UnixNano())
 		c.mu.Lock()
 		if !c.closed {
 			first := c.first

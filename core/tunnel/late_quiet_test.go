@@ -111,3 +111,21 @@ func TestEarlyFreezeIsYoungAndSmall(t *testing.T) {
 		}
 	}
 }
+
+func TestWatcherReportsTheLastReplyAndWrite(t *testing.T) {
+	a, closeAll := quietFixture(t)
+	defer closeAll()
+	c := watchResponses(a, nil, func(bool) {}).(*responseWatch)
+	if read, write := c.quiet(); read != 0 || write != 0 {
+		t.Fatalf("fresh connection: read %v write %v, want zeros", read, write)
+	}
+	if _, err := io.ReadFull(c, make([]byte, 5)); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(30 * time.Millisecond)
+	c.Write([]byte("x"))
+	read, write := c.quiet()
+	if read < 30*time.Millisecond || write <= 0 || write > read {
+		t.Fatalf("read %v write %v: the write must be newer than the reply", read, write)
+	}
+}

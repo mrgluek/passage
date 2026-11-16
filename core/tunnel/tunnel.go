@@ -1016,30 +1016,40 @@ func (t *Tunnel) connect(c net.Conn, addr string, socks bool, forward ...int) {
 	}
 	if _, trial := raw.(*trialConn); !trial {
 		var kept atomic.Bool
+		var watcher *responseWatch
+		lateNote := func() string {
+			age, sent, got := time.Since(start), up.Load(), down.Load()
+			if watcher == nil {
+				return fmt.Sprintf(" after %s, to server %d B, from server %d B", age.Round(time.Second), sent, got)
+			}
+			read, write := watcher.quiet()
+			return fmt.Sprintf(" after %s, last reply %s ago, last write %s ago, to server %d B, from server %d B", age.Round(time.Second), read.Round(time.Second), write.Round(time.Second), sent, got)
+		}
 		remote = watchResponsesKeep(raw, func() {
 			poolFeedback(raw, false)
 			t.connectionFeedbackVia(g, route, key, connectionRoute(raw, route), false)
 		}, func(first bool) {
 			note := ""
 			if !first {
-				note = fmt.Sprintf(" after %s, to server %d B, from server %d B", time.Since(start).Round(time.Second), up.Load(), down.Load())
+				note = lateNote()
 			}
 			poolFeedbackNote(raw, note, true, first)
 			t.connectionFeedbackNote(g, route, key, connectionRoute(raw, route), note, true, first)
 			c.Close()
 		}, func() bool {
-			age, sent, got := time.Since(start), up.Load(), down.Load()
+			age, got := time.Since(start), down.Load()
 			if earlyFreeze(age, got) {
 				return false
 			}
 			if kept.CompareAndSwap(false, true) {
-				t.log.add("%s: no reply, connection kept open (later) after %s, to server %d B, from server %d B", connectionRoute(raw, route), age.Round(time.Second), sent, got)
+				t.log.add("%s: no reply, connection kept open (later)%s", connectionRoute(raw, route), lateNote())
 				t.mu.Lock()
 				t.stats[route].Quiet++
 				t.mu.Unlock()
 			}
 			return true
 		})
+		watcher, _ = remote.(*responseWatch)
 	}
 	defer remote.Close()
 	var wg sync.WaitGroup
