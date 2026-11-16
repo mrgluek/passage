@@ -9,7 +9,9 @@ import (
 )
 
 type SubscriptionSourceFailures struct {
-	Net     uint32 `json:"net,omitempty"`
+	Net uint32 `json:"net,omitempty"`
+	// Refused: the exits answered that they do not carry this destination.
+	Refused uint32 `json:"refused,omitempty"`
 	Timeout uint32 `json:"timeout,omitempty"`
 	HTTP    uint32 `json:"http,omitempty"`
 	Bad     uint32 `json:"bad,omitempty"`
@@ -31,6 +33,9 @@ type SubscriptionSourceStats struct {
 	Tunnel          SubscriptionSourceAttempts `json:"tunnel,omitempty,omitzero"`
 	Direct          SubscriptionSourceAttempts `json:"direct,omitempty,omitzero"`
 	LastDirectCheck int64                      `json:"last_direct_check,omitempty"`
+	// TunnelRefusedAt is when the tunnel last refused this source; for a while
+	// after it the source is fetched directly alongside the tunnel ones.
+	TunnelRefusedAt int64                      `json:"tunnel_refused_at,omitempty"`
 	Tries           uint32                     `json:"tries,omitempty"`
 	Answered        uint32                     `json:"answered,omitempty"`
 	OK              uint32                     `json:"ok,omitempty"`
@@ -93,6 +98,8 @@ func (s *Subscription) recordSourceFetch(source string, result subscriptionFetch
 	switch result.failure {
 	case "net":
 		incrementSourceCounter(&stats.Fail.Net)
+	case "refused":
+		incrementSourceCounter(&stats.Fail.Refused)
 	case "timeout":
 		incrementSourceCounter(&stats.Fail.Timeout)
 	case "http":
@@ -113,12 +120,17 @@ func (s *Subscription) recordSourceFetch(source string, result subscriptionFetch
 	switch result.failure {
 	case "net":
 		incrementSourceCounter(&attempts.Fail.Net)
+	case "refused":
+		incrementSourceCounter(&attempts.Fail.Refused)
 	case "timeout":
 		incrementSourceCounter(&attempts.Fail.Timeout)
 	case "http":
 		incrementSourceCounter(&attempts.Fail.HTTP)
 	case "bad":
 		incrementSourceCounter(&attempts.Fail.Bad)
+	}
+	if result.tunnel && result.failure == "refused" {
+		stats.TunnelRefusedAt = time.Now().Unix()
 	}
 	s.SourceStats[key] = stats
 }
@@ -130,6 +142,7 @@ func (s *Subscription) recordSourceOK(source string, tunnel bool, elapsed time.D
 	if tunnel {
 		incrementSourceCounter(&stats.Via.Tunnel)
 		incrementSourceCounter(&stats.Tunnel.OK)
+		stats.TunnelRefusedAt = 0
 	} else {
 		incrementSourceCounter(&stats.Via.Direct)
 		incrementSourceCounter(&stats.Direct.OK)
@@ -163,4 +176,13 @@ func (s Subscription) sourceStatuses() []SubscriptionSourceStatus {
 		out = append(out, SubscriptionSourceStatus{ID: id, SubscriptionSourceStats: stats})
 	}
 	return out
+}
+
+// tunnelRefusalMemory is how long a source that the tunnel refused goes
+// directly: the exits may be updated, so the tunnel is tried again after it.
+const tunnelRefusalMemory = 7 * 24 * time.Hour
+
+func (s Subscription) tunnelRefusedRecently(source string, now time.Time) bool {
+	at := s.SourceStats[sourceStatsKey(source)].TunnelRefusedAt
+	return at != 0 && now.Sub(time.Unix(at, 0)) < tunnelRefusalMemory
 }
