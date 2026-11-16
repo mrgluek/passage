@@ -329,4 +329,17 @@
     <string name="whatsapp_ports_busy">No free port; try again later</string>
     <string name="whatsapp_no_ports">No local ports available. Try again.</string>
     <string name="channel_my">via my route</string>
+    <string name="bg_advance_title">Keep Passage from being stopped</string>
+    <string name="bg_advance_reason">Some phones stop background apps on their own. If Passage is stopped, your messaging apps lose their connection until you open it again.</string>
+    <string name="bg_killed_title">The system stopped Passage</string>
+    <string name="bg_killed_reason">Your phone recently stopped Passage with its own cleaner, so the proxy may not have worked until you opened the app again. These settings prevent that.</string>
+    <string name="bg_open_settings">Open settings</string>
+    <string name="bg_dismiss">Don\'t show again</string>
+    <string name="bg_steps_xiaomi">Set the battery mode of Passage to \"No restrictions\" (Security → Battery → App battery saver, or the app\'s own Battery page), turn on Autostart for Passage, and lock Passage in the recent apps list (drag its card down, or long-press it and tap the padlock). Menu names vary by version.</string>
+    <string name="bg_steps_huawei">Open Settings → Battery → App launch, switch Passage to manual and allow auto-launch, secondary launch and running in the background. Menu names vary by version.</string>
+    <string name="bg_steps_oppo">Allow Autostart and background activity for Passage, set its battery usage to unrestricted, and lock Passage in the recent apps list. Menu names vary by version.</string>
+    <string name="bg_steps_vivo">Allow Autostart and high background power use for Passage, and lock it in the recent apps list. Menu names vary by version.</string>
+    <string name="bg_steps_samsung">Open Settings → Battery → Background usage limits, and add Passage to \"Never sleeping apps\". Menu names vary by version.</string>
+    <string name="bg_steps_transsion">Allow Autostart and background activity for Passage, set its battery use to unrestricted, and lock it in the recent apps list. Menu names vary by version.</string>
+    <string name="bg_steps_other">Set the battery use of Passage to unrestricted and allow it to start and run in the background. Do not swipe it out of the recent apps list.</string>
 </resources>

@@ -41,6 +41,12 @@ class MainActivity : ThemedActivity() {
     private lateinit var manual: TextView
     private lateinit var setup: LinearLayout
     private lateinit var batteryCard: LinearLayout
+    private lateinit var backgroundCard: LinearLayout
+    private lateinit var backgroundTitle: TextView
+    private lateinit var backgroundText: TextView
+    private val vendor = BackgroundHint.vendor(Build.MANUFACTURER, Build.BRAND)
+    private var cleanerKill = 0L
+    private var backgroundShown = BackgroundHint.Card.NONE
     private lateinit var routesNotice: TextView
     private lateinit var routesNoticeBox: LinearLayout
     private lateinit var updateNotice: Button
@@ -90,6 +96,7 @@ class MainActivity : ThemedActivity() {
     override fun onResume() {
         super.onResume()
         resumed = true
+        cleanerKill = BackgroundHint.lastCleanerKill(this)
         main.post(poll)
     }
 
@@ -184,6 +191,18 @@ class MainActivity : ThemedActivity() {
         })
         batteryCard.addView(Ui.outlinedButton(this, getString(R.string.home_battery_allow)) { Ui.askBatteryExemption(this) })
         col.addView(batteryCard)
+        backgroundCard = Ui.card(this).apply { visibility = View.GONE }
+        backgroundTitle = Ui.heading(this, "").apply { setPadding(0, 0, 0, 0) }
+        backgroundCard.addView(backgroundTitle)
+        backgroundText = Ui.hint(this, "").apply { setPadding(0, Ui.dp(this@MainActivity, 8), 0, Ui.dp(this@MainActivity, 12)) }
+        backgroundCard.addView(backgroundText)
+        backgroundCard.addView(Ui.outlinedButton(this, getString(R.string.bg_open_settings)) { BackgroundHint.openSettings(this, vendor) })
+        backgroundCard.addView(Ui.textButton(this, getString(R.string.bg_dismiss)) {
+            settings.backgroundHintDismissed = true
+            settings.backgroundKillSeen = maxOf(settings.backgroundKillSeen, cleanerKill)
+            refresh()
+        }.apply { gravity = Gravity.CENTER })
+        col.addView(backgroundCard)
         col.addView(Ui.card(this).apply {
             addView(Ui.heading(this@MainActivity, getString(R.string.home_help)).apply { setPadding(0, 0, 0, Ui.dp(this@MainActivity, 12)) })
             addView(Ui.hint(this@MainActivity, getString(R.string.home_report_what)).apply {
@@ -478,6 +497,17 @@ class MainActivity : ThemedActivity() {
             getString(R.string.sub_routes_timed, notice.added, notice.removed, it)
         } ?: getString(R.string.sub_routes_updated, notice.added, notice.removed)
         batteryCard.visibility = if (hasLink && active && !Ui.batteryExempt(this)) View.VISIBLE else View.GONE
+        val hint = BackgroundHint.card(hasLink, active, vendor, settings.backgroundHintDismissed, cleanerKill, settings.backgroundKillSeen)
+        backgroundCard.visibility = if (hint == BackgroundHint.Card.NONE) View.GONE else View.VISIBLE
+        if (hint != BackgroundHint.Card.NONE) {
+            backgroundTitle.setText(if (hint == BackgroundHint.Card.KILLED) R.string.bg_killed_title else R.string.bg_advance_title)
+            backgroundText.text = getString(if (hint == BackgroundHint.Card.KILLED) R.string.bg_killed_reason else R.string.bg_advance_reason) +
+                "\n\n" + getString(vendor.steps)
+        }
+        if (hint != backgroundShown) {
+            backgroundShown = hint
+            if (hint != BackgroundHint.Card.NONE) Diagnostics.event("background hint shown: ${hint.name.lowercase()} vendor=${vendor.name.lowercase()}")
+        }
         renderSetup()
         if (!active) {
             whatsappStarted = 0L
