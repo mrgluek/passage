@@ -203,3 +203,15 @@ func TestStallLogPrunesExpiredEntries(t *testing.T) {
 		t.Fatalf("entries=%v", log.stallLogged)
 	}
 }
+
+func TestLateStallLineCarriesTheConnectionNote(t *testing.T) {
+	now := time.Unix(1000, 0)
+	log := newEventLog(10, func() time.Time { return now })
+	h := &hold{note: " after 91s, to server 120 B, from server 3400 B"}
+	h.onStall(now, log, "relay-1 direct", false, "a")
+	events := log.last(1)
+	want := "relay-1 direct: connection closed, no reply (later) after 91s, to server 120 B, from server 3400 B"
+	if len(events) != 1 || events[0].Msg != want {
+		t.Fatalf("events = %+v, want %q", events, want)
+	}
+}

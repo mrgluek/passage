@@ -15,6 +15,7 @@ const (
 
 type hold struct {
 	groupHold  bool
+	note       string // detail for the next "later" event line
 	stepOnly   bool
 	at         time.Time
 	state      holdState
@@ -119,7 +120,7 @@ func (s *hold) onStallReason(now time.Time, log *eventLog, route, reason string,
 	}
 	if !first {
 		if log != nil {
-			log.add("%s: connection closed, no reply (later)", route)
+			log.add("%s: connection closed, no reply (later)%s", route, s.note)
 		}
 		return false
 	}

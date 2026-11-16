@@ -1017,7 +1017,11 @@ func (t *Tunnel) connect(c net.Conn, addr string, socks bool, forward ...int) {
 			t.connectionFeedbackVia(g, route, key, connectionRoute(raw, route), false)
 		}, func(first bool) {
 			poolFeedback(raw, true, first)
-			t.connectionFeedbackVia(g, route, key, connectionRoute(raw, route), true, first)
+			note := ""
+			if !first {
+				note = fmt.Sprintf(" after %s, to server %d B, from server %d B", time.Since(start).Round(time.Second), up.Load(), down.Load())
+			}
+			t.connectionFeedbackNote(g, route, key, connectionRoute(raw, route), note, true, first)
 			c.Close()
 		})
 	}
@@ -2417,6 +2421,12 @@ func (t *Tunnel) connectionFeedback(g *group, r Route, key string, stalled bool,
 }
 
 func (t *Tunnel) connectionFeedbackVia(g *group, r Route, key, via string, stalled bool, first ...bool) {
+	t.connectionFeedbackNote(g, r, key, via, "", stalled, first...)
+}
+
+// connectionFeedbackNote is connectionFeedbackVia with a note about the
+// connection (age, bytes) for the event line of a late stall.
+func (t *Tunnel) connectionFeedbackNote(g *group, r Route, key, via, note string, stalled bool, first ...bool) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	defer t.rememberGroupHoldLocked(g)
@@ -2467,7 +2477,9 @@ func (t *Tunnel) connectionFeedbackVia(g *group, r Route, key, via string, stall
 	t.stats[r].Fails++
 	t.stats[r].Stalls++
 	isFirst := len(first) == 0 || first[0]
+	h.note = note
 	corroborated := h.onStall(t.timeNow(), t.log, holdUnit(g, r), isFirst, key, r == RouteTunnel && strings.HasPrefix(t.only, "route:"))
+	h.note = ""
 	if !isFirst {
 		return
 	}
