@@ -1202,6 +1202,7 @@ func (t *Tunnel) dialWithHistory(g *group, addr string, logFailures bool) (net.C
 		}
 		var c net.Conn
 		var err error
+		dialStart := time.Now()
 		if hedge.dial != nil {
 			primary := w.dial
 			if r == RouteTunnel {
@@ -1248,7 +1249,7 @@ func (t *Tunnel) dialWithHistory(g *group, addr string, logFailures bool) (net.C
 			trial = nil
 		}
 		if !observed && !trialFailed {
-			t.recordConnection(g, "refused", r.String())
+			t.recordFailedDial(g, r.String(), err, time.Since(dialStart))
 		}
 		if r == RouteDirect {
 			t.noteLookupFailure(g, err)
@@ -1837,7 +1838,7 @@ func (t *Tunnel) cleanMemoryAllowedLocked(g *group) bool {
 		return true
 	}
 	switch g.lastDirectResult.Outcome {
-	case "stall", "later", "refused":
+	case "stall", "later", "refused", "timeout":
 		return false
 	default:
 		return true

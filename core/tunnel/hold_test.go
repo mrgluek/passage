@@ -74,7 +74,7 @@ func TestHoldHistoryLines(t *testing.T) {
 		{historyTransition{prefix: "stalled", unit: "route-a (exit=a)", reason: "first reply, 2 destinations", delay: 10 * time.Minute, count: 7}, "stalled: route-a (exit=a) (first reply, 2 destinations), paused for 10 min, count=7"},
 		{historyTransition{prefix: "unblocked", unit: "telegram direct", reason: "cooldown ended"}, "resumed: telegram direct (cooldown ended)"},
 		{historyTransition{prefix: "unblocked", unit: "other smart", reason: "first reply"}, "resumed: other smart (first reply)"},
-		{historyTransition{prefix: "disagree", unit: "relay-1", probe: "ok", outcome: "stall", route: "direct"}, "disagree: relay-1 probe=ok conn=stall via direct"},
+		{historyTransition{prefix: "disagree", unit: "relay-1", probe: "ok", outcome: "stall", route: "direct"}, "disagree: relay-1 direct probe=ok conn=stall via direct"},
 	} {
 		if got := historyLine(tc.event); got != tc.want {
 			t.Errorf("got %q, want %q", got, tc.want)
@@ -156,7 +156,7 @@ func TestDisagreementUsesGroupKind(t *testing.T) {
 	g.lastResult = probeResult{Relays: 1, RelayOK: 1}
 	tt.recordConnection(g, "stall", "direct")
 	lines := disagreementLines(tt)
-	if len(lines) != 1 || lines[0] != "disagree: "+g.historyUnit()+" probe=ok conn=stall via direct" {
+	if len(lines) != 1 || lines[0] != "disagree: "+g.historyUnit()+" direct probe=ok conn=stall via direct" {
 		t.Fatal(lines)
 	}
 }

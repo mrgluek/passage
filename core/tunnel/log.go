@@ -105,7 +105,7 @@ func historyLine(e historyTransition) string {
 	case "unblocked":
 		return fmt.Sprintf("resumed: %s (%s)", e.unit, e.reason)
 	case "disagree":
-		line := fmt.Sprintf("disagree: %s probe=%s conn=%s via %s", e.unit, e.probe, e.outcome, e.route)
+		line := fmt.Sprintf("disagree: %s direct probe=%s conn=%s via %s", e.unit, e.probe, e.outcome, e.route)
 		if e.reason != "" {
 			line += ", " + e.reason
 		}
