@@ -44,8 +44,9 @@ class MainActivity : ThemedActivity() {
     private lateinit var backgroundCard: LinearLayout
     private lateinit var backgroundTitle: TextView
     private lateinit var backgroundText: TextView
-    private val vendor = BackgroundHint.vendor(Build.MANUFACTURER, Build.BRAND)
+    private var vendor = BackgroundHint.vendor(Build.MANUFACTURER, Build.BRAND)
     private var cleanerKill = 0L
+    private var forcedKill = false
     private var backgroundShown = BackgroundHint.Card.NONE
     private lateinit var routesNotice: TextView
     private lateinit var routesNoticeBox: LinearLayout
@@ -79,6 +80,7 @@ class MainActivity : ThemedActivity() {
         Diagnostics.event("main screen created: recreation=${savedInstanceState != null}")
         settings = Settings(this)
         settings.migrateAppSeen()
+        applyDebugOverrides(intent)
         setContentView(buildUi())
         title = "${getString(R.string.app_name)} ${appVersion()}"
         // The proxy was on and is not now: an app update or the system
@@ -93,10 +95,33 @@ class MainActivity : ThemedActivity() {
         super.onSaveInstanceState(outState)
     }
 
+    /**
+     * Only in a debuggable build (never in a release APK): force the maker and a
+     * system stop to see the background hint on any phone, for example
+     * `am start -n info.gluek.passage/.MainActivity --es debug_vendor xiaomi --ez debug_kill true`.
+     */
+    private fun applyDebugOverrides(intent: Intent?) {
+        if (applicationInfo.flags and android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE == 0) return
+        intent?.getStringExtra("debug_vendor")?.let { vendor = BackgroundHint.vendor(it, it) }
+        if (intent?.hasExtra("debug_kill") == true) forcedKill = intent.getBooleanExtra("debug_kill", false)
+        if (intent?.getBooleanExtra("debug_reset_hint", false) == true) {
+            settings.backgroundHintDismissed = false
+            settings.backgroundKillSeen = 0
+        }
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        applyDebugOverrides(intent)
+        if (resumed) cleanerKill = if (forcedKill) System.currentTimeMillis() else BackgroundHint.lastCleanerKill(this)
+        refresh()
+    }
+
     override fun onResume() {
         super.onResume()
         resumed = true
-        cleanerKill = BackgroundHint.lastCleanerKill(this)
+        cleanerKill = if (forcedKill) System.currentTimeMillis() else BackgroundHint.lastCleanerKill(this)
         main.post(poll)
     }
 
