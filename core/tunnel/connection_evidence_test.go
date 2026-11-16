@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net"
 	"reflect"
 	"strings"
@@ -64,7 +65,7 @@ func TestConnectionProbeDisagreement(t *testing.T) {
 					if probeOK {
 						verdict = "ok"
 					}
-					expected := "disagree: " + g.historyUnit() + " probe=" + verdict + " conn=" + outcome + " via route-a"
+					expected := "disagree: " + g.historyUnit() + " direct probe=" + verdict + " conn=" + outcome + " via route-a"
 					if len(lines) != 1 || lines[0] != expected {
 						t.Fatalf("lines %v, want %s", lines, expected)
 					}
@@ -318,3 +319,42 @@ func TestConnectionEvidenceIgnoresBackgroundDial(t *testing.T) {
 		t.Fatalf("recorded %d real outcomes, want 1", calls)
 	}
 }
+
+func TestFailedDialIsATimeoutOnlyForATimeout(t *testing.T) {
+	cases := []struct {
+		name    string
+		err     error
+		outcome string
+		secs    int
+	}{
+		{"deadline", fmt.Errorf("dial: %w", context.DeadlineExceeded), "timeout", 8},
+		{"network timeout", &net.OpError{Op: "dial", Err: timeoutError{}}, "timeout", 8},
+		{"refused", errors.New("connection refused"), "refused", 0},
+	}
+	for _, c := range cases {
+		now := time.Unix(1000, 0)
+		tt, g := evidenceTunnel(&now)
+		tt.recordFailedDial(g, "direct", c.err, 8*time.Second)
+		got := g.lastConnResult
+		if got.Outcome != c.outcome || got.AfterSecs != c.secs || got.Route != "direct" {
+			t.Errorf("%s: result %+v, want %s after %d s", c.name, got, c.outcome, c.secs)
+		}
+	}
+}
+
+func TestTimeoutDisagreementNamesTheWait(t *testing.T) {
+	now := time.Unix(1000, 0)
+	tt, g := evidenceTunnel(&now)
+	tt.applyProbe(g, probeResult{Relays: 1, RelayOK: 1})
+	tt.recordFailedDial(g, "direct", context.DeadlineExceeded, 8*time.Second)
+	want := "disagree: " + g.historyUnit() + " direct probe=ok conn=timeout after 8s via direct"
+	if lines := disagreementLines(tt); len(lines) != 1 || lines[0] != want {
+		t.Fatalf("lines %v, want %s", lines, want)
+	}
+}
+
+type timeoutError struct{}
+
+func (timeoutError) Error() string   { return "i/o timeout" }
+func (timeoutError) Timeout() bool   { return true }
+func (timeoutError) Temporary() bool { return true }

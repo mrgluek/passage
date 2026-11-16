@@ -39,7 +39,7 @@ func health(s Status, now time.Time) Health {
 				if reserve[g.LastConnResult.Route] {
 					reserveOnly++
 				}
-			case "stall", "later", "refused":
+			case "stall", "later", "refused", "timeout":
 				stalled++
 			}
 			anyActivity = true

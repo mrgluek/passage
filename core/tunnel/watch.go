@@ -3,6 +3,7 @@ package tunnel
 import (
 	"net"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -10,6 +11,18 @@ const (
 	defaultFirstResponseTimeout = 8 * time.Second
 	defaultResponseStallTimeout = 20 * time.Second
 )
+
+// A quiet period after a late write closes the connection only while it looks
+// like the early freeze the rule was made for: a young connection that has
+// received little. Anything older or bigger stays open.
+const (
+	earlyFreezeAge   = time.Minute
+	earlyFreezeBytes = 32 << 10
+)
+
+func earlyFreeze(age time.Duration, received int64) bool {
+	return age <= earlyFreezeAge && received <= earlyFreezeBytes
+}
 
 // Variables allow short deadlines in tests.
 var firstResponseTimeout = defaultFirstResponseTimeout
@@ -26,10 +39,35 @@ type responseWatch struct {
 	firstLimit, laterLimit time.Duration
 	success                func()
 	stalled                func(bool)
+	// keepLate, when set, is asked at a later-reply expiry whether the
+	// connection should stay open: true keeps it and waits for the next write.
+	keepLate func() bool
+	// Unix nanoseconds of the last bytes read from and written to the server.
+	lastRead, lastWrite atomic.Int64
+}
+
+// quiet reports how long ago the server last sent bytes and the app last
+// wrote to it; zero when it never happened.
+func (c *responseWatch) quiet() (read, write time.Duration) {
+	now := time.Now().UnixNano()
+	if t := c.lastRead.Load(); t != 0 {
+		read = time.Duration(now - t)
+	}
+	if t := c.lastWrite.Load(); t != 0 {
+		write = time.Duration(now - t)
+	}
+	return read, write
 }
 
 func watchResponses(c net.Conn, success func(), stalled func(bool)) net.Conn {
-	return &responseWatch{Conn: c, first: true, firstLimit: firstResponseTimeout, laterLimit: responseStallTimeout, success: success, stalled: stalled}
+	return watchResponsesKeep(c, success, stalled, nil)
+}
+
+// watchResponsesKeep is watchResponses where a quiet period after earlier
+// replies may leave the connection open: many protocols send acknowledgements
+// that get no answer, so silence after a write is not proof of a dead path.
+func watchResponsesKeep(c net.Conn, success func(), stalled func(bool), keepLate func() bool) net.Conn {
+	return &responseWatch{Conn: c, first: true, firstLimit: firstResponseTimeout, laterLimit: responseStallTimeout, success: success, stalled: stalled, keepLate: keepLate}
 }
 func (c *responseWatch) stopTimerLocked() {
 	c.generation++
@@ -54,6 +92,20 @@ func (c *responseWatch) armLocked() {
 			c.mu.Unlock()
 			return
 		}
+		if !c.first && c.keepLate != nil {
+			c.mu.Unlock()
+			keep := c.keepLate()
+			c.mu.Lock()
+			if !c.pending || c.closed || c.writing > 0 || c.generation != generation {
+				c.mu.Unlock()
+				return
+			}
+			if keep {
+				c.pending = false // wait for the next write
+				c.mu.Unlock()
+				return
+			}
+		}
 		c.closed = true
 		first := c.first
 		c.mu.Unlock()
@@ -70,6 +122,9 @@ func (c *responseWatch) Write(b []byte) (int, error) {
 	c.stopTimerLocked()
 	c.mu.Unlock()
 	n, err := c.Conn.Write(b)
+	if n > 0 {
+		c.lastWrite.Store(time.Now().UnixNano())
+	}
 	c.mu.Lock()
 	c.writing--
 	if n > 0 && err == nil {
@@ -84,6 +139,7 @@ func (c *responseWatch) Write(b []byte) (int, error) {
 func (c *responseWatch) Read(b []byte) (int, error) {
 	n, err := c.Conn.Read(b)
 	if n > 0 {
+		c.lastRead.Store(time.Now().UnixNano())
 		c.mu.Lock()
 		if !c.closed {
 			first := c.first

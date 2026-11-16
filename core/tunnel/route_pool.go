@@ -510,6 +510,9 @@ func (p *routePool) ways() []tunnelWay {
 			name = p.ids[i]
 		}
 		out[i] = tunnelWay{name: name, dial: c.DialContext, ipv6: p.ipv6[i]}
+		if ic, ok := c.(*irohClient); ok {
+			out[i].dial = ic.testDial
+		}
 		if i < len(p.exits) {
 			out[i].exit = p.exits[i]
 		}
@@ -591,6 +594,16 @@ type irohClient struct {
 }
 
 func (c *irohClient) DialContext(ctx context.Context, n, a string) (net.Conn, error) {
+	return c.dialContext(ctx, n, a, true)
+}
+
+// testDial is DialContext for the network test: its failures are expected
+// results of a check, so they do not count toward restarting the helper.
+func (c *irohClient) testDial(ctx context.Context, n, a string) (net.Conn, error) {
+	return c.dialContext(ctx, n, a, false)
+}
+
+func (c *irohClient) dialContext(ctx context.Context, n, a string, count bool) (net.Conn, error) {
 	c.mu.Lock()
 	if c.closed {
 		c.mu.Unlock()
@@ -637,7 +650,7 @@ func (c *irohClient) DialContext(ctx context.Context, n, a string) (net.Conn, er
 		}
 		if err == nil {
 			c.failures = 0
-		} else if !errors.Is(err, errDestinationRefused) && !errors.Is(err, context.Canceled) {
+		} else if count && !errors.Is(err, errDestinationRefused) && !errors.Is(err, context.Canceled) {
 			c.failures++
 			restart = c.failures >= 3 && (c.lastRestart.IsZero() || now.Sub(c.lastRestart) >= 5*time.Minute)
 		}
@@ -683,7 +696,11 @@ type poolConn struct {
 	address string
 }
 
-func (c *poolConn) feedback(stalled bool, first ...bool) {
+func (c *poolConn) feedback(stalled bool, first ...bool) { c.feedbackNote("", stalled, first...) }
+
+// feedbackNote is feedback with a note about the connection for the event line
+// of a late stall.
+func (c *poolConn) feedbackNote(note string, stalled bool, first ...bool) {
 	p := c.pool
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -701,7 +718,9 @@ func (c *poolConn) feedback(stalled bool, first ...bool) {
 	defer func() { p.rememberHoldLocked(c.index, h, p.clock()) }()
 	if stalled {
 		pinned := strings.HasPrefix(p.only, "route:")
+		h.note = note
 		corroborated := h.onStallReason(p.clock(), p.log, p.routeName(c.index), "first reply, 2 destinations", len(first) == 0 || first[0], c.address, pinned)
+		h.note = ""
 		if pinned || !corroborated {
 			return
 		}
@@ -732,11 +751,15 @@ func (p *routePool) stalledLocked(network string, i int) bool {
 	return h.blocked()
 }
 func poolFeedback(c net.Conn, stalled bool, first ...bool) {
+	poolFeedbackNote(c, "", stalled, first...)
+}
+
+func poolFeedbackNote(c net.Conn, note string, stalled bool, first ...bool) {
 	if v, ok := c.(viaConn); ok {
 		c = v.Conn
 	}
 	if v, ok := c.(*poolConn); ok {
-		v.feedback(stalled, first...)
+		v.feedbackNote(note, stalled, first...)
 	}
 }
 

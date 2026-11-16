@@ -120,12 +120,23 @@ func neutralHistoryMessage(message string) string {
 	return message
 }
 
+// isHistoryMessage reports whether an event is kept in the saved history. The
+// same lines are kept on Android (RouterHistory.kt).
+func isHistoryMessage(message string) bool {
+	for _, prefix := range []string{"stalled:", "resumed:", "disagree:", "slow:"} {
+		if strings.HasPrefix(message, prefix) {
+			return true
+		}
+	}
+	return strings.Contains(message, ": trial skipped,")
+}
+
 func (l *appLog) copyStalls(events []tunnel.Event) {
 	l.copyMu.Lock()
 	defer l.copyMu.Unlock()
 	for _, e := range events {
 		message := neutralHistoryMessage(e.Msg)
-		if !strings.HasPrefix(message, "stalled:") && !strings.HasPrefix(message, "resumed:") && !strings.HasPrefix(message, "disagree:") {
+		if !isHistoryMessage(message) {
 			continue
 		}
 		if e.Time.IsZero() {

@@ -169,3 +169,34 @@ func TestIrohOldGenerationCannotRestartHelper(t *testing.T) {
 		t.Fatalf("helpers started=%d stopped=%d", starts, stops)
 	}
 }
+
+func TestNetworkTestDialsDoNotRestartTheHelper(t *testing.T) {
+	now := time.Unix(1000, 0)
+	restarts, stops := 0, 0
+	c := &irohClient{dir: t.TempDir(), now: func() time.Time { return now }, onRestart: func(time.Time) { restarts++ }}
+	defer c.Close()
+	c.start = func(life context.Context) (dialFunc, func(), error) {
+		done := make(chan struct{})
+		go func() { defer close(done); <-life.Done() }()
+		return func(context.Context, string, string) (net.Conn, error) {
+			return nil, io.ErrUnexpectedEOF
+		}, func() { <-done; stops++ }, nil
+	}
+	for range 6 {
+		c.testDial(context.Background(), "tcp", "example.org:443")
+	}
+	if restarts != 0 || stops != 0 {
+		t.Fatalf("network test dials restarted the helper: restarts=%d stops=%d", restarts, stops)
+	}
+	// They also leave no count behind: two real failures stay below the limit.
+	for range 2 {
+		c.DialContext(context.Background(), "tcp", "example.org:443")
+	}
+	if restarts != 0 {
+		t.Fatal("test dials were counted")
+	}
+	c.DialContext(context.Background(), "tcp", "example.org:443")
+	if restarts != 1 {
+		t.Fatalf("three real failures: restarts=%d, want 1", restarts)
+	}
+}

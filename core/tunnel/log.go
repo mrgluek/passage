@@ -96,6 +96,8 @@ func historyLine(e historyTransition) string {
 	switch e.prefix {
 	case "stalled":
 		return fmt.Sprintf("stalled: %s (%s), paused for %d min, count=%d", e.unit, e.reason, int(e.delay/time.Minute), e.count)
+	case "slow":
+		return fmt.Sprintf("slow: %s connects slowly, tunnel first for %d min, count=%d", e.unit, int(e.delay/time.Minute), e.count)
 	case "restarted":
 		return fmt.Sprintf("restarted: %s (%s)", e.unit, e.reason)
 	case "trial skipped":
@@ -103,7 +105,7 @@ func historyLine(e historyTransition) string {
 	case "unblocked":
 		return fmt.Sprintf("resumed: %s (%s)", e.unit, e.reason)
 	case "disagree":
-		line := fmt.Sprintf("disagree: %s probe=%s conn=%s via %s", e.unit, e.probe, e.outcome, e.route)
+		line := fmt.Sprintf("disagree: %s direct probe=%s conn=%s via %s", e.unit, e.probe, e.outcome, e.route)
 		if e.reason != "" {
 			line += ", " + e.reason
 		}

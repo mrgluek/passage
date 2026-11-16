@@ -128,7 +128,7 @@
     <string name="import_route_count">Сохранено маршрутов: %1$d (%2$s)</string>
     <string name="import_collision">Маршруты с совпадающими ID будут перезаписаны.</string>
     <string name="import_clear">Удалить все сохранённые маршруты.</string>
-    <string name="route_hint">Авто выбирает маршрут само; выбранный маршрут используется всегда.</string>
+    <string name="route_hint">Авто режим сам выбирает лучший маршрут; если же выбрать маршрут из списка вручную, всегда будет использоваться только он.</string>
     <string name="net_open">Сеть: открыта</string>
     <string name="net_restricted">Сеть: ограничена</string>
     <string name="net_relays_down">Сеть: проверочные хосты недоступны</string>
@@ -159,6 +159,12 @@
     <string name="update_downloading">Скачиваем версию %1$s…</string>
     <string name="update_ready">Версия %1$s готова к установке.</string>
     <string name="update_install">Установить</string>
+    <string name="update_download_size">Скачать · %1$s</string>
+    <string name="update_home_text">Скачайте её здесь. Android попросит подтвердить установку.</string>
+    <string name="update_home_downloading">Скачиваем…</string>
+    <string name="update_verifying">Проверяем файл…</string>
+    <string name="update_home_ready">Скачано и проверено. Android попросит подтвердить установку.</string>
+    <string name="update_later">Не сейчас</string>
     <string name="update_version">Версия %1$s.</string>
     <string name="update_check_failed">Не удалось проверить обновления. Попробуйте позже.</string>
     <string name="update_download_failed">Не удалось скачать обновление. Попробуйте ещё раз.</string>
@@ -247,7 +253,8 @@
     <string name="home_turn_on">Включить</string>
     <string name="home_turn_off">Выключить</string>
     <string name="home_try_again">Повторить</string>
-    <string name="home_chip_manual">Ручной маршрут</string>
+    <string name="home_manual_note">Маршрут выбран вручную, Passage будет пытаться использовать только его.</string>
+    <string name="home_manual_back">Вернуть автовыбор маршрута</string>
     <string name="home_step_link">Добавьте ссылку</string>
     <string name="home_step_link_done">Ссылка добавлена</string>
     <string name="home_step_on">Включите прокси</string>
@@ -267,7 +274,7 @@
     <string name="home_help">Что-то не так?</string>
     <string name="home_report_what">Вы можете выполнить полную проверку всех добавленных маршрутов в данной сети (займёт около 20 секунд) и переслать созданный отчёт разработчику.</string>
     <string name="home_report_link">Что входит в отчёт?</string>
-    <string name="home_report_not">Отчёт не содержит ваших сообщений, паролей и ссылки подписки. В него будут включены: установленная версия Passage, модель устройства и версия Android, тип сети (для мобильной сети: +код оператора), DNS-серверы, имена chatmail серверов, к которым были попытки подключения, и недавняя история подключений. В нём могут встречаться сетевые адреса (например, адреса DNS-серверов).</string>
+    <string name="home_report_not">Отчёт не содержит ваших сообщений, паролей и ссылки подписки. В него будут включены: установленная версия Passage, модель устройства и версия Android, когда и почему система останавливала приложение, сколько памяти занимает приложение, тип сети (для мобильной сети: +код оператора), DNS-серверы, имена chatmail серверов и адреса серверов Telegram, к которым были попытки подключения, и недавняя история подключений.</string>
     <string name="home_details">Посмотреть подробности самостоятельно</string>
     <string name="home_details_sub">Маршруты, подключения и журнал приложения</string>
     <string name="home_add_title">Добавьте ссылку</string>
@@ -336,4 +343,17 @@
     <string name="whatsapp_ports_busy">Нет свободного порта; попробуйте позже</string>
     <string name="whatsapp_no_ports">Нет свободных локальных портов. Попробуйте ещё раз.</string>
     <string name="channel_my">через мой маршрут</string>
+    <string name="bg_advance_title">Чтобы Passage не останавливали</string>
+    <string name="bg_advance_reason">Некоторые телефоны сами останавливают фоновые приложения. Если Passage остановят, мессенджеры потеряют связь, пока вы не откроете его снова.</string>
+    <string name="bg_killed_title">Система остановила Passage</string>
+    <string name="bg_killed_reason">Телефон недавно остановил Passage своей очисткой, поэтому прокси мог не работать, пока вы снова не открыли приложение. Измените настройки в телефоне, чтобы этого избежать.</string>
+    <string name="bg_open_settings">Открыть настройки</string>
+    <string name="bg_dismiss">Больше не показывать</string>
+    <string name="bg_steps_xiaomi">Для Passage выберите режим батареи «Без ограничений» (Безопасность → Батарея → Экономия заряда приложений или страница «Батарея» самого приложения), включите Автозапуск и закрепите Passage в списке недавних (потяните карточку вниз или удерживайте её и нажмите замок). Названия меню зависят от версии.</string>
+    <string name="bg_steps_huawei">Откройте Настройки → Батарея → Запуск приложений, переключите Passage на ручное управление и разрешите автозапуск, запуск другими приложениями и работу в фоне. Названия меню зависят от версии.</string>
+    <string name="bg_steps_oppo">Разрешите Passage автозапуск и работу в фоне, поставьте для него расход батареи без ограничений и закрепите его в списке недавних. Названия меню зависят от версии.</string>
+    <string name="bg_steps_vivo">Разрешите Passage автозапуск и высокое фоновое энергопотребление и закрепите его в списке недавних. Названия меню зависят от версии.</string>
+    <string name="bg_steps_samsung">Откройте Настройки → Батарея → Ограничения работы в фоне и добавьте Passage в «Никогда не спящие приложения». Названия меню зависят от версии.</string>
+    <string name="bg_steps_transsion">Разрешите Passage автозапуск и работу в фоне, поставьте для него расход батареи без ограничений и закрепите его в списке недавних. Названия меню зависят от версии.</string>
+    <string name="bg_steps_other">Поставьте для Passage расход батареи без ограничений и разрешите ему запускаться и работать в фоне. Не смахивайте его из списка недавних.</string>
 </resources>

@@ -141,6 +141,8 @@ a { color: var(--accent); cursor: pointer; text-decoration: underline; }
     <div class="titleRow"><span class="dot" id="dot"></span><span class="ctitle" id="sTitle"></span></div>
     <p class="hint" id="sReason"></p>
     <p class="hint warn hidden" id="sError"></p>
+    <p class="hint hidden" id="sManual"></p>
+    <button class="wide hidden" id="sManualBack"></button>
     <button class="primary wide hidden" id="sMain"></button>
     <button class="textbtn hidden" id="sSecond"></button>
   </section>
@@ -475,6 +477,12 @@ function renderHome(v) {
   setHidden("sReason", !(v.channels || reason));
   $("sError").textContent = v.error || "";
   setHidden("sError", !v.error);
+  const manual = !!v.mode && v.mode !== "auto";
+  setHidden("sManual", !manual);
+  setHidden("sManualBack", !manual);
+  $("sManual").textContent = t("h_manual_note");
+  $("sManualBack").textContent = t("h_manual_back");
+  $("sManualBack").onclick = () => chooseRoute("auto");
   setHidden("sMain", !main);
   if (main) { $("sMain").textContent = main[0]; $("sMain").onclick = main[1]; }
   setHidden("sSecond", !second);

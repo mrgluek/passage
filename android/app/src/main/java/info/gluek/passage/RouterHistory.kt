@@ -12,7 +12,8 @@ internal class RouterHistory {
     fun select(events: List<Pair<String, String>>): List<Pair<String, String>> =
         events.filter { (time, message) ->
             val isHistory = message.startsWith("stalled:") || message.startsWith("resumed:") ||
-                message.startsWith("unblocked:") || message.startsWith("disagree:")
+                message.startsWith("unblocked:") || message.startsWith("disagree:") || message.startsWith("slow:") ||
+                message.contains(": trial skipped,")
             val isNew = time.isNotEmpty() && isHistory && copied.add(time to message)
             if (copied.size > 1024) copied.remove(copied.first())
             isNew

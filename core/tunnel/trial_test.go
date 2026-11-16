@@ -139,7 +139,7 @@ func TestProbeBlindAfterTwoTrials(t *testing.T) {
 			if g.probeIn() != 5*time.Minute {
 				t.Fatal(g.probeIn())
 			}
-			want := "disagree: " + g.historyUnit() + " probe=ok conn=stall via direct, 2 trials failed, probes ignored for return"
+			want := "disagree: " + g.historyUnit() + " direct probe=ok conn=stall via direct, 2 trials failed, probes ignored for return"
 			count := 0
 			for _, e := range tt.log.last(100) {
 				if e.Msg == want {

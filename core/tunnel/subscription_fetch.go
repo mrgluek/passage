@@ -9,6 +9,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -75,6 +76,7 @@ func (r *SubscriptionRefresher) Refresh(ctx context.Context, cfg Config, dialers
 			etag, code string
 		}
 		succeeded := false
+		directFirst := map[string]bool{} // sources already fetched directly in the tunnel tier
 		failedTunnel := map[string]bool{}
 		successfulTunnel := map[string]bool{}
 		for _, tier := range []struct {
@@ -86,6 +88,11 @@ func (r *SubscriptionRefresher) Refresh(ctx context.Context, cfg Config, dialers
 				continue
 			}
 			pairs := subscriptionPairs(sub.Sources, tier.first, tier.end, last)
+			if tier.first == 0 && len(dialers) > 0 {
+				pairs = routeRefusedSourcesDirect(sub, pairs, len(dialers), time.Now(), directFirst)
+			} else if !diagnostic {
+				pairs = slices.DeleteFunc(pairs, func(pair subscriptionPair) bool { return directFirst[pair.source] })
+			}
 			if diagnostic {
 				pairs = nil
 				now := time.Now().Unix()
@@ -321,6 +328,11 @@ func subscriptionNetworkFailure(err error) string {
 	if errors.Is(err, context.Canceled) {
 		return "canceled"
 	}
+	// The exits refuse destinations that are not on their lists: unlike a
+	// network failure this says where the source can be reached instead.
+	if errors.Is(err, errDestinationRefused) && !errors.Is(err, errDestinationUnreachable) {
+		return "refused"
+	}
 	var timeout net.Error
 	if errors.Is(err, context.DeadlineExceeded) || errors.As(err, &timeout) && timeout.Timeout() {
 		return "timeout"
@@ -339,4 +351,23 @@ func (c *subscriptionResponseConn) Read(p []byte) (int, error) {
 		c.answered.Store(true)
 	}
 	return n, err
+}
+
+// routeRefusedSourcesDirect swaps the tunnel pairs of sources that the tunnel
+// refused recently for one direct pair each, so they are fetched at once next
+// to the tunnel ones instead of after the tunnel deadline. The sources it moves
+// are recorded in moved.
+func routeRefusedSourcesDirect(sub Subscription, pairs []subscriptionPair, direct int, now time.Time, moved map[string]bool) []subscriptionPair {
+	kept := pairs[:0:0]
+	for _, pair := range pairs {
+		if sub.tunnelRefusedRecently(pair.source, now) {
+			if !moved[pair.source] {
+				moved[pair.source] = true
+				kept = append(kept, subscriptionPair{pair.source, direct})
+			}
+			continue
+		}
+		kept = append(kept, pair)
+	}
+	return kept
 }

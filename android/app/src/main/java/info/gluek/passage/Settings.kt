@@ -204,6 +204,15 @@ class Settings(context: Context) {
         appSeen = HomeSetup.migrateAppSeen(saved, hasLink, running)
     }
 
+    var backgroundHintDismissed: Boolean
+        get() = prefs.getBoolean("background_hint_dismissed", false)
+        set(v) = prefs.edit().putBoolean("background_hint_dismissed", v).apply()
+
+    /** The time of the last cleaner stop the user has already been told about. */
+    var backgroundKillSeen: Long
+        get() = prefs.getLong("background_kill_seen", 0)
+        set(v) = prefs.edit().putLong("background_kill_seen", v).apply()
+
     /** Check for a new version once a day while the proxy runs. */
     var updateChecks: Boolean
         get() = prefs.getBoolean("update_checks", true)
@@ -216,6 +225,11 @@ class Settings(context: Context) {
     var availableVersion: String
         get() = prefs.getString("available_version", "") ?: ""
         set(v) = prefs.edit().putString("available_version", v).apply()
+
+    /** The version whose card the user closed on the main screen. */
+    var dismissedUpdate: String
+        get() = prefs.getString("dismissed_update", "") ?: ""
+        set(v) = prefs.edit().putString("dismissed_update", v).apply()
 
     /** The newest version the user was told about, to tell them once. */
     var notifiedVersion: String

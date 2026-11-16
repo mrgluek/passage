@@ -103,6 +103,8 @@ type group struct {
 
 	lastDirectConn   time.Time
 	lastDirectResult connectionResult
+	slow             slowTrack
+	dnsLogged        time.Time
 }
 
 // viaLocked is the route type behind the tunnel while the group uses it.
@@ -245,9 +247,12 @@ type tracked struct {
 }
 
 type routeStats struct {
-	Conns  int64  `json:"conns"`
-	Fails  int64  `json:"fails"`
-	Stalls int64  `json:"stalls"`
+	Conns  int64 `json:"conns"`
+	Fails  int64 `json:"fails"`
+	Stalls int64 `json:"stalls"`
+	// Quiet counts connections that got no reply to a late write for a while
+	// and were left open.
+	Quiet  int64  `json:"quiet,omitempty"`
 	State  string `json:"state,omitempty"`
 	Reason string `json:"reason,omitempty"`
 	Up     int64  `json:"up"`
@@ -284,6 +289,7 @@ func Start(cfg Config) (*Tunnel, error) {
 	if err != nil {
 		return nil, err
 	}
+	tuneMemory()
 	if err := validateForwards(cfg); err != nil {
 		return nil, err
 	}
@@ -1010,14 +1016,41 @@ func (t *Tunnel) connect(c net.Conn, addr string, socks bool, forward ...int) {
 		key = addr
 	}
 	if _, trial := raw.(*trialConn); !trial {
-		remote = watchResponses(raw, func() {
+		var kept atomic.Bool
+		var watcher *responseWatch
+		lateNote := func() string {
+			age, sent, got := time.Since(start), up.Load(), down.Load()
+			if watcher == nil {
+				return fmt.Sprintf(" after %s, to server %d B, from server %d B", age.Round(time.Second), sent, got)
+			}
+			read, write := watcher.quiet()
+			return fmt.Sprintf(" after %s, last reply %s ago, last write %s ago, to server %d B, from server %d B", age.Round(time.Second), read.Round(time.Second), write.Round(time.Second), sent, got)
+		}
+		remote = watchResponsesKeep(raw, func() {
 			poolFeedback(raw, false)
 			t.connectionFeedbackVia(g, route, key, connectionRoute(raw, route), false)
 		}, func(first bool) {
-			poolFeedback(raw, true, first)
-			t.connectionFeedbackVia(g, route, key, connectionRoute(raw, route), true, first)
+			note := ""
+			if !first {
+				note = lateNote()
+			}
+			poolFeedbackNote(raw, note, true, first)
+			t.connectionFeedbackNote(g, route, key, connectionRoute(raw, route), note, true, first)
 			c.Close()
+		}, func() bool {
+			age, got := time.Since(start), down.Load()
+			if earlyFreeze(age, got) {
+				return false
+			}
+			if kept.CompareAndSwap(false, true) {
+				t.log.add("%s: no reply, connection kept open (later)%s", connectionRoute(raw, route), lateNote())
+				t.mu.Lock()
+				t.stats[route].Quiet++
+				t.mu.Unlock()
+			}
+			return true
 		})
+		watcher, _ = remote.(*responseWatch)
 	}
 	defer remote.Close()
 	var wg sync.WaitGroup
@@ -1130,6 +1163,9 @@ func (t *Tunnel) dialWithHistory(g *group, addr string, logFailures bool) (net.C
 	if trial != nil {
 		route = trial.route
 	}
+	if trial == nil && route == RouteDirect && t.slowPreferLocked(g, usable) {
+		route = RouteTunnel
+	}
 	t.mu.Unlock()
 	tried := map[Route]bool{}
 	for r := route; ; {
@@ -1159,6 +1195,19 @@ func (t *Tunnel) dialWithHistory(g *group, addr string, logFailures bool) (net.C
 			next = trial.fallback
 			w.timeout = min(w.timeout, defaultFirstResponseTimeout)
 		}
+		var hedge way
+		hedgeRoute, hedgeDelayFor := RouteDirect, hedgeDelay
+		if trial == nil && w.dial != nil {
+			switch {
+			case r == RouteDirect && t.hedgeAllowedLocked(g, RouteTunnel, tried, usable):
+				hedge, hedgeRoute = t.ways[RouteTunnel], RouteTunnel
+			case r == RouteTunnel && t.slowPreferLocked(g, usable) && t.hedgeAllowedLocked(g, RouteDirect, tried, usable):
+				hedge, hedgeRoute, hedgeDelayFor = t.ways[RouteDirect], RouteDirect, preferDelay
+			}
+		}
+		if next == r && trial == nil && r == RouteTunnel && hedge.dial == nil && !tried[RouteDirect] && g.slow.active(t.timeNow()) && usable(RouteDirect) {
+			next = RouteDirect
+		}
 		t.mu.Unlock()
 		if w.dial == nil { // the smart route went away since the route was chosen
 			if trial != nil && r == trial.route {
@@ -1171,16 +1220,44 @@ func (t *Tunnel) dialWithHistory(g *group, addr string, logFailures bool) (net.C
 			r = next
 			continue
 		}
-		ctx, cancel := context.WithTimeout(t.ctx, w.timeout)
 		observed := false
-		if r == RouteTunnel {
-			ctx = context.WithValue(ctx, connectionObserverKey{}, func(via string) {
+		observe := func(ctx context.Context) context.Context {
+			return context.WithValue(ctx, connectionObserverKey{}, func(via string) {
 				observed = true
 				t.recordConnection(g, "refused", via)
 			})
 		}
-		c, err := w.dial(ctx, "tcp", addr)
-		cancel()
+		var c net.Conn
+		var err error
+		dialStart := time.Now()
+		if hedge.dial != nil {
+			primary := w.dial
+			if r == RouteTunnel {
+				primary = func(ctx context.Context, network, addr string) (net.Conn, error) {
+					return w.dial(observe(ctx), network, addr)
+				}
+			}
+			o := raceDial(t.ctx, primary, hedge.dial, w.timeout, hedge.timeout, hedgeDelayFor, addr)
+			t.noteRace(g, r, o)
+			if o.hedged {
+				tried[hedgeRoute] = true
+			}
+			c, err = o.conn, o.err
+			if err == nil {
+				if o.winner == 1 {
+					r = hedgeRoute
+				}
+				return c, r, nil
+			}
+			err = cmp.Or(o.primary, err)
+		} else {
+			ctx, cancel := context.WithTimeout(t.ctx, w.timeout)
+			if r == RouteTunnel {
+				ctx = observe(ctx)
+			}
+			c, err = w.dial(ctx, "tcp", addr)
+			cancel()
+		}
 		if err == nil {
 			if trial != nil && r == trial.route {
 				return t.watchTrial(c, trial), r, nil
@@ -1199,7 +1276,10 @@ func (t *Tunnel) dialWithHistory(g *group, addr string, logFailures bool) (net.C
 			trial = nil
 		}
 		if !observed && !trialFailed {
-			t.recordConnection(g, "refused", r.String())
+			t.recordFailedDial(g, r.String(), err, time.Since(dialStart))
+		}
+		if r == RouteDirect {
+			t.noteLookupFailure(g, err)
 		}
 		if next == r {
 			t.requestSubscriptionRefresh()
@@ -1218,6 +1298,78 @@ func (t *Tunnel) dialWithHistory(g *group, addr string, logFailures bool) (net.C
 			t.log.add("%s dial %s failed (%v); trying %s", r, addr, err, next)
 		}
 		r = next
+	}
+}
+
+// noteLookupFailure puts a failed name lookup of a direct connect in the
+// events, by kind, at most once in lookupLogEvery for a group. A name that
+// does not exist and a lookup that gets no answer point to different causes.
+func (t *Tunnel) noteLookupFailure(g *group, err error) {
+	kind := lookupFailureKind(err)
+	if g == nil || kind == "" {
+		return
+	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	now := t.timeNow()
+	if !g.dnsLogged.IsZero() && now.Sub(g.dnsLogged) < lookupLogEvery {
+		return
+	}
+	g.dnsLogged = now
+	t.log.addAt(now, "dns: %s lookup failed (%s)", holdUnit(g, RouteDirect), kind)
+}
+
+const lookupLogEvery = 10 * time.Minute
+
+// lookupFailureKind names a failed name lookup: "no such name", "no answer"
+// or "error"; it is empty when err is not a lookup failure.
+func lookupFailureKind(err error) string {
+	var dnsErr *net.DNSError
+	if !errors.As(err, &dnsErr) {
+		return ""
+	}
+	switch {
+	case dnsErr.IsNotFound:
+		return "no such name"
+	case dnsErr.IsTimeout:
+		return "no answer"
+	}
+	return "error"
+}
+
+// hedgeAllowedLocked: another route may be started alongside the current one
+// for the messenger groups, in the automatic mode, when it is set up, not on
+// hold and not tried yet. Caller holds t.mu.
+func (t *Tunnel) hedgeAllowedLocked(g *group, other Route, tried map[Route]bool, usable func(Route) bool) bool {
+	return t.mode == ModeAuto && !strings.HasPrefix(t.only, "route:") && g.kind != kindOther &&
+		!tried[other] && usable(other) && t.ways[other].dial != nil && !t.groupStalledLocked(g, other)
+}
+
+// slowPreferLocked: direct connects have been slow, so the tunnel goes first.
+func (t *Tunnel) slowPreferLocked(g *group, usable func(Route) bool) bool {
+	return g.slow.active(t.timeNow()) && t.mode == ModeAuto && !strings.HasPrefix(t.only, "route:") && g.kind != kindOther &&
+		usable(RouteTunnel) && t.ways[RouteTunnel].dial != nil && !t.groupStalledLocked(g, RouteTunnel)
+}
+
+// noteRace learns from a race that had direct as the primary: a hedge that
+// won, or a direct connect that took too long, is a slow connect; a connect
+// before the hedge started is a fast one.
+func (t *Tunnel) noteRace(g *group, primary Route, o raceOutcome) {
+	if primary != RouteDirect {
+		return
+	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	now := t.timeNow()
+	switch {
+	case !o.hedged && o.err == nil:
+		if g.slow.fastDial(now) {
+			t.log.addAt(now, "%s", historyLine(historyTransition{prefix: "unblocked", unit: holdUnit(g, RouteDirect), reason: "connect speed back"}))
+		}
+	case o.hedged && (o.err == nil && (o.winner == 1 || o.took > slowConnect)):
+		if d := g.slow.slow(now); d > 0 {
+			t.log.addAt(now, "%s", historyLine(historyTransition{prefix: "slow", unit: holdUnit(g, RouteDirect), delay: d, count: int64(g.slow.step)}))
+		}
 	}
 }
 
@@ -1713,7 +1865,7 @@ func (t *Tunnel) cleanMemoryAllowedLocked(g *group) bool {
 		return true
 	}
 	switch g.lastDirectResult.Outcome {
-	case "stall", "later", "refused":
+	case "stall", "later", "refused", "timeout":
 		return false
 	default:
 		return true
@@ -1998,6 +2150,7 @@ type Status struct {
 	Active        map[string]int        `json:"active"`
 	Stats         map[string]routeStats `json:"stats"`
 	Soar          string                `json:"soar"`
+	Memory        MemoryStatus          `json:"memory"`
 	// Tunnels has one row per configured tunnel route, in priority order.
 	Tunnels []RouteState `json:"tunnels"`
 	// Session is whether the soar session with the server is up; Paths is
@@ -2031,8 +2184,10 @@ type GroupStatus struct {
 	LastResult     probeResult       `json:"last_result"`
 	LastConn       *time.Time        `json:"last_conn,omitempty"`
 	LastConnResult *connectionResult `json:"last_conn_result,omitempty"`
-	Targets        []string          `json:"targets"` // what the next probe checks
-	active         bool
+	// DirectSlowUntil is set while the tunnel is preferred because direct connects are slow.
+	DirectSlowUntil *time.Time `json:"direct_slow_until,omitempty"`
+	Targets         []string   `json:"targets"` // what the next probe checks
+	active          bool
 }
 
 func (t *Tunnel) groupRouteIDLocked(g *group) string {
@@ -2093,6 +2248,7 @@ func (t *Tunnel) statusLocked(n int) Status {
 		Active:         map[string]int{},
 		Stats:          map[string]routeStats{},
 		Soar:           SoarVersion(),
+		Memory:         readMemory(),
 		Groups:         map[string]GroupStatus{},
 	}
 	for _, f := range t.forwards {
@@ -2113,19 +2269,25 @@ func (t *Tunnel) statusLocked(n int) Status {
 			stamp, result := gs.lastConn.UTC(), gs.lastConnResult
 			lastConn, lastConnResult = &stamp, &result
 		}
+		var slowUntil *time.Time
+		if gs.slow.active(t.timeNow()) {
+			stamp := gs.slow.until.UTC()
+			slowUntil = &stamp
+		}
 		s.Groups[gs.name] = GroupStatus{
-			Kind:           gs.kind.String(),
-			App:            groupApp(gs.kind.String(), gs.name),
-			Route:          gs.route.String(),
-			Via:            gs.viaLocked(),
-			RouteID:        t.groupRouteIDLocked(gs),
-			RouteSince:     gs.routeSince.UTC(),
-			State:          gs.state,
-			LastProbe:      gs.lastProbe.UTC(),
-			LastResult:     gs.lastResult,
-			LastConn:       lastConn,
-			LastConnResult: lastConnResult,
-			Targets:        append([]string{}, t.targetsLocked(gs)...),
+			DirectSlowUntil: slowUntil,
+			Kind:            gs.kind.String(),
+			App:             groupApp(gs.kind.String(), gs.name),
+			Route:           gs.route.String(),
+			Via:             gs.viaLocked(),
+			RouteID:         t.groupRouteIDLocked(gs),
+			RouteSince:      gs.routeSince.UTC(),
+			State:           gs.state,
+			LastProbe:       gs.lastProbe.UTC(),
+			LastResult:      gs.lastResult,
+			LastConn:        lastConn,
+			LastConnResult:  lastConnResult,
+			Targets:         append([]string{}, t.targetsLocked(gs)...),
 		}
 	}
 	for r := Route(0); r < numRoutes; r++ {
@@ -2172,12 +2334,14 @@ func (t *Tunnel) monitorHealth() {
 	defer t.wg.Done()
 	ticker := time.NewTicker(time.Second)
 	defer ticker.Stop()
+	released := time.Now()
 	for {
 		select {
 		case <-t.ctx.Done():
 			return
 		case <-ticker.C:
 			t.settleHealth()
+			t.releaseMemoryIfIdle(&released)
 		}
 	}
 }
@@ -2289,6 +2453,12 @@ func (t *Tunnel) connectionFeedback(g *group, r Route, key string, stalled bool,
 }
 
 func (t *Tunnel) connectionFeedbackVia(g *group, r Route, key, via string, stalled bool, first ...bool) {
+	t.connectionFeedbackNote(g, r, key, via, "", stalled, first...)
+}
+
+// connectionFeedbackNote is connectionFeedbackVia with a note about the
+// connection (age, bytes) for the event line of a late stall.
+func (t *Tunnel) connectionFeedbackNote(g *group, r Route, key, via, note string, stalled bool, first ...bool) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	defer t.rememberGroupHoldLocked(g)
@@ -2339,7 +2509,9 @@ func (t *Tunnel) connectionFeedbackVia(g *group, r Route, key, via string, stall
 	t.stats[r].Fails++
 	t.stats[r].Stalls++
 	isFirst := len(first) == 0 || first[0]
+	h.note = note
 	corroborated := h.onStall(t.timeNow(), t.log, holdUnit(g, r), isFirst, key, r == RouteTunnel && strings.HasPrefix(t.only, "route:"))
+	h.note = ""
 	if !isFirst {
 		return
 	}

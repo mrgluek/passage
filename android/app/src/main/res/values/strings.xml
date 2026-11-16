@@ -128,7 +128,7 @@
     <string name="import_route_count">Saved routes: %1$d (%2$s)</string>
     <string name="import_collision">Routes with the same ID will be overwritten.</string>
     <string name="import_clear">Remove all saved routes.</string>
-    <string name="route_hint">Auto picks the route by itself; a fixed route always uses that one.</string>
+    <string name="route_hint">Auto mode picks the best route by itself; if you choose a route from the list manually, only that route is always used.</string>
     <string name="net_open">Network: open</string>
     <string name="net_restricted">Network: restricted</string>
     <string name="net_relays_down">Network: probe hosts down</string>
@@ -159,6 +159,12 @@
     <string name="update_downloading">Downloading version %1$s…</string>
     <string name="update_ready">Version %1$s is ready to install.</string>
     <string name="update_install">Install</string>
+    <string name="update_download_size">Download · %1$s</string>
+    <string name="update_home_text">Download it here. Android will ask you to confirm the install.</string>
+    <string name="update_home_downloading">Downloading…</string>
+    <string name="update_verifying">Checking the file…</string>
+    <string name="update_home_ready">Downloaded and checked. Android will ask you to confirm the install.</string>
+    <string name="update_later">Not now</string>
     <string name="update_version">Version %1$s.</string>
     <string name="update_check_failed">Could not check for updates. Try again later.</string>
     <string name="update_download_failed">Could not download the update. Try again.</string>
@@ -240,7 +246,8 @@
     <string name="home_turn_on">Turn on</string>
     <string name="home_turn_off">Turn off</string>
     <string name="home_try_again">Try again</string>
-    <string name="home_chip_manual">Manual route</string>
+    <string name="home_manual_note">The route was chosen manually. Passage will try to use only that route.</string>
+    <string name="home_manual_back">Return to automatic route choice</string>
     <string name="home_step_link">Add your link</string>
     <string name="home_step_link_done">Link added</string>
     <string name="home_step_on">Turn on the proxy</string>
@@ -260,7 +267,7 @@
     <string name="home_help">Something wrong?</string>
     <string name="home_report_what">You can run a full check of all added routes on this network (about 20 seconds) and forward the generated report to the developer.</string>
     <string name="home_report_link">What\'s in the report?</string>
-    <string name="home_report_not">The report contains no messages, passwords or your subscription link. It will include: the installed Passage version, the device model and Android version, the network type (for a mobile network: + operator code), DNS servers, the names of the chatmail servers that connections were attempted to, and the recent connection history. Network addresses (for example, of DNS servers) may appear in it.</string>
+    <string name="home_report_not">The report contains no messages, passwords or your subscription link. It will include: the installed Passage version, the device model and Android version, when and why the system stopped the app, how much memory the app uses, the network type (for a mobile network: + operator code), DNS servers, the names of the chatmail servers and the addresses of the Telegram servers that connections were attempted to, and the recent connection history.</string>
     <string name="home_details">See the details yourself</string>
     <string name="home_details_sub">Routes, connections and the app log</string>
     <string name="home_add_title">Add your link</string>
@@ -329,4 +336,17 @@
     <string name="whatsapp_ports_busy">No free port; try again later</string>
     <string name="whatsapp_no_ports">No local ports available. Try again.</string>
     <string name="channel_my">via my route</string>
+    <string name="bg_advance_title">Keep Passage from being stopped</string>
+    <string name="bg_advance_reason">Some phones stop background apps on their own. If Passage is stopped, your messaging apps lose their connection until you open it again.</string>
+    <string name="bg_killed_title">The system stopped Passage</string>
+    <string name="bg_killed_reason">Your phone recently stopped Passage with its own cleaner, so the proxy may not have worked until you opened the app again. Change the settings on your phone to avoid this.</string>
+    <string name="bg_open_settings">Open settings</string>
+    <string name="bg_dismiss">Don\'t show again</string>
+    <string name="bg_steps_xiaomi">Set the battery mode of Passage to \"No restrictions\" (Security → Battery → App battery saver, or the app\'s own Battery page), turn on Autostart for Passage, and lock Passage in the recent apps list (drag its card down, or long-press it and tap the padlock). Menu names vary by version.</string>
+    <string name="bg_steps_huawei">Open Settings → Battery → App launch, switch Passage to manual and allow auto-launch, secondary launch and running in the background. Menu names vary by version.</string>
+    <string name="bg_steps_oppo">Allow Autostart and background activity for Passage, set its battery usage to unrestricted, and lock Passage in the recent apps list. Menu names vary by version.</string>
+    <string name="bg_steps_vivo">Allow Autostart and high background power use for Passage, and lock it in the recent apps list. Menu names vary by version.</string>
+    <string name="bg_steps_samsung">Open Settings → Battery → Background usage limits, and add Passage to \"Never sleeping apps\". Menu names vary by version.</string>
+    <string name="bg_steps_transsion">Allow Autostart and background activity for Passage, set its battery use to unrestricted, and lock it in the recent apps list. Menu names vary by version.</string>
+    <string name="bg_steps_other">Set the battery use of Passage to unrestricted and allow it to start and run in the background. Do not swipe it out of the recent apps list.</string>
 </resources>

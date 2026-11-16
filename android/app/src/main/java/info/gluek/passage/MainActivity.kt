@@ -38,12 +38,19 @@ class MainActivity : ThemedActivity() {
     private lateinit var statusRing: View
     private lateinit var primary: Button
     private lateinit var secondary: Button
-    private lateinit var manual: TextView
+    private lateinit var manualBox: LinearLayout
     private lateinit var setup: LinearLayout
     private lateinit var batteryCard: LinearLayout
+    private lateinit var backgroundCard: LinearLayout
+    private lateinit var backgroundTitle: TextView
+    private lateinit var backgroundText: TextView
+    private var vendor = BackgroundHint.vendor(Build.MANUFACTURER, Build.BRAND)
+    private var cleanerKill = 0L
+    private var forcedKill = false
+    private var backgroundShown = BackgroundHint.Card.NONE
     private lateinit var routesNotice: TextView
     private lateinit var routesNoticeBox: LinearLayout
-    private lateinit var updateNotice: Button
+    private lateinit var updates: UpdateSection
     private var resumed = false
     private var dotAnimator: ObjectAnimator? = null
     private var previousTraffic: HomeSetup.TrafficCounters? = null
@@ -73,6 +80,8 @@ class MainActivity : ThemedActivity() {
         Diagnostics.event("main screen created: recreation=${savedInstanceState != null}")
         settings = Settings(this)
         settings.migrateAppSeen()
+        applyDebugOverrides(intent)
+        if (savedInstanceState == null) showUpdate(intent)
         setContentView(buildUi())
         title = "${getString(R.string.app_name)} ${appVersion()}"
         // The proxy was on and is not now: an app update or the system
@@ -87,14 +96,50 @@ class MainActivity : ThemedActivity() {
         super.onSaveInstanceState(outState)
     }
 
+    /**
+     * Only in a debuggable build (never in a release APK): force the maker and a
+     * system stop to see the background hint on any phone, for example
+     * `am start -n info.gluek.passage/.MainActivity --es debug_vendor xiaomi --ez debug_kill true`.
+     */
+    private fun applyDebugOverrides(intent: Intent?) {
+        if (applicationInfo.flags and android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE == 0) return
+        intent?.getStringExtra("debug_vendor")?.let { vendor = BackgroundHint.vendor(it, it) }
+        if (intent?.hasExtra("debug_kill") == true) forcedKill = intent.getBooleanExtra("debug_kill", false)
+        if (intent?.getBooleanExtra("debug_reset_hint", false) == true) {
+            settings.backgroundHintDismissed = false
+            settings.backgroundKillSeen = 0
+        }
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        applyDebugOverrides(intent)
+        showUpdate(intent)
+        if (resumed) {
+            cleanerKill = if (forcedKill) System.currentTimeMillis() else BackgroundHint.lastCleanerKill(this)
+            updates.resume()
+        }
+        refresh()
+    }
+
+    /** The update notification brings back a card the user put aside. */
+    private fun showUpdate(intent: Intent?) {
+        if (intent?.action == Updater.ACTION_SHOW) settings.dismissedUpdate = ""
+        UpdateDebug.apply(this, intent)
+    }
+
     override fun onResume() {
         super.onResume()
         resumed = true
+        cleanerKill = if (forcedKill) System.currentTimeMillis() else BackgroundHint.lastCleanerKill(this)
+        updates.resume()
         main.post(poll)
     }
 
     override fun onPause() {
         resumed = false
+        updates.pause()
         cancelDotAnimation()
         main.removeCallbacks(poll)
         super.onPause()
@@ -160,12 +205,15 @@ class MainActivity : ThemedActivity() {
         }
         status.addView(reasonView)
         status.setOnClickListener { details() }
-        manual = Ui.chip(this, getString(R.string.home_chip_manual)) { details() }
-        status.addView(manual)
-        updateNotice = Ui.textButton(this, "") {
-            startActivity(Intent(this, SettingsActivity::class.java).setAction(Updater.ACTION_SHOW))
+        manualBox = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            visibility = View.GONE
+            addView(Ui.hint(this@MainActivity, getString(R.string.home_manual_note)).apply {
+                setPadding(0, 0, 0, Ui.dp(this@MainActivity, 10))
+            })
+            addView(Ui.chip(this@MainActivity, getString(R.string.home_manual_back)) { backToAuto() })
         }
-        status.addView(updateNotice)
+        status.addView(manualBox)
         primary = Ui.primaryButton(this, "") { if (!settings.hasLink) addLink() else onStartClicked() }
         secondary = Ui.textButton(this, "") { onStartStop() }.apply {
             minHeight = Ui.dp(this@MainActivity, 40)
@@ -175,6 +223,8 @@ class MainActivity : ThemedActivity() {
         status.addView(primary)
         status.addView(secondary)
         col.addView(status)
+        updates = UpdateSection(this, home = true)
+        col.addView(updates.view)
         setup = Ui.card(this)
         col.addView(setup)
         batteryCard = Ui.card(this).apply { visibility = View.GONE }
@@ -184,6 +234,18 @@ class MainActivity : ThemedActivity() {
         })
         batteryCard.addView(Ui.outlinedButton(this, getString(R.string.home_battery_allow)) { Ui.askBatteryExemption(this) })
         col.addView(batteryCard)
+        backgroundCard = Ui.card(this).apply { visibility = View.GONE }
+        backgroundTitle = Ui.heading(this, "").apply { setPadding(0, 0, 0, 0) }
+        backgroundCard.addView(backgroundTitle)
+        backgroundText = Ui.hint(this, "").apply { setPadding(0, Ui.dp(this@MainActivity, 8), 0, Ui.dp(this@MainActivity, 12)) }
+        backgroundCard.addView(backgroundText)
+        backgroundCard.addView(Ui.outlinedButton(this, getString(R.string.bg_open_settings)) { BackgroundHint.openSettings(this, vendor) })
+        backgroundCard.addView(Ui.textButton(this, getString(R.string.bg_dismiss)) {
+            settings.backgroundHintDismissed = true
+            settings.backgroundKillSeen = maxOf(settings.backgroundKillSeen, cleanerKill)
+            refresh()
+        }.apply { gravity = Gravity.CENTER })
+        col.addView(backgroundCard)
         col.addView(Ui.card(this).apply {
             addView(Ui.heading(this@MainActivity, getString(R.string.home_help)).apply { setPadding(0, 0, 0, Ui.dp(this@MainActivity, 12)) })
             addView(Ui.hint(this@MainActivity, getString(R.string.home_report_what)).apply {
@@ -456,12 +518,22 @@ class MainActivity : ThemedActivity() {
             .showStyled()
     }
 
+    /** Leaves a manually chosen route: the same change the route selector makes. */
+    private fun backToAuto() {
+        settings.mode = "auto"
+        if (PassageService.active) worker.execute {
+            try {
+                Native.setMode("auto".toByteArray(Charsets.UTF_8))
+            } catch (_: Throwable) {
+            }
+        }
+        refresh()
+    }
+
     private fun refresh() {
         if (isFinishing || isDestroyed) return
         showNetworkTest()
-        val newer = Updater.pending(this)
-        updateNotice.visibility = if (newer == null) View.GONE else View.VISIBLE
-        if (newer != null) updateNotice.text = getString(R.string.update_available, newer)
+        updates.render()
         val active = PassageService.active
         val hasLink = settings.hasLink
         val error = PassageService.lastError != null
@@ -471,13 +543,24 @@ class MainActivity : ThemedActivity() {
         primary.setText(if (!hasLink) R.string.home_add_link else if (error) R.string.home_try_again else R.string.home_turn_on)
         secondary.visibility = if (active || !hasLink) View.VISIBLE else View.GONE
         secondary.setText(if (active) R.string.home_turn_off else R.string.home_turn_on)
-        manual.visibility = if (settings.mode == "auto") View.GONE else View.VISIBLE
+        manualBox.visibility = if (settings.mode == "auto") View.GONE else View.VISIBLE
         val notice = Subscriptions.decodeNotice(settings.routesNotice)
         routesNoticeBox.visibility = if (notice == null) View.GONE else View.VISIBLE
         if (notice != null) routesNotice.text = notice.clock()?.let {
             getString(R.string.sub_routes_timed, notice.added, notice.removed, it)
         } ?: getString(R.string.sub_routes_updated, notice.added, notice.removed)
         batteryCard.visibility = if (hasLink && active && !Ui.batteryExempt(this)) View.VISIBLE else View.GONE
+        val hint = BackgroundHint.card(hasLink, active, vendor, settings.backgroundHintDismissed, cleanerKill, settings.backgroundKillSeen)
+        backgroundCard.visibility = if (hint == BackgroundHint.Card.NONE) View.GONE else View.VISIBLE
+        if (hint != BackgroundHint.Card.NONE) {
+            backgroundTitle.setText(if (hint == BackgroundHint.Card.KILLED) R.string.bg_killed_title else R.string.bg_advance_title)
+            backgroundText.text = getString(if (hint == BackgroundHint.Card.KILLED) R.string.bg_killed_reason else R.string.bg_advance_reason) +
+                "\n\n" + getString(vendor.steps)
+        }
+        if (hint != backgroundShown) {
+            backgroundShown = hint
+            if (hint != BackgroundHint.Card.NONE) Diagnostics.event("background hint shown: ${hint.name.lowercase()} vendor=${vendor.name.lowercase()}")
+        }
         renderSetup()
         if (!active) {
             whatsappStarted = 0L

@@ -38,6 +38,20 @@ class RouterHistoryTest {
     }
 
     @Test
+    fun copiesSkippedTrialLines() {
+        val history = RouterHistory()
+        val skipped = "2026-01-01T00:00:04Z" to "relay-1 direct: trial skipped, no new connection"
+        assertEquals(listOf(skipped), history.select(listOf(skipped, skipped)))
+    }
+
+    @Test
+    fun copiesSlowConnectLines() {
+        val history = RouterHistory()
+        val slow = "2026-01-01T00:00:03Z" to "slow: relay-1 direct connects slowly, tunnel first for 3 min, count=1"
+        assertEquals(listOf(slow), history.select(listOf(slow, slow)))
+    }
+
+    @Test
     fun copiesDistinctSimultaneousAndBackdatedEvents() {
         val history = RouterHistory()
         val first = "2026-01-01T00:00:02Z" to "stalled: relay-1 direct (first reply), paused for 2 min, count=2"
