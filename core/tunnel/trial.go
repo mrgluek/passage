@@ -34,7 +34,7 @@ func (c *trialConn) Close() error {
 
 func (t *Tunnel) watchTrial(c net.Conn, trial *groupTrial) *trialConn {
 	tc := &trialConn{tunnel: t, trial: trial}
-	tc.Conn = watchResponses(c, func() { tc.finish(false) }, func(first bool) {
+	tc.Conn = watchResponsesKeep(c, func() { tc.finish(false) }, func(first bool) {
 		if first {
 			tc.finish(true)
 		} else {
@@ -43,7 +43,7 @@ func (t *Tunnel) watchTrial(c net.Conn, trial *groupTrial) *trialConn {
 		if tc.local != nil {
 			tc.local.Close()
 		}
-	})
+	}, func() bool { return true }) // a quiet period after earlier replies does not end a trial connection
 	return tc
 }
 

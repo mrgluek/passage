@@ -247,9 +247,12 @@ type tracked struct {
 }
 
 type routeStats struct {
-	Conns  int64  `json:"conns"`
-	Fails  int64  `json:"fails"`
-	Stalls int64  `json:"stalls"`
+	Conns  int64 `json:"conns"`
+	Fails  int64 `json:"fails"`
+	Stalls int64 `json:"stalls"`
+	// Quiet counts connections that got no reply to a late write for a while
+	// and were left open.
+	Quiet  int64  `json:"quiet,omitempty"`
 	State  string `json:"state,omitempty"`
 	Reason string `json:"reason,omitempty"`
 	Up     int64  `json:"up"`
@@ -1012,7 +1015,8 @@ func (t *Tunnel) connect(c net.Conn, addr string, socks bool, forward ...int) {
 		key = addr
 	}
 	if _, trial := raw.(*trialConn); !trial {
-		remote = watchResponses(raw, func() {
+		var kept atomic.Bool
+		remote = watchResponsesKeep(raw, func() {
 			poolFeedback(raw, false)
 			t.connectionFeedbackVia(g, route, key, connectionRoute(raw, route), false)
 		}, func(first bool) {
@@ -1023,6 +1027,18 @@ func (t *Tunnel) connect(c net.Conn, addr string, socks bool, forward ...int) {
 			poolFeedbackNote(raw, note, true, first)
 			t.connectionFeedbackNote(g, route, key, connectionRoute(raw, route), note, true, first)
 			c.Close()
+		}, func() bool {
+			age, sent, got := time.Since(start), up.Load(), down.Load()
+			if earlyFreeze(age, got) {
+				return false
+			}
+			if kept.CompareAndSwap(false, true) {
+				t.log.add("%s: no reply, connection kept open (later) after %s, to server %d B, from server %d B", connectionRoute(raw, route), age.Round(time.Second), sent, got)
+				t.mu.Lock()
+				t.stats[route].Quiet++
+				t.mu.Unlock()
+			}
+			return true
 		})
 	}
 	defer remote.Close()

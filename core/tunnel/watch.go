@@ -11,6 +11,18 @@ const (
 	defaultResponseStallTimeout = 20 * time.Second
 )
 
+// A quiet period after a late write closes the connection only while it looks
+// like the early freeze the rule was made for: a young connection that has
+// received little. Anything older or bigger stays open.
+const (
+	earlyFreezeAge   = time.Minute
+	earlyFreezeBytes = 32 << 10
+)
+
+func earlyFreeze(age time.Duration, received int64) bool {
+	return age <= earlyFreezeAge && received <= earlyFreezeBytes
+}
+
 // Variables allow short deadlines in tests.
 var firstResponseTimeout = defaultFirstResponseTimeout
 var responseStallTimeout = defaultResponseStallTimeout
@@ -26,10 +38,20 @@ type responseWatch struct {
 	firstLimit, laterLimit time.Duration
 	success                func()
 	stalled                func(bool)
+	// keepLate, when set, is asked at a later-reply expiry whether the
+	// connection should stay open: true keeps it and waits for the next write.
+	keepLate func() bool
 }
 
 func watchResponses(c net.Conn, success func(), stalled func(bool)) net.Conn {
-	return &responseWatch{Conn: c, first: true, firstLimit: firstResponseTimeout, laterLimit: responseStallTimeout, success: success, stalled: stalled}
+	return watchResponsesKeep(c, success, stalled, nil)
+}
+
+// watchResponsesKeep is watchResponses where a quiet period after earlier
+// replies may leave the connection open: many protocols send acknowledgements
+// that get no answer, so silence after a write is not proof of a dead path.
+func watchResponsesKeep(c net.Conn, success func(), stalled func(bool), keepLate func() bool) net.Conn {
+	return &responseWatch{Conn: c, first: true, firstLimit: firstResponseTimeout, laterLimit: responseStallTimeout, success: success, stalled: stalled, keepLate: keepLate}
 }
 func (c *responseWatch) stopTimerLocked() {
 	c.generation++
@@ -53,6 +75,20 @@ func (c *responseWatch) armLocked() {
 		if !c.pending || c.closed || c.writing > 0 || c.generation != generation {
 			c.mu.Unlock()
 			return
+		}
+		if !c.first && c.keepLate != nil {
+			c.mu.Unlock()
+			keep := c.keepLate()
+			c.mu.Lock()
+			if !c.pending || c.closed || c.writing > 0 || c.generation != generation {
+				c.mu.Unlock()
+				return
+			}
+			if keep {
+				c.pending = false // wait for the next write
+				c.mu.Unlock()
+				return
+			}
 		}
 		c.closed = true
 		first := c.first
