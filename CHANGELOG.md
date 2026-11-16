@@ -1,5 +1,29 @@
 # Changelog
 
+## 0.9.2
+
+- Slow connections to chat servers no longer make messages wait: when a
+  direct connection takes long to open, Passage tries another way at the same
+  time and keeps whichever connects first. After a few slow ones in a row it
+  prefers the other way for a while.
+- A messenger connection that is only waiting, for example after an
+  acknowledgement that gets no answer, is no longer closed after 20 seconds.
+  This means fewer reconnects in WhatsApp and Telegram.
+- Android: phones of makers that stop background apps show a setup hint in
+  advance, and a stronger one when the system has stopped Passage.
+- Android: a new version is offered on the home screen, with the download
+  progress and the install button there.
+- Android, Windows and macOS: when a route is chosen by hand, the home screen
+  says so and has a button to return to automatic choice. The route hint in
+  settings is clearer.
+- Passage uses less memory when idle and hands unused memory back to the
+  system.
+- Subscription updates are more reliable: a source that a route does not
+  allow is fetched directly.
+- Reports show the app's memory use and how the system stopped the app, tell
+  a timed-out connection from a refused one, and include more detail about
+  connections that were closed. The "What's in the report?" text lists it.
+
 ## 0.9.1
 
 - Servers that send only their own certificate, such as the one Molly uses,
