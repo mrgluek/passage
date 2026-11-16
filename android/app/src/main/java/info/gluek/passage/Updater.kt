@@ -13,11 +13,12 @@ import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
 import java.util.Random
+import kotlin.concurrent.thread
 import java.security.MessageDigest
 
 /** Checks for, downloads and installs new versions; the work is in the core. */
 object Updater {
-    /** Opens the settings screen at the Updates part. */
+    /** Opens the main screen with the update card, even if the user put it aside. */
     const val ACTION_SHOW = "info.gluek.passage.SHOW_UPDATES"
     private const val CHANNEL = "updates"
     private const val NOTIFICATION_ID = 2
@@ -31,6 +32,8 @@ object Updater {
     @Volatile var checking = false
     @Volatile var checked = false
     @Volatile var downloading = false
+    /** The downloaded file is being checked against the signed hash. */
+    @Volatile var verifying = false
     @Volatile var ready: File? = null
     @Volatile var error: String? = null
     @Volatile var detail: String? = null
@@ -51,6 +54,81 @@ object Updater {
         Settings(context).availableVersion.takeIf { keyed && newer(it, version(context)) }
 
     private val keyed by lazy { enabled() }
+
+    fun snapshot(context: Context) = UpdateFlow.Snapshot(
+        checking = checking,
+        downloading = downloading,
+        verifying = verifying,
+        ready = ready != null,
+        failed = error != null,
+        checked = checked,
+        available = offer?.version ?: pending(context),
+    )
+
+    /** Stops a running download; it then ends without an error. */
+    fun cancel() {
+        Native.updateCancel()
+        UpdateDebug.cancel()
+    }
+
+    /** Looks for a newer version off the main thread; [done] runs on that thread. */
+    fun startCheck(context: Context, done: () -> Unit) {
+        if (checking || downloading) return
+        val app = context.applicationContext
+        begin()
+        checking = true
+        thread(name = "passage-update-check") {
+            val outcome = runCatching { check(app) }
+            checking = false
+            checked = true
+            outcome.exceptionOrNull()?.let { fail(app.getString(R.string.update_check_failed), it) }
+            done()
+        }
+    }
+
+    /**
+     * Downloads and verifies the offered file off the main thread. After an app
+     * restart only the version is known, so the release is looked up first.
+     */
+    fun startDownload(context: Context, done: () -> Unit) {
+        if (checking || downloading) return
+        val app = context.applicationContext
+        begin()
+        downloading = true
+        thread(name = "passage-update-download") {
+            val outcome = runCatching {
+                (offer ?: check(app).also { checked = true })?.let { if (UpdateDebug.active) UpdateDebug.download(app, it) else download(app, it) }
+            }
+            downloading = false
+            ready = outcome.getOrNull()
+            outcome.exceptionOrNull()?.takeIf { "canceled" !in (it.message ?: "") }?.let {
+                fail(app.getString(R.string.update_download_failed), it)
+            }
+            done()
+        }
+    }
+
+    /** Bytes done and total of the running download; total is 0 while unknown. */
+    fun progress(): Pair<Long, Long> {
+        UpdateDebug.progress?.let { return it }
+        return try {
+            val p = Native.json(Native.updateProgress())
+            p.optLong("done") to p.optLong("total")
+        } catch (_: Throwable) {
+            0L to 0L
+        }
+    }
+
+    /** Hands the verified file to Android; a failure shows as an error. */
+    fun installReady(context: Context) {
+        val apk = ready ?: return
+        begin()
+        try {
+            install(context, apk)
+        } catch (e: Exception) {
+            fail(context.getString(R.string.update_install_failed), e)
+        }
+    }
 
     /** Compares dotted numbers; anything after them, like -beta1, is ignored. */
     private fun newer(a: String, b: String): Boolean {
@@ -110,12 +188,21 @@ object Updater {
         val dir = directory(context).apply { mkdirs() }
         val dest = File(dir, offer.name)
         dir.listFiles()?.filter { !it.name.startsWith(offer.name) }?.forEach { it.delete() }
-        if (verified(dest, offer)) return dest
+        if (whileVerifying { verified(dest, offer) }) return dest
         dest.delete()
         val out = Native.json(Native.updateDownload(dest.path.toByteArray(Charsets.UTF_8)))
         out.optString("error").takeIf { it.isNotEmpty() }?.let { throw IllegalStateException(it) }
-        check(verified(dest, offer)) { "Invalid update file" }
+        check(whileVerifying { verified(dest, offer) }) { "Invalid update file" }
         return dest
+    }
+
+    internal fun <T> whileVerifying(block: () -> T): T {
+        verifying = true
+        try {
+            return block()
+        } finally {
+            verifying = false
+        }
     }
 
     internal fun verified(file: File, offer: Offer): Boolean {
@@ -200,7 +287,7 @@ object Updater {
             Notification.Builder(context)
         }
         val open = PendingIntent.getActivity(
-            context, 2, Intent(context, SettingsActivity::class.java).setAction(ACTION_SHOW),
+            context, 2, Intent(context, MainActivity::class.java).setAction(ACTION_SHOW),
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
         )
         nm.notify(NOTIFICATION_ID, b.setSmallIcon(R.drawable.ic_notification)

@@ -133,7 +133,6 @@ class SettingsActivity : ThemedActivity() {
         super.onNewIntent(intent)
         setIntent(intent)
         takeLink(intent)
-        if (intent.action == Updater.ACTION_SHOW) showUpdates()
     }
 
     override fun onResume() {
@@ -366,13 +365,12 @@ class SettingsActivity : ThemedActivity() {
             }
         })
 
-        updates = UpdateSection(this)
+        updates = UpdateSection(this, home = false)
         updates.view.visibility = View.GONE
         val updatesCard = Ui.card(this).apply {
             visibility = View.GONE
             addView(updates.view)
         }
-        (updates.view.getChildAt(0) as TextView).setPadding(0, 0, 0, Ui.dp(this, 8))
         col.addView(updatesCard)
 
         val backgroundCard = Ui.card(this)
@@ -427,18 +425,12 @@ class SettingsActivity : ThemedActivity() {
                     updates.view.visibility = View.VISIBLE
                     updatesCard.visibility = View.VISIBLE
                     updates.resume()
-                    if (intent?.action == Updater.ACTION_SHOW) showUpdates()
                 }
             }
         }
 
         scrollView = Ui.scroll(this, col).apply { id = R.id.settings_scroll }
         return scrollView
-    }
-
-    private fun showUpdates() {
-        if (intent?.action == Updater.ACTION_SHOW) intent.action = null
-        scrollView.post { scrollView.smoothScrollTo(0, (updates.view.parent as View).top) }
     }
 
     private fun onSave() {

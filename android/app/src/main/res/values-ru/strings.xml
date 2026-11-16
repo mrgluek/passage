@@ -159,6 +159,12 @@
     <string name="update_downloading">Скачиваем версию %1$s…</string>
     <string name="update_ready">Версия %1$s готова к установке.</string>
     <string name="update_install">Установить</string>
+    <string name="update_download_size">Скачать · %1$s</string>
+    <string name="update_home_text">Скачайте её здесь. Android попросит подтвердить установку.</string>
+    <string name="update_home_downloading">Скачиваем…</string>
+    <string name="update_verifying">Проверяем файл…</string>
+    <string name="update_home_ready">Скачано и проверено. Android попросит подтвердить установку.</string>
+    <string name="update_later">Не сейчас</string>
     <string name="update_version">Версия %1$s.</string>
     <string name="update_check_failed">Не удалось проверить обновления. Попробуйте позже.</string>
     <string name="update_download_failed">Не удалось скачать обновление. Попробуйте ещё раз.</string>

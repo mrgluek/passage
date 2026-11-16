@@ -50,7 +50,7 @@ class MainActivity : ThemedActivity() {
     private var backgroundShown = BackgroundHint.Card.NONE
     private lateinit var routesNotice: TextView
     private lateinit var routesNoticeBox: LinearLayout
-    private lateinit var updateNotice: Button
+    private lateinit var updates: UpdateSection
     private var resumed = false
     private var dotAnimator: ObjectAnimator? = null
     private var previousTraffic: HomeSetup.TrafficCounters? = null
@@ -81,6 +81,7 @@ class MainActivity : ThemedActivity() {
         settings = Settings(this)
         settings.migrateAppSeen()
         applyDebugOverrides(intent)
+        if (savedInstanceState == null) showUpdate(intent)
         setContentView(buildUi())
         title = "${getString(R.string.app_name)} ${appVersion()}"
         // The proxy was on and is not now: an app update or the system
@@ -114,19 +115,31 @@ class MainActivity : ThemedActivity() {
         super.onNewIntent(intent)
         setIntent(intent)
         applyDebugOverrides(intent)
-        if (resumed) cleanerKill = if (forcedKill) System.currentTimeMillis() else BackgroundHint.lastCleanerKill(this)
+        showUpdate(intent)
+        if (resumed) {
+            cleanerKill = if (forcedKill) System.currentTimeMillis() else BackgroundHint.lastCleanerKill(this)
+            updates.resume()
+        }
         refresh()
+    }
+
+    /** The update notification brings back a card the user put aside. */
+    private fun showUpdate(intent: Intent?) {
+        if (intent?.action == Updater.ACTION_SHOW) settings.dismissedUpdate = ""
+        UpdateDebug.apply(this, intent)
     }
 
     override fun onResume() {
         super.onResume()
         resumed = true
         cleanerKill = if (forcedKill) System.currentTimeMillis() else BackgroundHint.lastCleanerKill(this)
+        updates.resume()
         main.post(poll)
     }
 
     override fun onPause() {
         resumed = false
+        updates.pause()
         cancelDotAnimation()
         main.removeCallbacks(poll)
         super.onPause()
@@ -194,10 +207,6 @@ class MainActivity : ThemedActivity() {
         status.setOnClickListener { details() }
         manual = Ui.chip(this, getString(R.string.home_chip_manual)) { details() }
         status.addView(manual)
-        updateNotice = Ui.textButton(this, "") {
-            startActivity(Intent(this, SettingsActivity::class.java).setAction(Updater.ACTION_SHOW))
-        }
-        status.addView(updateNotice)
         primary = Ui.primaryButton(this, "") { if (!settings.hasLink) addLink() else onStartClicked() }
         secondary = Ui.textButton(this, "") { onStartStop() }.apply {
             minHeight = Ui.dp(this@MainActivity, 40)
@@ -207,6 +216,8 @@ class MainActivity : ThemedActivity() {
         status.addView(primary)
         status.addView(secondary)
         col.addView(status)
+        updates = UpdateSection(this, home = true)
+        col.addView(updates.view)
         setup = Ui.card(this)
         col.addView(setup)
         batteryCard = Ui.card(this).apply { visibility = View.GONE }
@@ -503,9 +514,7 @@ class MainActivity : ThemedActivity() {
     private fun refresh() {
         if (isFinishing || isDestroyed) return
         showNetworkTest()
-        val newer = Updater.pending(this)
-        updateNotice.visibility = if (newer == null) View.GONE else View.VISIBLE
-        if (newer != null) updateNotice.text = getString(R.string.update_available, newer)
+        updates.render()
         val active = PassageService.active
         val hasLink = settings.hasLink
         val error = PassageService.lastError != null

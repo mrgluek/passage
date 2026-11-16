@@ -226,6 +226,11 @@ class Settings(context: Context) {
         get() = prefs.getString("available_version", "") ?: ""
         set(v) = prefs.edit().putString("available_version", v).apply()
 
+    /** The version whose card the user closed on the main screen. */
+    var dismissedUpdate: String
+        get() = prefs.getString("dismissed_update", "") ?: ""
+        set(v) = prefs.edit().putString("dismissed_update", v).apply()
+
     /** The newest version the user was told about, to tell them once. */
     var notifiedVersion: String
         get() = prefs.getString("notified_version", "") ?: ""
