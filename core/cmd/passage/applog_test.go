@@ -112,3 +112,16 @@ func TestCopyStallsBoundsKeys(t *testing.T) {
 		t.Fatalf("oldest key was not evicted: %v", err)
 	}
 }
+
+func TestCopySkippedTrialAndSlowLines(t *testing.T) {
+	l := openLog(filepath.Join(t.TempDir(), "passage.log"), "test")
+	stamp := time.Date(2026, 1, 1, 0, 0, 5, 0, time.UTC)
+	skipped := tunnel.Event{Time: stamp, Msg: "relay-1 direct: trial skipped, no new connection"}
+	slow := tunnel.Event{Time: stamp.Add(time.Second), Msg: "slow: relay-1 direct connects slowly, tunnel first for 3 min, count=1"}
+	other := tunnel.Event{Time: stamp.Add(2 * time.Second), Msg: "relay-1 direct: connection closed, no reply (later)"}
+	l.copyStalls([]tunnel.Event{skipped, slow, other, skipped})
+	lines := openLog(l.path, "test").last(logKeep)
+	if len(lines) != 2 || !strings.HasSuffix(lines[0], skipped.Msg) || !strings.HasSuffix(lines[1], slow.Msg) {
+		t.Fatal(lines)
+	}
+}

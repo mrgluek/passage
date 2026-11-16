@@ -510,6 +510,9 @@ func (p *routePool) ways() []tunnelWay {
 			name = p.ids[i]
 		}
 		out[i] = tunnelWay{name: name, dial: c.DialContext, ipv6: p.ipv6[i]}
+		if ic, ok := c.(*irohClient); ok {
+			out[i].dial = ic.testDial
+		}
 		if i < len(p.exits) {
 			out[i].exit = p.exits[i]
 		}
@@ -591,6 +594,16 @@ type irohClient struct {
 }
 
 func (c *irohClient) DialContext(ctx context.Context, n, a string) (net.Conn, error) {
+	return c.dialContext(ctx, n, a, true)
+}
+
+// testDial is DialContext for the network test: its failures are expected
+// results of a check, so they do not count toward restarting the helper.
+func (c *irohClient) testDial(ctx context.Context, n, a string) (net.Conn, error) {
+	return c.dialContext(ctx, n, a, false)
+}
+
+func (c *irohClient) dialContext(ctx context.Context, n, a string, count bool) (net.Conn, error) {
 	c.mu.Lock()
 	if c.closed {
 		c.mu.Unlock()
@@ -637,7 +650,7 @@ func (c *irohClient) DialContext(ctx context.Context, n, a string) (net.Conn, er
 		}
 		if err == nil {
 			c.failures = 0
-		} else if !errors.Is(err, errDestinationRefused) && !errors.Is(err, context.Canceled) {
+		} else if count && !errors.Is(err, errDestinationRefused) && !errors.Is(err, context.Canceled) {
 			c.failures++
 			restart = c.failures >= 3 && (c.lastRestart.IsZero() || now.Sub(c.lastRestart) >= 5*time.Minute)
 		}
