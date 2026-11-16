@@ -267,7 +267,7 @@
     <string name="home_help">Something wrong?</string>
     <string name="home_report_what">You can run a full check of all added routes on this network (about 20 seconds) and forward the generated report to the developer.</string>
     <string name="home_report_link">What\'s in the report?</string>
-    <string name="home_report_not">The report contains no messages, passwords or your subscription link. It will include: the installed Passage version, the device model and Android version, the network type (for a mobile network: + operator code), DNS servers, the names of the chatmail servers that connections were attempted to, and the recent connection history. Network addresses (for example, of DNS servers) may appear in it.</string>
+    <string name="home_report_not">The report contains no messages, passwords or your subscription link. It will include: the installed Passage version, the device model and Android version, when and why the system stopped the app, how much memory the app uses, the network type (for a mobile network: + operator code), DNS servers, the names of the chatmail servers that connections were attempted to, and the recent connection history. Network addresses (for example, of DNS servers) may appear in it.</string>
     <string name="home_details">See the details yourself</string>
     <string name="home_details_sub">Routes, connections and the app log</string>
     <string name="home_add_title">Add your link</string>
