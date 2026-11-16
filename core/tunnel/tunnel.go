@@ -289,6 +289,7 @@ func Start(cfg Config) (*Tunnel, error) {
 	if err != nil {
 		return nil, err
 	}
+	tuneMemory()
 	if err := validateForwards(cfg); err != nil {
 		return nil, err
 	}
@@ -2149,6 +2150,7 @@ type Status struct {
 	Active        map[string]int        `json:"active"`
 	Stats         map[string]routeStats `json:"stats"`
 	Soar          string                `json:"soar"`
+	Memory        MemoryStatus          `json:"memory"`
 	// Tunnels has one row per configured tunnel route, in priority order.
 	Tunnels []RouteState `json:"tunnels"`
 	// Session is whether the soar session with the server is up; Paths is
@@ -2246,6 +2248,7 @@ func (t *Tunnel) statusLocked(n int) Status {
 		Active:         map[string]int{},
 		Stats:          map[string]routeStats{},
 		Soar:           SoarVersion(),
+		Memory:         readMemory(),
 		Groups:         map[string]GroupStatus{},
 	}
 	for _, f := range t.forwards {
@@ -2331,12 +2334,14 @@ func (t *Tunnel) monitorHealth() {
 	defer t.wg.Done()
 	ticker := time.NewTicker(time.Second)
 	defer ticker.Stop()
+	released := time.Now()
 	for {
 		select {
 		case <-t.ctx.Done():
 			return
 		case <-ticker.C:
 			t.settleHealth()
+			t.releaseMemoryIfIdle(&released)
 		}
 	}
 }

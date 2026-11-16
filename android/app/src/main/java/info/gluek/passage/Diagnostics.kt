@@ -4,6 +4,7 @@ import android.app.ActivityManager
 import android.app.ApplicationExitInfo
 import android.content.Context
 import android.os.Build
+import android.os.Debug
 import android.os.Process
 import android.util.AtomicFile
 import org.json.JSONArray
@@ -125,6 +126,19 @@ object Diagnostics {
         .put("build", Build.DISPLAY)
         .put("supported_abis", JSONArray(Build.SUPPORTED_ABIS.toList()))
         .put("process_64_bit", Process.is64Bit())
+        .put("memory", memory())
+
+    /** This process's own memory in KB: the total and its native (Go) and Java parts. */
+    private fun memory(): JSONObject = try {
+        val info = Debug.MemoryInfo()
+        Debug.getMemoryInfo(info)
+        JSONObject()
+            .put("pss_kb", info.totalPss)
+            .put("native_pss_kb", info.nativePss)
+            .put("dalvik_pss_kb", info.dalvikPss)
+    } catch (_: Throwable) {
+        JSONObject()
+    }
 
     private fun entry(message: String): JSONObject = JSONObject()
         .put("t", timestamp(System.currentTimeMillis()))
