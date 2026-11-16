@@ -683,7 +683,11 @@ type poolConn struct {
 	address string
 }
 
-func (c *poolConn) feedback(stalled bool, first ...bool) {
+func (c *poolConn) feedback(stalled bool, first ...bool) { c.feedbackNote("", stalled, first...) }
+
+// feedbackNote is feedback with a note about the connection for the event line
+// of a late stall.
+func (c *poolConn) feedbackNote(note string, stalled bool, first ...bool) {
 	p := c.pool
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -701,7 +705,9 @@ func (c *poolConn) feedback(stalled bool, first ...bool) {
 	defer func() { p.rememberHoldLocked(c.index, h, p.clock()) }()
 	if stalled {
 		pinned := strings.HasPrefix(p.only, "route:")
+		h.note = note
 		corroborated := h.onStallReason(p.clock(), p.log, p.routeName(c.index), "first reply, 2 destinations", len(first) == 0 || first[0], c.address, pinned)
+		h.note = ""
 		if pinned || !corroborated {
 			return
 		}
@@ -732,11 +738,15 @@ func (p *routePool) stalledLocked(network string, i int) bool {
 	return h.blocked()
 }
 func poolFeedback(c net.Conn, stalled bool, first ...bool) {
+	poolFeedbackNote(c, "", stalled, first...)
+}
+
+func poolFeedbackNote(c net.Conn, note string, stalled bool, first ...bool) {
 	if v, ok := c.(viaConn); ok {
 		c = v.Conn
 	}
 	if v, ok := c.(*poolConn); ok {
-		v.feedback(stalled, first...)
+		v.feedbackNote(note, stalled, first...)
 	}
 }
 

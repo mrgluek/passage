@@ -1016,11 +1016,11 @@ func (t *Tunnel) connect(c net.Conn, addr string, socks bool, forward ...int) {
 			poolFeedback(raw, false)
 			t.connectionFeedbackVia(g, route, key, connectionRoute(raw, route), false)
 		}, func(first bool) {
-			poolFeedback(raw, true, first)
 			note := ""
 			if !first {
 				note = fmt.Sprintf(" after %s, to server %d B, from server %d B", time.Since(start).Round(time.Second), up.Load(), down.Load())
 			}
+			poolFeedbackNote(raw, note, true, first)
 			t.connectionFeedbackNote(g, route, key, connectionRoute(raw, route), note, true, first)
 			c.Close()
 		})
