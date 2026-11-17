@@ -120,6 +120,13 @@ with `update.json`, the APKs and desktop app ZIPs, like `fdroid/repo`.
 Run `python3 scripts/test-mac-update.py` in a macOS desktop session to check
 an app update and restart with isolated settings and temporary keys.
 
+After publishing, `release.yml` updates the Homebrew tap
+(`mrgluek/homebrew-passage`) with `scripts/homebrew-tap.py`, using the
+`HOMEBREW_TAP_TOKEN` secret of the `release` environment (a fine-grained
+token for that repository only, renewed before it expires). A failure there
+does not fail the release; run the script by hand then. The Scoop manifest
+is generated into the website by `scripts/build-site.sh`.
+
 ## Website and F-Droid repository
 
 `scripts/build-site.sh` builds the website (`site/`) together with an
