@@ -52,6 +52,7 @@ type routePool struct {
 	established  atomic.Bool
 	mu           sync.Mutex
 	failedUntil  map[int]time.Time
+	recent       []routeEventWindow
 	cfg          Config
 	memoryConfig func() Config
 	network      string
@@ -175,14 +176,18 @@ func newRoutePool(cfg Config) (soarClient, error) {
 	return p, nil
 }
 func (p *routePool) DialContext(ctx context.Context, network, address string) (net.Conn, error) {
-	return p.dialContext(ctx, network, address, false)
+	return p.dialContext(ctx, network, address, false, true)
 }
 
 func (p *routePool) probeDialContext(ctx context.Context, network, address string) (net.Conn, error) {
-	return p.dialContext(ctx, network, address, true)
+	return p.dialContext(ctx, network, address, true, false)
 }
 
-func (p *routePool) dialContext(ctx context.Context, network, address string, background bool) (net.Conn, error) {
+func (p *routePool) maintenanceDialContext(ctx context.Context, network, address string) (net.Conn, error) {
+	return p.dialContext(ctx, network, address, false, false)
+}
+
+func (p *routePool) dialContext(ctx context.Context, network, address string, background, recordStats bool) (net.Conn, error) {
 	p.tick(p.clock())
 	host, _, _ := net.SplitHostPort(address)
 	order := p.order(net.ParseIP(host))
@@ -199,9 +204,10 @@ func (p *routePool) dialContext(ctx context.Context, network, address string, ba
 	race, stop := context.WithCancel(ctx)
 	defer stop()
 	type result struct {
-		i    int
-		conn net.Conn
-		err  error
+		i       int
+		conn    net.Conn
+		err     error
+		connect time.Duration
 	}
 	results := make(chan result, len(order))
 	started, pending, reservePending := 0, 0, 0
@@ -246,12 +252,20 @@ func (p *routePool) dialContext(ctx context.Context, network, address string, ba
 			child, cancel = context.WithTimeout(race, routeAttemptTimeout)
 		}
 		go func() {
+			var start time.Time
+			if recordStats {
+				start = time.Now()
+			}
 			conn, err := p.clients[i].DialContext(child, network, address)
+			var connect time.Duration
+			if err == nil && recordStats {
+				connect = time.Since(start)
+			}
 			if err != nil && !errors.Is(err, context.Canceled) && !errors.Is(err, errDestinationRefused) {
 				p.mark(i, true)
 			}
 			cancel()
-			results <- result{i, conn, err}
+			results <- result{i, conn, err, connect}
 		}()
 	}
 	// drain closes connections that win after the race is decided.
@@ -292,7 +306,10 @@ func (p *routePool) dialContext(ctx context.Context, network, address string, ba
 				drain()
 				p.mark(r.i, false)
 				p.established.Store(true)
-				conn := net.Conn(&poolConn{Conn: r.conn, pool: p, index: r.i, network: p.network, address: address})
+				if recordStats {
+					p.recordRace(order[:started], r.i, r.connect)
+				}
+				conn := net.Conn(&poolConn{Conn: r.conn, pool: p, index: r.i, network: p.network, address: address, recordStats: recordStats})
 				if r.i < len(p.kinds) {
 					conn = viaConn{conn, p.kinds[r.i]}
 				}
@@ -446,13 +463,14 @@ const (
 
 // RouteState is one configured tunnel route in Status.
 type RouteState struct {
-	Exit   string `json:"exit,omitempty"`
-	Use    string `json:"use,omitempty"`
-	ID     string `json:"id"`
-	Type   string `json:"type"`
-	State  string `json:"state"`
-	Reason string `json:"reason,omitempty"`
-	Stalls int64  `json:"stalls"`
+	Exit   string            `json:"exit,omitempty"`
+	Use    string            `json:"use,omitempty"`
+	ID     string            `json:"id"`
+	Type   string            `json:"type"`
+	State  string            `json:"state"`
+	Reason string            `json:"reason,omitempty"`
+	Stalls int64             `json:"stalls"`
+	Recent *RouteRecentStats `json:"recent,omitempty"`
 }
 
 func (p *routePool) states() []RouteState {
@@ -483,6 +501,9 @@ func (p *routePool) states() []RouteState {
 		}
 		if i < len(p.ids) {
 			out[i].ID, out[i].Type = p.ids[i], p.kinds[i]
+		}
+		if i < len(p.recent) {
+			out[i].Recent = p.recent[i].snapshot()
 		}
 	}
 	return out
@@ -696,10 +717,11 @@ func (c *irohClient) Close() error {
 // poolConn keeps feedback attached to the route that won the dial race.
 type poolConn struct {
 	net.Conn
-	pool    *routePool
-	index   int
-	network string
-	address string
+	pool        *routePool
+	index       int
+	network     string
+	address     string
+	recordStats bool
 }
 
 func (c *poolConn) feedback(stalled bool, first ...bool) { c.feedbackNote("", stalled, first...) }
@@ -723,6 +745,13 @@ func (c *poolConn) feedbackNote(note string, stalled bool, first ...bool) {
 	}
 	defer func() { p.rememberHoldLocked(c.index, h, p.clock()) }()
 	if stalled {
+		if c.recordStats {
+			event := routeStopped
+			if len(first) > 0 && !first[0] {
+				event = routeLater
+			}
+			p.recordRouteEventLocked(c.index, routeEvent{kind: event})
+		}
 		pinned := strings.HasPrefix(p.only, "route:")
 		h.note = note
 		corroborated := h.onStallReason(p.clock(), p.log, p.routeName(c.index), "first reply, 2 destinations", len(first) == 0 || first[0], c.address, pinned)

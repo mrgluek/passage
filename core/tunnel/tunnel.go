@@ -1397,9 +1397,21 @@ func (t *Tunnel) Dials() []func(ctx context.Context, network, addr string) (net.
 		if t.ways[r].dial == nil || t.mode == ModeAlways && r != RouteTunnel || t.mode == ModeOff && r == RouteTunnel {
 			continue
 		}
-		out = append(out, t.ways[r].dial)
+		dial := t.ways[r].dial
+		if r == RouteTunnel {
+			dial = t.maintenanceTunnelDialLocked()
+		}
+		out = append(out, dial)
 	}
 	return out
+}
+
+// maintenanceTunnelDialLocked keeps the normal route order for app requests.
+func (t *Tunnel) maintenanceTunnelDialLocked() dialFunc {
+	if p, ok := t.client.(*routePool); ok && t.ways[RouteTunnel].dial != nil {
+		return p.maintenanceDialContext
+	}
+	return t.ways[RouteTunnel].dial
 }
 
 // nextRouteLocked is the next route after r usable for g, or r itself if

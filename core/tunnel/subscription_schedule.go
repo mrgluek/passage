@@ -101,7 +101,7 @@ func (t *Tunnel) refreshSubscriptions(ctx context.Context, initial bool) Subscri
 	t.mu.Lock()
 	mode := cmp.Or(t.only, t.mode)
 	var dials []SubscriptionDial
-	if d := t.ways[RouteTunnel].dial; d != nil && t.mode != ModeOff {
+	if d := t.maintenanceTunnelDialLocked(); d != nil && t.mode != ModeOff {
 		dials = append(dials, d)
 	}
 	t.mu.Unlock()

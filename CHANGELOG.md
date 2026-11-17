@@ -15,6 +15,8 @@
   version no longer starts the download.
 - The network test no longer changes the state of a route or its count of
   failures.
+- Reports show recent wins, losses, connection times and stalls for each
+  tunnel route.
 - Windows: Passage can be installed and updated with Scoop. A copy installed
   that way keeps its settings in Scoop's persist folder, starts at sign-in
   through the `current` folder and shows the `scoop update passage` command

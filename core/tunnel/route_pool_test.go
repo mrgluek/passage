@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"reflect"
 	"testing"
 	"time"
 
@@ -128,7 +129,15 @@ func TestRoutePoolReportsViaAndStates(t *testing.T) {
 		t.Fatal("wrapped connection lost CloseWrite")
 	}
 	want := []RouteState{{ID: "fast", Type: "iroh", State: routeFailed}, {ID: "dns", Type: "soar", State: routeUp}}
-	if got := pool.states(); fmt.Sprint(got) != fmt.Sprint(want) {
+	got := pool.states()
+	if !reflect.DeepEqual(got[0].Recent, &RouteRecentStats{Lost: 1}) {
+		t.Fatalf("failed route counters = %+v", got[0].Recent)
+	}
+	if won := got[1].Recent; won == nil || won.Won != 1 || won.Lost != 0 || won.ConnectMS == nil {
+		t.Fatalf("winning route counters = %+v", won)
+	}
+	got[0].Recent, got[1].Recent = nil, nil
+	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("states = %v, want %v", got, want)
 	}
 }
