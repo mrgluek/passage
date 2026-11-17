@@ -24,6 +24,12 @@
 - Passage uses less memory when an iroh route is idle: its helper stops after
   ten minutes without traffic and starts again at the next connection, which
   then takes about a second longer.
+- Reports list a tunnel connection that timed out as a timeout with its own
+  waiting time, not as a refusal, and keep the lines about a restarted
+  helper.
+- Android: a phone from a maker whose name only contains the name of another
+  (OUKITEL) no longer gets that maker's setup hint, and the report shows
+  which settings screen the hint opened.
 - Windows: Passage can be installed and updated with Scoop. A copy installed
   that way keeps its settings in Scoop's persist folder, starts at sign-in
   through the `current` folder and shows the `scoop update passage` command
