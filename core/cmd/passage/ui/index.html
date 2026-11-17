@@ -61,7 +61,6 @@ button.textbtn { display: block; margin: 10px auto 0; border: none; padding: 8px
 .values .v span:last-child { font: 13px Consolas, "SF Mono", monospace; }
 .values .v { align-items: center; }
 .values .v span:nth-child(2):not(:last-child) { flex: 1; font: 13px Consolas, "SF Mono", monospace; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.values .v .showpw { margin-left: 8px; color: var(--accent); cursor: pointer; flex: none; }
 .drow { display: flex; align-items: center; gap: 8px; cursor: pointer; margin-top: 18px; padding: 4px 0; }
 .drow .grow div:first-child { color: var(--accent); font-size: 15px; }
 .drow .chev { color: var(--accent); font-size: 20px; }
@@ -102,6 +101,7 @@ button.icon svg { width: 24px; height: 24px; fill: var(--accent); display: block
 .values .v { display: flex; padding: 5px 0; cursor: pointer; }
 .values .v span:first-child { width: 80px; color: var(--muted); font-size: 12px; }
 .values .v span:last-child { flex: 1; font: 13px Consolas, monospace; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.values .v span.showpw { flex: none; margin-left: auto; padding-left: 8px; font: inherit; overflow: visible; color: var(--accent); cursor: pointer; }
 pre { font: 12px/1.4 Consolas, monospace; white-space: pre-wrap; word-break: break-all; margin: 4px 0;
   user-select: text; }
 textarea, input[type=text] { width: 100%; font: 13px Consolas, monospace; color: var(--fg); background: var(--bg);
