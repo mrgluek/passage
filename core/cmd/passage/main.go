@@ -44,10 +44,7 @@ func fatal(err error) {
 
 // irohHelper is passage-iroh next to this program, or "" if there is none.
 func irohHelper() string {
-	exe, err := os.Executable()
-	if err == nil {
-		exe, err = filepath.EvalSymlinks(exe)
-	}
+	exe, err := programExe()
 	if err != nil {
 		return ""
 	}

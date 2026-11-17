@@ -1,5 +1,43 @@
 # Changelog
 
+## 0.9.3
+
+- Android, Windows and macOS: the home screen has the same four tabs: Delta
+  Chat, Telegram, WhatsApp and Other. Other shows the host, port and password
+  for any other app, and says that Signal and SimpleX servers are allowed. On
+  Android it also holds the Molly settings.
+- A slow connection no longer fails when the way tried first fails right
+  away: Passage falls back to the other way. A second try that has already
+  failed is not repeated for the same connection.
+- Subscription updates again fetch directly a source that a route does not
+  allow.
+- Android: cancelling an update while Passage is still looking for the new
+  version no longer starts the download.
+- The network test no longer changes the state of a route or its count of
+  failures.
+- Reports show recent wins, losses, connection times and stalls for each
+  tunnel route.
+- Telegram: direct access counts as working only when at least two targets
+  answer, and repeated failed direct connections count against a lone
+  answer, so the route no longer flips back and forth when only some
+  Telegram servers are reachable.
+- Passage uses less memory when an iroh route is idle: its helper stops after
+  ten minutes without traffic and starts again at the next connection, which
+  then takes about a second longer.
+- Reports list a tunnel connection that timed out as a timeout with its own
+  waiting time, not as a refusal, and keep the lines about a restarted
+  helper.
+- Android: a phone from a maker whose name only contains the name of another
+  (OUKITEL) no longer gets that maker's setup hint, and the report shows
+  which settings screen the hint opened.
+- Windows: Passage can be installed and updated with Scoop. A copy installed
+  that way keeps its settings in Scoop's persist folder, starts at sign-in
+  through the `current` folder and shows the `scoop update passage` command
+  instead of updating itself.
+- macOS: Passage can be installed with Homebrew from the
+  `mrgluek/passage` tap (the app as a cask, `passage-cli` as a formula, also
+  for Linux).
+
 ## 0.9.2
 
 - Slow connections to chat servers no longer make messages wait: when a

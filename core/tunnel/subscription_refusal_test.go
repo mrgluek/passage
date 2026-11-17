@@ -177,3 +177,17 @@ func TestRouteRefusedSourcesDirectSwapsOnlyRecentRefusals(t *testing.T) {
 		t.Fatal(moved)
 	}
 }
+
+func TestTunnelRefusedRecentlyIgnoresFutureMarks(t *testing.T) {
+	now := time.Unix(1_000_000_000, 0)
+	sub := Subscription{SourceStats: map[string]SubscriptionSourceStats{
+		sourceStatsKey("https://a.example.org"): {TunnelRefusedAt: now.Add(-time.Hour).Unix()},
+		sourceStatsKey("https://b.example.org"): {TunnelRefusedAt: now.Add(time.Hour).Unix()},
+		sourceStatsKey("https://c.example.org"): {TunnelRefusedAt: now.Add(-tunnelRefusalMemory - time.Second).Unix()},
+	}}
+	for source, want := range map[string]bool{"https://a.example.org": true, "https://b.example.org": false, "https://c.example.org": false, "https://d.example.org": false} {
+		if got := sub.tunnelRefusedRecently(source, now); got != want {
+			t.Errorf("%s: refused recently = %v, want %v", source, got, want)
+		}
+	}
+}

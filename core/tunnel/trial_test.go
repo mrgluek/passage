@@ -124,10 +124,14 @@ func TestProbeBlindAfterTwoTrials(t *testing.T) {
 			tt, g, now, _ := trialFixture(t)
 			trialDial(t, tt, g).finish(true)
 			if good {
-				tt.applyProbe(g, probeResult{Relays: 1, RelayOK: 1})
+				for range recoveredAfter {
+					tt.applyProbe(g, probeResult{Relays: 1, RelayOK: 1})
+				}
+			} else {
+				g.kind = kindTelegram
+				tt.applyProbe(g, telegramProbeResult(9, 1, 1))
 			}
 			*now = g.stalls[RouteDirect].until
-			g.okStreak = recoveredAfter
 			tt.tick(*now)
 			trialDial(t, tt, g).finish(true)
 			if g.probeBlind != good {
@@ -558,8 +562,8 @@ func TestInconclusiveTrialReturnsToSameHoldStep(t *testing.T) {
 		t.Fatalf("hold=%+v", h)
 	}
 	inFlight.finish(false)
-	if h.state != Held || g.route != RouteTunnel || g.failedTrials != 0 {
-		t.Fatalf("late verdict: hold=%+v route=%v failed trials=%d", h, g.route, g.failedTrials)
+	if h.state != Held || g.route != RouteTunnel || !g.failedTrialAt.IsZero() {
+		t.Fatalf("late verdict: hold=%+v route=%v failed trial at %v", h, g.route, g.failedTrialAt)
 	}
 	*now = h.until
 	tt.tick(*now)
@@ -637,8 +641,8 @@ func TestTrialWindowLogsSkippedOnce(t *testing.T) {
 			count++
 		}
 	}
-	if count != 1 || *calls != 0 || h.state != Held || h.step != 1 || h.count != 0 || g.failedTrials != 0 {
-		t.Fatalf("events=%v calls=%d hold=%+v failed trials=%d", tt.log.last(100), *calls, h, g.failedTrials)
+	if count != 1 || *calls != 0 || h.state != Held || h.step != 1 || h.count != 0 || !g.failedTrialAt.IsZero() {
+		t.Fatalf("events=%v calls=%d hold=%+v failed trial at %v", tt.log.last(100), *calls, h, g.failedTrialAt)
 	}
 }
 
@@ -647,16 +651,46 @@ func TestStepDecayClearsFailedTrials(t *testing.T) {
 	h := g.stalls[RouteDirect]
 	h.until, h.trialUntil = time.Time{}, time.Time{}
 	h.stepOnly = true
-	h.at = *now
-	g.failedTrials, g.goodSinceTrial = 1, true
-	*now = now.Add(holdMemory - time.Nanosecond)
+	h.at = now.Add(-time.Minute)
+	g.failedTrialAt, g.goodSinceTrial = *now, true
+	*now = h.at.Add(holdMemory - time.Nanosecond)
 	tt.tick(*now)
-	if g.failedTrials != 1 || !g.goodSinceTrial {
+	if g.failedTrialAt.IsZero() || !g.goodSinceTrial {
 		t.Fatal("trial history decayed early")
 	}
 	*now = now.Add(time.Nanosecond)
 	tt.tick(*now)
-	if h.step != 0 || g.failedTrials != 0 || g.goodSinceTrial {
+	if h.step != 0 || !g.failedTrialAt.IsZero() || g.goodSinceTrial {
 		t.Fatal("step decay retained old failed trials")
+	}
+}
+
+func TestFailedTrialEvidenceExpiresDuringHold(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		age   time.Duration
+		blind bool
+	}{
+		{"before expiry", holdMemory - time.Nanosecond, true},
+		{"at expiry", holdMemory, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			tt, g, now, _ := trialFixture(t)
+			trialDial(t, tt, g).finish(true)
+			tt.applyProbe(g, probeResult{Relays: 1, NetworkOK: true})
+			*now = now.Add(tc.age)
+			tt.tick(*now)
+			h := g.stalls[RouteDirect]
+			if h.state != Held || h.step != 2 {
+				t.Fatalf("hold changed before recovery probes: %+v", h)
+			}
+			for range recoveredAfter {
+				tt.applyProbe(g, probeResult{Relays: 1, RelayOK: 1})
+			}
+			trialDial(t, tt, g).finish(true)
+			if g.probeBlind != tc.blind || !g.failedTrialAt.Equal(*now) || g.goodSinceTrial {
+				t.Fatalf("blind=%v, failed trial at %v, good probe=%v", g.probeBlind, g.failedTrialAt, g.goodSinceTrial)
+			}
+		})
 	}
 }

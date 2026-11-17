@@ -123,7 +123,7 @@ func neutralHistoryMessage(message string) string {
 // isHistoryMessage reports whether an event is kept in the saved history. The
 // same lines are kept on Android (RouterHistory.kt).
 func isHistoryMessage(message string) bool {
-	for _, prefix := range []string{"stalled:", "resumed:", "disagree:", "slow:"} {
+	for _, prefix := range []string{"stalled:", "resumed:", "disagree:", "slow:", "restarted:"} {
 		if strings.HasPrefix(message, prefix) {
 			return true
 		}

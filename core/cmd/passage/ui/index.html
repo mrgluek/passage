@@ -53,13 +53,14 @@ button.textbtn { display: block; margin: 10px auto 0; border: none; padding: 8px
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: 13px; }
 .tabs div.on { background: var(--accent); color: var(--on-accent); font-weight: 600; cursor: default; }
 .tabpane p { margin: 8px 0; }
+.tabpane h3 { margin: 14px 0 4px; font-size: 14px; font-weight: 600; }
 .tabpane button.wide { margin: 10px 0 8px; }
 .dl { color: var(--muted); font-size: 13px; margin: 6px 0; }
 .dl + p { margin-top: 20px; }
 .waiting { color: var(--muted); font-size: 13px; margin: 12px 0 0; }
 .values .v span:last-child { font: 13px Consolas, "SF Mono", monospace; }
 .values .v { align-items: center; }
-.values .v .showpw { margin-left: 8px; color: var(--accent); cursor: pointer; flex: none; }
+.values .v span:nth-child(2):not(:last-child) { flex: 1; font: 13px Consolas, "SF Mono", monospace; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .drow { display: flex; align-items: center; gap: 8px; cursor: pointer; margin-top: 18px; padding: 4px 0; }
 .drow .grow div:first-child { color: var(--accent); font-size: 15px; }
 .drow .chev { color: var(--accent); font-size: 20px; }
@@ -100,6 +101,7 @@ button.icon svg { width: 24px; height: 24px; fill: var(--accent); display: block
 .values .v { display: flex; padding: 5px 0; cursor: pointer; }
 .values .v span:first-child { width: 80px; color: var(--muted); font-size: 12px; }
 .values .v span:last-child { flex: 1; font: 13px Consolas, monospace; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.values .v span.showpw { flex: none; margin-left: auto; padding-left: 8px; font: inherit; overflow: visible; color: var(--accent); cursor: pointer; }
 pre { font: 12px/1.4 Consolas, monospace; white-space: pre-wrap; word-break: break-all; margin: 4px 0;
   user-select: text; }
 textarea, input[type=text] { width: 100%; font: 13px Consolas, monospace; color: var(--fg); background: var(--bg);
@@ -404,9 +406,10 @@ function render(v) {
   }
   const u = v.update;
   $("updateNotice").classList.toggle("hidden", !u.enabled || !["available", "downloading", "ready", "installing"].includes(u.state));
-  $("updateNotice").textContent = t("update_" + u.state, u.version);
+  const updateText = () => u.managed && u.version ? t("update_managed_" + u.managed, u.version) : t("update_" + u.state, u.version);
+  $("updateNotice").textContent = updateText();
   $("updateSettings").classList.toggle("hidden", !u.enabled);
-  $("updateStatus").textContent = u.error || t("update_" + u.state, u.version);
+  $("updateStatus").textContent = u.error || updateText();
   const failures = u.detail.split("\n").filter(Boolean);
   $("updateDetail").textContent = failures.length > 1 ? failures.map(s => "• " + s).join("\n") : u.detail;
   $("updateDetail").classList.toggle("hidden", !u.detail);
@@ -414,7 +417,7 @@ function render(v) {
   $("updateProgress").max = u.total || 1;
   $("updateProgress").value = u.done;
   $("updateCheck").disabled = ["checking", "downloading", "installing"].includes(u.state);
-  $("updateDownload").classList.toggle("hidden", !u.version || ["checking", "downloading", "ready", "installing"].includes(u.state));
+  $("updateDownload").classList.toggle("hidden", !u.version || !!u.managed || ["checking", "downloading", "ready", "installing"].includes(u.state));
   $("updateInstall").classList.toggle("hidden", !u.ready);
   $("updateCancel").classList.toggle("hidden", !["checking", "downloading"].includes(u.state));
   $("line").textContent = v.line;
@@ -520,13 +523,13 @@ function renderHome(v) {
   if (open) renderTabs(v);
 }
 function renderTabs(v) {
-  const names = ["tab_delta", "tab_tg", "whatsapp"];
+  const names = ["tab_delta", "tab_tg", "whatsapp", "tab_other"];
   const strip = $("tabs");
   strip.textContent = "";
   names.forEach((k, i) => {
     const d = document.createElement("div");
     d.textContent = t(k);
-    if (i === tab) d.className = "on"; else d.onclick = () => { tab = i; if (i === 2) call("whatsappPorts").then(refresh, fail); shownHome = ""; renderHome(last); };
+    if (i === tab) d.className = "on"; else d.onclick = () => { tab = i; showPass = false; if (i === 2) call("whatsappPorts").then(refresh, fail); shownHome = ""; renderHome(last); };
     strip.append(d);
   });
   const pane = $("tabpane");
@@ -545,6 +548,30 @@ function renderTabs(v) {
   } else if (tab === 1) pane.append(para(t("tab_tg_text")), button(t("h_open_tg"), () =>
     call("openTg").then(opened => copy(v.tg_link, t(opened ? "tg_link_opened" : "tg_link_copied")), fail)));
   else if (tab === 2) renderWhatsApp(pane, v, true);
+  else renderOther(pane, v, para);
+}
+function renderOther(pane, v, para) {
+  const title = document.createElement("h3"); title.textContent = t("other_app_title");
+  const box = document.createElement("div"); box.className = "values";
+  const row = (name, value, copyable, extra) => {
+    const r = document.createElement("div"); r.className = "v";
+    const key = document.createElement("span"), text = document.createElement("span");
+    key.textContent = name; text.textContent = value; r.append(key, text);
+    if (extra) r.append(extra);
+    if (copyable) r.onclick = () => copy(String(copyable), t("value_copied", name));
+    box.append(r);
+  };
+  row(t("proxy_host"), "127.0.0.1", "127.0.0.1");
+  row(t("proxy_port"), String(v.port), v.port);
+  if (v.auth) {
+    row(t("proxy_user"), v.user, v.user);
+    const toggle = document.createElement("span"); toggle.className = "showpw"; toggle.textContent = t(showPass ? "h_hide" : "h_show");
+    toggle.onclick = e => { e.stopPropagation(); showPass = !showPass; shownHome = ""; renderHome(last); };
+    row(t("proxy_pass"), showPass ? v.pass : "••••••••", v.pass, toggle);
+  }
+  pane.append(title, para(t("other_apps_text")), box);
+  if (!v.auth) pane.append(para(t("proxy_no_password")));
+  pane.append(para(t("other_servers")));
 }
 function renderWhatsApp(pane, v, home) {
   // The settings pane is redrawn on every poll; the home pane is already memoized by renderHome.

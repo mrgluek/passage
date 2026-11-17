@@ -52,6 +52,7 @@ type routePool struct {
 	established  atomic.Bool
 	mu           sync.Mutex
 	failedUntil  map[int]time.Time
+	recent       []routeEventWindow
 	cfg          Config
 	memoryConfig func() Config
 	network      string
@@ -149,7 +150,11 @@ func newRoutePool(cfg Config) (soarClient, error) {
 			server = wssServer(params, c)
 		case "iroh":
 			client = &irohClient{route: r, binary: cfg.IrohBinary, dir: cfg.PrivateDir, dns: cfg.SystemResolvers,
-				now: p.clock, onRestart: func(now time.Time) {
+				now: p.clock, onIdle: func(now time.Time) {
+					if p.log != nil {
+						p.log.addAt(now, "iroh helper stopped: idle")
+					}
+				}, onRestart: func(now time.Time) {
 					if p.log != nil {
 						p.log.addAt(now, "%s", historyLine(historyTransition{prefix: "restarted", unit: "iroh helper", reason: "no answer"}))
 					}
@@ -175,14 +180,18 @@ func newRoutePool(cfg Config) (soarClient, error) {
 	return p, nil
 }
 func (p *routePool) DialContext(ctx context.Context, network, address string) (net.Conn, error) {
-	return p.dialContext(ctx, network, address, false)
+	return p.dialContext(ctx, network, address, false, true)
 }
 
 func (p *routePool) probeDialContext(ctx context.Context, network, address string) (net.Conn, error) {
-	return p.dialContext(ctx, network, address, true)
+	return p.dialContext(ctx, network, address, true, false)
 }
 
-func (p *routePool) dialContext(ctx context.Context, network, address string, background bool) (net.Conn, error) {
+func (p *routePool) maintenanceDialContext(ctx context.Context, network, address string) (net.Conn, error) {
+	return p.dialContext(ctx, network, address, false, false)
+}
+
+func (p *routePool) dialContext(ctx context.Context, network, address string, background, recordStats bool) (net.Conn, error) {
 	p.tick(p.clock())
 	host, _, _ := net.SplitHostPort(address)
 	order := p.order(net.ParseIP(host))
@@ -199,13 +208,27 @@ func (p *routePool) dialContext(ctx context.Context, network, address string, ba
 	race, stop := context.WithCancel(ctx)
 	defer stop()
 	type result struct {
-		i    int
-		conn net.Conn
-		err  error
+		i       int
+		conn    net.Conn
+		err     error
+		connect time.Duration
+		waited  time.Duration // how long a failed attempt took
 	}
 	results := make(chan result, len(order))
 	started, pending, reservePending := 0, 0, 0
+	skipped := 0
+	// Warm-up and confirmation need a cold helper only if no other route answers.
+	var sleeping []int
+	wakeProbe := false
 	canStart := func() bool {
+		if pending == 0 && started == len(order) && len(sleeping) > 0 {
+			order = append(order, sleeping...)
+			sleeping = nil
+			wakeProbe = true
+		}
+		if wakeProbe && pending != 0 {
+			return false
+		}
 		if started >= len(order) || reservePending > 0 {
 			return false
 		}
@@ -242,16 +265,34 @@ func (p *routePool) dialContext(ctx context.Context, network, address string, ba
 			reservePending++
 		}
 		child, cancel := race, context.CancelFunc(func() {})
-		if n < len(order)-1 {
+		if n < len(order)-1 || len(sleeping) > 0 {
 			child, cancel = context.WithTimeout(race, routeAttemptTimeout)
 		}
+		dial := p.clients[i].DialContext
+		if ic, ok := p.clients[i].(*irohClient); ok && background {
+			mode := irohProbe
+			if wakeProbe {
+				mode = irohRequiredProbe
+			}
+			dial = func(ctx context.Context, n, a string) (net.Conn, error) {
+				return ic.dialContext(ctx, n, a, mode)
+			}
+		}
 		go func() {
-			conn, err := p.clients[i].DialContext(child, network, address)
-			if err != nil && !errors.Is(err, context.Canceled) && !errors.Is(err, errDestinationRefused) {
+			start := time.Now()
+			conn, err := dial(child, network, address)
+			var connect, waited time.Duration
+			if err == nil && recordStats {
+				connect = time.Since(start)
+			}
+			if err != nil {
+				waited = time.Since(start)
+			}
+			if err != nil && !errors.Is(err, errIrohSleeping) && !errors.Is(err, context.Canceled) && !errors.Is(err, errDestinationRefused) {
 				p.mark(i, true)
 			}
 			cancel()
-			results <- result{i, conn, err}
+			results <- result{i, conn, err, connect, waited}
 		}()
 	}
 	// drain closes connections that win after the race is decided.
@@ -292,7 +333,10 @@ func (p *routePool) dialContext(ctx context.Context, network, address string, ba
 				drain()
 				p.mark(r.i, false)
 				p.established.Store(true)
-				conn := net.Conn(&poolConn{Conn: r.conn, pool: p, index: r.i, network: p.network, address: address})
+				if recordStats {
+					p.recordRace(order[:started], r.i, r.connect)
+				}
+				conn := net.Conn(&poolConn{Conn: r.conn, pool: p, index: r.i, network: p.network, address: address, recordStats: recordStats})
 				if r.i < len(p.kinds) {
 					conn = viaConn{conn, p.kinds[r.i]}
 				}
@@ -302,8 +346,12 @@ func (p *routePool) dialContext(ctx context.Context, network, address string, ba
 				drain()
 				return nil, ctx.Err()
 			}
-			if observe, ok := ctx.Value(connectionObserverKey{}).(func(string)); ok && !background {
-				observe(p.routeName(r.i))
+			if errors.Is(r.err, errIrohSleeping) {
+				skipped++
+				sleeping = append(sleeping, r.i)
+			}
+			if observe, ok := ctx.Value(connectionObserverKey{}).(func(string, error, time.Duration)); ok && !background {
+				observe(p.routeName(r.i), r.err, r.waited)
 			}
 			if errors.Is(r.err, errDestinationRefused) {
 				refusals++
@@ -324,7 +372,7 @@ func (p *routePool) dialContext(ctx context.Context, network, address string, ba
 			return nil, ctx.Err()
 		}
 	}
-	if refusals == started && (refusals > 0 || len(order) < len(available)) {
+	if refusals == started-skipped && (refusals > 0 || len(order) < len(available)) {
 		return nil, errDestinationRefused
 	}
 	p.established.Store(false)
@@ -446,13 +494,14 @@ const (
 
 // RouteState is one configured tunnel route in Status.
 type RouteState struct {
-	Exit   string `json:"exit,omitempty"`
-	Use    string `json:"use,omitempty"`
-	ID     string `json:"id"`
-	Type   string `json:"type"`
-	State  string `json:"state"`
-	Reason string `json:"reason,omitempty"`
-	Stalls int64  `json:"stalls"`
+	Exit   string            `json:"exit,omitempty"`
+	Use    string            `json:"use,omitempty"`
+	ID     string            `json:"id"`
+	Type   string            `json:"type"`
+	State  string            `json:"state"`
+	Reason string            `json:"reason,omitempty"`
+	Stalls int64             `json:"stalls"`
+	Recent *RouteRecentStats `json:"recent,omitempty"`
 }
 
 func (p *routePool) states() []RouteState {
@@ -483,6 +532,9 @@ func (p *routePool) states() []RouteState {
 		}
 		if i < len(p.ids) {
 			out[i].ID, out[i].Type = p.ids[i], p.kinds[i]
+		}
+		if i < len(p.recent) {
+			out[i].Recent = p.recent[i].snapshot()
 		}
 	}
 	return out
@@ -576,6 +628,19 @@ func (p *routePool) Close() error {
 	return nil
 }
 
+const irohIdleTimeout = 10 * time.Minute
+
+type irohDialMode int
+
+const (
+	irohTraffic irohDialMode = iota
+	irohProbe
+	irohRequiredProbe
+	irohDiagnosis
+)
+
+var errIrohSleeping = errors.New("iroh helper asleep")
+
 type irohClient struct {
 	mu          sync.Mutex
 	route       links.Route
@@ -591,25 +656,38 @@ type irohClient struct {
 	start       func(context.Context) (dialFunc, func(), error)
 	failures    int
 	lastRestart time.Time
+	active      int // pending dials and open streams in this generation
+	idleAt      time.Time
+	timer       *time.Timer
+	afterFunc   func(time.Duration, func()) *time.Timer
+	onIdle      func(time.Time)
 }
 
 func (c *irohClient) DialContext(ctx context.Context, n, a string) (net.Conn, error) {
-	return c.dialContext(ctx, n, a, true)
+	return c.dialContext(ctx, n, a, irohTraffic)
 }
 
 // testDial is DialContext for the network test: its failures are expected
 // results of a check, so they do not count toward restarting the helper.
 func (c *irohClient) testDial(ctx context.Context, n, a string) (net.Conn, error) {
-	return c.dialContext(ctx, n, a, false)
+	return c.dialContext(ctx, n, a, irohDiagnosis)
 }
 
-func (c *irohClient) dialContext(ctx context.Context, n, a string, count bool) (net.Conn, error) {
+func (c *irohClient) dialContext(ctx context.Context, n, a string, mode irohDialMode) (net.Conn, error) {
 	c.mu.Lock()
 	if c.closed {
 		c.mu.Unlock()
 		return nil, net.ErrClosed
 	}
 	if c.dial == nil {
+		if mode == irohProbe {
+			c.mu.Unlock()
+			return nil, errIrohSleeping
+		}
+		if mode == irohRequiredProbe && ctx.Err() != nil {
+			c.mu.Unlock()
+			return nil, ctx.Err()
+		}
 		if c.dir == "" {
 			c.mu.Unlock()
 			return nil, errors.New("iroh storage is unavailable")
@@ -631,10 +709,14 @@ func (c *irohClient) dialContext(ctx context.Context, n, a string, count bool) (
 			c.mu.Unlock()
 			return nil, err
 		}
+		if c.idleAt.IsZero() {
+			c.idleAt = c.clock().Add(irohIdleTimeout)
+		}
 		c.generation++
 		c.dial = dial
 		c.cleanup = func() { cancel(); cleanup() }
 	}
+	c.active++
 	generation := c.generation
 	dial := c.dial
 	c.mu.Unlock()
@@ -642,24 +724,24 @@ func (c *irohClient) dialContext(ctx context.Context, n, a string, count bool) (
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if c.generation == generation && c.dial != nil && !c.closed {
-		c.ready.Store(err == nil)
-		restart := false
-		now := time.Now()
-		if c.now != nil {
-			now = c.now()
+		// A network test dial is a check, not traffic: its outcome neither
+		// marks the route up or down nor clears the real failures.
+		if mode != irohDiagnosis {
+			c.ready.Store(err == nil)
 		}
+		restart := false
+		now := c.clock()
 		if err == nil {
-			c.failures = 0
-		} else if count && !errors.Is(err, errDestinationRefused) && !errors.Is(err, context.Canceled) {
+			if mode != irohDiagnosis {
+				c.failures = 0
+			}
+		} else if mode != irohDiagnosis && !errors.Is(err, errDestinationRefused) && !errors.Is(err, context.Canceled) {
 			c.failures++
 			restart = c.failures >= 3 && (c.lastRestart.IsZero() || now.Sub(c.lastRestart) >= 5*time.Minute)
 		}
 		if errors.Is(err, errIrohExited) || restart {
-			if c.cleanup != nil {
-				c.cleanup()
-			}
-			c.cleanup = nil
-			c.dial = nil
+			c.stopLocked()
+			c.idleAt = time.Time{}
 			c.ready.Store(false)
 			c.failures = 0
 			if restart {
@@ -669,20 +751,107 @@ func (c *irohClient) dialContext(ctx context.Context, n, a string, count bool) (
 				}
 			}
 		}
+		if c.dial != nil {
+			traffic := mode == irohTraffic
+			if err == nil {
+				return &irohStream{Conn: conn, release: func() {
+					c.mu.Lock()
+					defer c.mu.Unlock()
+					if c.dial != nil && c.generation == generation {
+						c.releaseLocked(traffic)
+					}
+				}}, nil
+			}
+			c.releaseLocked(false)
+		}
 	}
 	return conn, err
 }
+
+func (c *irohClient) clock() time.Time {
+	if c.now != nil {
+		return c.now()
+	}
+	return time.Now()
+}
+
+func (c *irohClient) releaseLocked(traffic bool) {
+	c.active--
+	if traffic {
+		c.idleAt = c.clock().Add(irohIdleTimeout)
+	}
+	if c.active == 0 && c.timer == nil {
+		c.armIdleLocked()
+	}
+}
+
+func (c *irohClient) armIdleLocked() {
+	generation := c.generation
+	after := c.afterFunc
+	if after == nil {
+		after = time.AfterFunc
+	}
+	c.timer = after(c.idleAt.Sub(c.clock()), func() {
+		c.mu.Lock()
+		defer c.mu.Unlock()
+		if c.generation != generation || c.dial == nil {
+			return
+		}
+		c.timer = nil
+		if c.active != 0 {
+			return
+		}
+		now := c.clock()
+		if now.Before(c.idleAt) {
+			c.armIdleLocked()
+			return
+		}
+		c.stopLocked()
+		if c.onIdle != nil {
+			c.onIdle(now)
+		}
+	})
+}
+
+func (c *irohClient) stopLocked() {
+	if c.timer != nil {
+		c.timer.Stop()
+		c.timer = nil
+	}
+	if c.cleanup != nil {
+		c.cleanup()
+		c.cleanup = nil
+	}
+	c.dial = nil
+	c.active = 0
+}
+
+type irohStream struct {
+	net.Conn
+	once    sync.Once
+	release func()
+}
+
+func (s *irohStream) Close() error {
+	err := s.Conn.Close()
+	s.once.Do(s.release)
+	return err
+}
+
+func (s *irohStream) CloseWrite() error {
+	if cw, ok := s.Conn.(interface{ CloseWrite() error }); ok {
+		return cw.CloseWrite()
+	}
+	return s.Close()
+}
+
 func (c *irohClient) Established() bool          { return c.ready.Load() }
 func (c *irohClient) PathStats() []soar.PathStat { return nil }
 func (c *irohClient) Close() error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.closed = true
-	if c.cleanup != nil {
-		c.cleanup()
-		c.cleanup = nil
-	}
-	c.dial = nil
+	c.stopLocked()
 	c.ready.Store(false)
 	return nil
 }
@@ -690,10 +859,11 @@ func (c *irohClient) Close() error {
 // poolConn keeps feedback attached to the route that won the dial race.
 type poolConn struct {
 	net.Conn
-	pool    *routePool
-	index   int
-	network string
-	address string
+	pool        *routePool
+	index       int
+	network     string
+	address     string
+	recordStats bool
 }
 
 func (c *poolConn) feedback(stalled bool, first ...bool) { c.feedbackNote("", stalled, first...) }
@@ -717,6 +887,13 @@ func (c *poolConn) feedbackNote(note string, stalled bool, first ...bool) {
 	}
 	defer func() { p.rememberHoldLocked(c.index, h, p.clock()) }()
 	if stalled {
+		if c.recordStats {
+			event := routeStopped
+			if len(first) > 0 && !first[0] {
+				event = routeLater
+			}
+			p.recordRouteEventLocked(c.index, routeEvent{kind: event})
+		}
 		pinned := strings.HasPrefix(p.only, "route:")
 		h.note = note
 		corroborated := h.onStallReason(p.clock(), p.log, p.routeName(c.index), "first reply, 2 destinations", len(first) == 0 || first[0], c.address, pinned)

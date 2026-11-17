@@ -17,6 +17,8 @@ class BackgroundHintTest {
             "OPPO" to "realme" to Vendor.OPPO, "OnePlus" to "OnePlus" to Vendor.OPPO,
             "vivo" to "iQOO" to Vendor.VIVO, "samsung" to "samsung" to Vendor.SAMSUNG,
             "TECNO" to "TECNO" to Vendor.TRANSSION, "INFINIX" to "Infinix" to Vendor.TRANSSION,
+            "itel" to "itel" to Vendor.TRANSSION, "Transsion Holdings" to "TECNO" to Vendor.TRANSSION,
+            "OUKITEL" to "OUKITEL" to Vendor.OTHER, "Xiaomi Communications" to "Redmi" to Vendor.XIAOMI,
             "Google" to "google" to Vendor.OTHER, "" to "" to Vendor.OTHER,
         )
         for ((pair, want) in cases) assertEquals(pair.toString(), want, BackgroundHint.vendor(pair.first, pair.second))

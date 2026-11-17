@@ -98,7 +98,15 @@ the link in `link.txt` (one link per line) and the app history in
 it again within a few seconds. The window uses the Microsoft Edge WebView2
 Runtime that comes with Windows; on a system without it, Passage offers the
 download and the proxy keeps working. SmartScreen may warn about an unsigned
-program first.
+program first. When a route that needs the helper `passage-iroh` is used for
+the first time, Windows Firewall may ask whether to allow it. The helper only
+makes outgoing connections, so you can choose Cancel; Passage works either way.
+
+With [Scoop](https://scoop.sh), install or update with
+`scoop install https://passage.gluek.info/scoop/passage.json` and
+`scoop update passage`. Quit Passage from its notification area icon before
+updating. Settings are kept in Scoop's persist folder, and the app shows the
+update command instead of replacing its own files.
 
 Settings → **Updates** checks for a new version and installs it: Passage
 replaces its program files in the same folder and starts again, keeping
@@ -133,6 +141,17 @@ open /Applications/Passage.app
 Adjust the path if you installed it elsewhere. This removes the downloaded
 app's quarantine flag; it does not disable Gatekeeper for other apps.
 
+With [Homebrew](https://brew.sh) the app installs without these steps:
+
+```bash
+brew tap mrgluek/passage
+brew trust mrgluek/passage
+brew install --cask passage
+```
+
+`brew trust` is needed because newer Homebrew versions load third-party taps
+only after it. The app updates itself as described above.
+
 Releases also have `passage-cli` for Linux and macOS (`amd64`, `arm64`) and
 Windows (`amd64`): the same proxy without the app. Unpack the archive for
 your system and run
@@ -148,6 +167,10 @@ On macOS, allow the unsigned binaries once with
 `xattr -dr com.apple.quarantine <unpacked folder>`. On Windows,
 `passage-cli.exe` is in the same archive as `passage.exe`; run it from a
 terminal in the unpacked folder.
+
+With Homebrew on macOS or Linux, `brew tap mrgluek/passage`,
+`brew trust mrgluek/passage` and `brew install passage-cli` install it with
+the helper next to it; no `xattr` step is needed.
 
 ## Build
 

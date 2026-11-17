@@ -348,6 +348,9 @@ class MainActivity : ThemedActivity() {
                 renderWhatsAppStatus()
             }
             if (appTab == HomeSetup.AppTab.OTHER) {
+                tabContent.addView(Ui.heading(this, getString(R.string.home_molly_title)).apply {
+                    setPadding(paddingLeft, 0, paddingRight, paddingBottom)
+                })
                 tabContent.addView(Ui.hint(this, getString(R.string.home_molly_intro)).apply {
                     setPadding(paddingLeft, paddingTop, paddingRight, paddingBottom + Ui.dp(this@MainActivity, 12))
                 })
@@ -381,6 +384,9 @@ class MainActivity : ThemedActivity() {
                     if (settings.auth) addView(Ui.passwordRow(this@MainActivity, settings.pass, passwordVisible) {
                         passwordVisible = !passwordVisible; renderSetup()
                     })
+                })
+                tabContent.addView(Ui.hint(this, getString(R.string.home_other_servers)).apply {
+                    setPadding(paddingLeft, paddingTop + Ui.dp(this@MainActivity, 12), paddingRight, paddingBottom)
                 })
             }
             if (!settings.appSeen) {

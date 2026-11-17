@@ -81,6 +81,10 @@
     </div>
     <p class="en">Windows 10 or later: unpack the archive and run <code>passage.exe</code>, nothing else to install. It stays in the notification area when its window is closed. Settings (<code>passage.ini</code>) and the link (<code>link.txt</code>) are kept in the same folder; put a new <code>link.txt</code> there to update the link.</p>
     <p class="ru">Windows 10 и новее: распакуйте архив и запустите <code>passage.exe</code>, ничего доустанавливать не нужно. Когда окно закрыто, он остаётся в области уведомлений. Настройки (<code>passage.ini</code>) и ссылка (<code>link.txt</code>) хранятся в той же папке; чтобы обновить ссылку, положите туда новый <code>link.txt</code>.</p>
+    <p class="en">The first time a route uses the helper <code>passage-iroh</code>, Windows Firewall may ask whether to allow it. The helper only makes outgoing connections, so you can choose <b>Cancel</b>; Passage works either way.</p>
+    <p class="ru">Когда маршрут впервые использует вспомогательную программу <code>passage-iroh</code>, брандмауэр Windows может спросить, разрешить ли ей доступ. Ей нужны только исходящие соединения, поэтому можно нажать <b>Отмена</b>: Passage работает и так.</p>
+    <p class="en">With <a href="https://scoop.sh">Scoop</a>: <code>scoop install https://passage.gluek.info/scoop/passage.json</code>. To update, quit Passage from its notification area icon and run <code>scoop update passage</code>.</p>
+    <p class="ru">Через <a href="https://scoop.sh">Scoop</a>: <code>scoop install https://passage.gluek.info/scoop/passage.json</code>. Чтобы обновить, закройте Passage через значок в области уведомлений и выполните <code>scoop update passage</code>.</p>
     <p class="en">macOS 13 or later: unpack the ZIP, move <code>Passage.app</code> to Applications and open it. Closing the window keeps Passage in the menu bar. Settings can enable launch at login. Open a received link and choose <b>Open in Passage</b> to import it.</p>
     <p class="ru">macOS 13 и новее: распакуйте ZIP, перенесите <code>Passage.app</code> в «Программы» и откройте его. После закрытия окна Passage остаётся в строке меню. В настройках можно включить автозапуск. Откройте полученную ссылку и нажмите <b>Открыть в Passage</b>, чтобы импортировать её.</p>
     <p class="en"><b>The macOS app has no Apple Developer ID signature and is not notarized.</b> If macOS restricts the first launch, try opening it, then choose <b>System Settings → Privacy &amp; Security → Open Anyway</b>. Alternatively, remove quarantine from this app in Terminal:</p>
@@ -89,6 +93,8 @@
 open /Applications/Passage.app</code></pre>
     <p class="muted en">Adjust the path if you installed it elsewhere. This only removes quarantine from Passage; it does not disable Gatekeeper.</p>
     <p class="muted ru">Если приложение установлено в другой папке, измените путь. Команда снимает карантин только с Passage и не отключает Gatekeeper.</p>
+    <p class="en">With <a href="https://brew.sh">Homebrew</a>: <code>brew tap mrgluek/passage</code>, <code>brew trust mrgluek/passage</code>, then <code>brew install --cask passage</code>. The app updates itself.</p>
+    <p class="ru">Через <a href="https://brew.sh">Homebrew</a>: <code>brew tap mrgluek/passage</code>, <code>brew trust mrgluek/passage</code>, затем <code>brew install --cask passage</code>. Приложение обновляется само.</p>
   </section>
 
   <section id="cli">
@@ -104,6 +110,8 @@ open /Applications/Passage.app</code></pre>
     <p class="ru">Распакуйте архив, сохраните ссылку в <code>link.txt</code> рядом и запустите в терминале <code>passage-cli -link-file link.txt</code>, затем укажите в приложении SOCKS5-прокси <code>127.0.0.1:18000</code>. <code>passage-iroh</code> держите в той же папке.</p>
     <p class="muted en">On Windows, <code>passage-cli.exe</code> is in the ZIP above.</p>
     <p class="muted ru">Для Windows <code>passage-cli.exe</code> лежит в ZIP выше.</p>
+    <p class="muted en">On macOS and Linux with Homebrew: <code>brew tap mrgluek/passage</code>, <code>brew trust mrgluek/passage</code>, <code>brew install passage-cli</code>.</p>
+    <p class="muted ru">На macOS и Linux через Homebrew: <code>brew tap mrgluek/passage</code>, <code>brew trust mrgluek/passage</code>, <code>brew install passage-cli</code>.</p>
   </section>
 
   <section id="use">

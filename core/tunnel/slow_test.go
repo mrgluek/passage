@@ -272,3 +272,21 @@ func TestAFailingDirectStillFallsBackToTheTunnelWithoutHedging(t *testing.T) {
 	}
 	c.Close()
 }
+
+func TestRaceDialPrimaryTookLeavesOutTheHedgeDelay(t *testing.T) {
+	primary := func(ctx context.Context, _, _ string) (net.Conn, error) {
+		time.Sleep(60 * time.Millisecond)
+		return nil, context.DeadlineExceeded
+	}
+	secondary := func(ctx context.Context, _, _ string) (net.Conn, error) {
+		time.Sleep(300 * time.Millisecond)
+		return nil, errors.New("refused")
+	}
+	o := raceDial(context.Background(), primary, secondary, time.Second, time.Second, 20*time.Millisecond, "example.org:443")
+	if o.err == nil || !o.hedged || !errors.Is(o.primary, context.DeadlineExceeded) {
+		t.Fatalf("outcome = %+v", o)
+	}
+	if o.primaryTook < 50*time.Millisecond || o.primaryTook > 200*time.Millisecond {
+		t.Fatalf("primary took %v, want about 60ms and not the whole race", o.primaryTook)
+	}
+}

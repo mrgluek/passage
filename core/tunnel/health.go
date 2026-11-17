@@ -45,7 +45,7 @@ func health(s Status, now time.Time) Health {
 			anyActivity = true
 		}
 		anyActivity = anyActivity || recent(g.LastProbe)
-		if r := g.LastResult; !g.LastProbe.IsZero() && (r.RelayOK > 0 || r.SmartOK || r.TunnelOK) {
+		if r := g.LastResult; !g.LastProbe.IsZero() && (r.directOK() || r.SmartOK || r.TunnelOK) {
 			probeOK = true
 		}
 	}
@@ -77,7 +77,7 @@ func health(s Status, now time.Time) Health {
 	case s.State == "relays-down":
 		return Health{State: "problem", Reason: "server_down"}
 	}
-	if s.State == "blocked" && s.LastResult.RelayOK == 0 && !s.LastResult.SmartOK && (s.RouteCount == 0 || allFailed(s.Tunnels)) {
+	if s.State == "blocked" && !s.LastResult.directOK() && !s.LastResult.SmartOK && (s.RouteCount == 0 || allFailed(s.Tunnels)) {
 		return Health{State: "problem", Reason: "no_route"}
 	}
 	if allStalled && age >= healthSettle {

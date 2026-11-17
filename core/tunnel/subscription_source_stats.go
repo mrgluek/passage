@@ -184,5 +184,10 @@ const tunnelRefusalMemory = 7 * 24 * time.Hour
 
 func (s Subscription) tunnelRefusedRecently(source string, now time.Time) bool {
 	at := s.SourceStats[sourceStatsKey(source)].TunnelRefusedAt
-	return at != 0 && now.Sub(time.Unix(at, 0)) < tunnelRefusalMemory
+	if at == 0 {
+		return false
+	}
+	// A mark in the future (the clock went back) is not a recent refusal.
+	age := now.Sub(time.Unix(at, 0))
+	return age >= 0 && age < tunnelRefusalMemory
 }

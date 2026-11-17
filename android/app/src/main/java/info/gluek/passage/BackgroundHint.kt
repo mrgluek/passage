@@ -30,8 +30,9 @@ object BackgroundHint {
     const val WINDOW_MS = 7L * 24 * 3600 * 1000
 
     fun vendor(manufacturer: String, brand: String): Vendor {
-        val names = listOf(manufacturer, brand).map { it.lowercase(Locale.ROOT) }
-        fun has(vararg words: String) = names.any { name -> words.any { name.contains(it) } }
+        // Whole words: a maker such as OUKITEL must not match "itel".
+        val names = listOf(manufacturer, brand).flatMap { it.lowercase(Locale.ROOT).split(Regex("[^a-z0-9]+")) }
+        fun has(vararg words: String) = names.any { it in words }
         return when {
             has("xiaomi", "redmi", "poco") -> Vendor.XIAOMI
             has("huawei", "honor") -> Vendor.HUAWEI
@@ -81,13 +82,19 @@ object BackgroundHint {
             ComponentName("com.miui.securitycenter", "com.miui.permcenter.autostart.AutoStartManagementActivity"))
         candidates += Intent(android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS)
             .setData(Uri.parse("package:${activity.packageName}"))
-        for (intent in candidates) {
+        val failures = mutableListOf<String>()
+        for ((index, intent) in candidates.withIndex()) {
             try {
                 activity.startActivity(intent)
+                // The report shows which screen opened, since vendor screens differ and fail silently.
+                val screen = if (index == candidates.lastIndex) "app settings" else "vendor screen"
+                Diagnostics.event("background settings opened: $screen vendor=${vendor.name.lowercase()}" +
+                    if (failures.isEmpty()) "" else " after ${failures.joinToString(",")}")
                 return
-            } catch (_: Exception) {
-                // Try the next screen.
+            } catch (e: Exception) {
+                failures += e.javaClass.simpleName
             }
         }
+        Diagnostics.event("background settings not opened: ${failures.joinToString(",")}")
     }
 }

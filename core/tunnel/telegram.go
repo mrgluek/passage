@@ -31,6 +31,8 @@ var telegramRanges = mustPrefixes(
 	"2a0a:f280::/32",
 )
 
+const telegramDirectMinAnswers = 2
+
 // telegramDCs are production data centers 1-5, as in Telegram Desktop's
 // built-in list; each answered the probe on 2026-10-30.
 var telegramDCs = []string{

@@ -99,6 +99,9 @@ type raceOutcome struct {
 	took    time.Duration
 	err     error
 	primary error
+	// primaryTook is how long the primary attempt took when it failed,
+	// without the hedge delay that the secondary adds to the whole race.
+	primaryTook time.Duration
 }
 
 // raceDial dials with primary and, if it has not finished after delay, also
@@ -152,13 +155,14 @@ func raceDial(ctx context.Context, primary, secondary dialFunc, pTimeout, sTimeo
 				} else {
 					cancels[r.i]()
 				}
-				return raceOutcome{conn: r.conn, winner: r.i, hedged: hedged, took: r.took, primary: out.primary}
+				return raceOutcome{conn: r.conn, winner: r.i, hedged: hedged, took: r.took, primary: out.primary, primaryTook: out.primaryTook}
 			}
 			if r.i == 0 {
 				out.primary = r.err
+				out.primaryTook = r.took
 				if !hedged {
 					cancels[0]()
-					return raceOutcome{hedged: false, took: r.took, err: r.err, primary: r.err}
+					return raceOutcome{hedged: false, took: r.took, err: r.err, primary: r.err, primaryTook: r.took}
 				}
 			}
 			if out.err == nil || r.i == 0 {

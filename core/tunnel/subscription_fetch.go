@@ -9,7 +9,6 @@ import (
 	"net"
 	"net/http"
 	"net/url"
-	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -90,8 +89,6 @@ func (r *SubscriptionRefresher) Refresh(ctx context.Context, cfg Config, dialers
 			pairs := subscriptionPairs(sub.Sources, tier.first, tier.end, last)
 			if tier.first == 0 && len(dialers) > 0 {
 				pairs = routeRefusedSourcesDirect(sub, pairs, len(dialers), time.Now(), directFirst)
-			} else if !diagnostic {
-				pairs = slices.DeleteFunc(pairs, func(pair subscriptionPair) bool { return directFirst[pair.source] })
 			}
 			if diagnostic {
 				pairs = nil

@@ -176,6 +176,27 @@ jobs:
           test -s "$RUNNER_TEMP/notes.md" || { echo "no CHANGELOG.md section for ${TAG#v}" >&2; exit 1; }
           gh release create "$TAG" dist/* --title "Passage ${TAG#v}" --notes-file "$RUNNER_TEMP/notes.md" --verify-tag
 
+      # The release is already public: a failure here never touches it, and
+      # the tap can be updated by hand with scripts/homebrew-tap.py.
+      - name: Update the Homebrew tap
+        continue-on-error: true
+        env:
+          TAG: ${{ github.ref_name }}
+          HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+        run: |
+          version=${TAG#v}
+          case $version in *-*) echo "pre-release: tap not updated"; exit 0 ;; esac
+          test -n "$HOMEBREW_TAP_TOKEN" || { echo "HOMEBREW_TAP_TOKEN missing" >&2; exit 1; }
+          auth="AUTHORIZATION: basic $(printf 'x-access-token:%s' "$HOMEBREW_TAP_TOKEN" | base64 -w0)"
+          echo "::add-mask::$(printf 'x-access-token:%s' "$HOMEBREW_TAP_TOKEN" | base64 -w0)"
+          git -c "http.https://github.com/.extraheader=$auth" clone --depth 1 https://github.com/mrgluek/homebrew-passage.git "$RUNNER_TEMP/tap"
+          python3 scripts/homebrew-tap.py "$version" dist/SHA256SUMS "$RUNNER_TEMP/tap"
+          cd "$RUNNER_TEMP/tap"
+          if git diff --quiet; then echo "tap already at $version"; exit 0; fi
+          git -c user.name="github-actions[bot]" -c user.email="41898282+github-actions[bot]@users.noreply.github.com" \
+            commit -am "Passage $version"
+          git -c "http.https://github.com/.extraheader=$auth" push origin HEAD:main
+
   website:
     needs: release
     permissions:
