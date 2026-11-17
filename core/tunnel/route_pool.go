@@ -642,14 +642,20 @@ func (c *irohClient) dialContext(ctx context.Context, n, a string, count bool) (
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if c.generation == generation && c.dial != nil && !c.closed {
-		c.ready.Store(err == nil)
+		// A network test dial is a check, not traffic: its outcome neither
+		// marks the route up or down nor clears the real failures.
+		if count {
+			c.ready.Store(err == nil)
+		}
 		restart := false
 		now := time.Now()
 		if c.now != nil {
 			now = c.now()
 		}
 		if err == nil {
-			c.failures = 0
+			if count {
+				c.failures = 0
+			}
 		} else if count && !errors.Is(err, errDestinationRefused) && !errors.Is(err, context.Canceled) {
 			c.failures++
 			restart = c.failures >= 3 && (c.lastRestart.IsZero() || now.Sub(c.lastRestart) >= 5*time.Minute)

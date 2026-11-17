@@ -200,3 +200,51 @@ func TestNetworkTestDialsDoNotRestartTheHelper(t *testing.T) {
 		t.Fatalf("three real failures: restarts=%d, want 1", restarts)
 	}
 }
+
+func TestNetworkTestDialsDoNotChangeTheHelperState(t *testing.T) {
+	now := time.Unix(1000, 0)
+	restarts := 0
+	fail, testFail := true, true
+	c := &irohClient{dir: t.TempDir(), now: func() time.Time { return now }, onRestart: func(time.Time) { restarts++ }}
+	defer c.Close()
+	c.start = func(life context.Context) (dialFunc, func(), error) {
+		done := make(chan struct{})
+		go func() { defer close(done); <-life.Done() }()
+		return func(ctx context.Context, _, address string) (net.Conn, error) {
+			if address == "test:1" && !testFail || address != "test:1" && !fail {
+				a, b := net.Pipe()
+				b.Close()
+				return a, nil
+			}
+			return nil, io.ErrUnexpectedEOF
+		}, func() { <-done }, nil
+	}
+	// A real success marks the route up.
+	fail = false
+	if conn, err := c.DialContext(context.Background(), "tcp", "real:1"); err != nil {
+		t.Fatal(err)
+	} else {
+		conn.Close()
+	}
+	if !c.Established() {
+		t.Fatal("a real dial did not mark the route up")
+	}
+	// A failed test dial must not mark it down.
+	c.testDial(context.Background(), "tcp", "test:1")
+	if !c.Established() {
+		t.Fatal("a failed network test dial marked the route down")
+	}
+	// Two real failures, a successful test dial in between, one more real failure: the test must not
+	// have cleared the count, so the third failure restarts the helper.
+	fail = true
+	c.DialContext(context.Background(), "tcp", "real:1")
+	c.DialContext(context.Background(), "tcp", "real:1")
+	testFail = false
+	if conn, err := c.testDial(context.Background(), "tcp", "test:1"); err == nil {
+		conn.Close()
+	}
+	c.DialContext(context.Background(), "tcp", "real:1")
+	if restarts != 1 {
+		t.Fatalf("restarts = %d, want 1: a successful network test dial cleared the real failures", restarts)
+	}
+}
