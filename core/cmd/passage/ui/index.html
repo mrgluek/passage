@@ -406,9 +406,10 @@ function render(v) {
   }
   const u = v.update;
   $("updateNotice").classList.toggle("hidden", !u.enabled || !["available", "downloading", "ready", "installing"].includes(u.state));
-  $("updateNotice").textContent = t("update_" + u.state, u.version);
+  const updateText = () => u.managed && u.version ? t("update_managed_" + u.managed, u.version) : t("update_" + u.state, u.version);
+  $("updateNotice").textContent = updateText();
   $("updateSettings").classList.toggle("hidden", !u.enabled);
-  $("updateStatus").textContent = u.error || t("update_" + u.state, u.version);
+  $("updateStatus").textContent = u.error || updateText();
   const failures = u.detail.split("\n").filter(Boolean);
   $("updateDetail").textContent = failures.length > 1 ? failures.map(s => "• " + s).join("\n") : u.detail;
   $("updateDetail").classList.toggle("hidden", !u.detail);
@@ -416,7 +417,7 @@ function render(v) {
   $("updateProgress").max = u.total || 1;
   $("updateProgress").value = u.done;
   $("updateCheck").disabled = ["checking", "downloading", "installing"].includes(u.state);
-  $("updateDownload").classList.toggle("hidden", !u.version || ["checking", "downloading", "ready", "installing"].includes(u.state));
+  $("updateDownload").classList.toggle("hidden", !u.version || !!u.managed || ["checking", "downloading", "ready", "installing"].includes(u.state));
   $("updateInstall").classList.toggle("hidden", !u.ready);
   $("updateCancel").classList.toggle("hidden", !["checking", "downloading"].includes(u.state));
   $("line").textContent = v.line;

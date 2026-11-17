@@ -41,7 +41,11 @@ type updateView struct {
 	Detail  string `json:"detail"`
 	Done    int64  `json:"done"`
 	Total   int64  `json:"total"`
+	Managed string `json:"managed"`
 }
+
+// managedBy is a variable so tests can change it.
+var managedBy = detectManaged
 
 func (a *App) updatesEnabled() bool {
 	key, err := base64.RawURLEncoding.DecodeString(update.PublicKey)
@@ -50,7 +54,7 @@ func (a *App) updatesEnabled() bool {
 
 func (a *App) updateViewLocked() updateView {
 	u := a.updater
-	v := updateView{Ready: u.archive != "" && u.cancel == nil && u.state != "installing", Enabled: a.updatesEnabled(), State: u.state, Error: u.err, Detail: u.detail, Done: u.done, Total: u.total}
+	v := updateView{Ready: u.archive != "" && u.cancel == nil && u.state != "installing", Enabled: a.updatesEnabled(), State: u.state, Error: u.err, Detail: u.detail, Done: u.done, Total: u.total, Managed: managedBy()}
 	if v.State == "" {
 		v.State = "idle"
 	}
@@ -152,6 +156,9 @@ func (a *App) downloadUpdate() error {
 	defer a.mu.Unlock()
 	if !a.updatesEnabled() || a.updater.offer == nil {
 		return errors.New("no update available")
+	}
+	if managedBy() != "" {
+		return errors.New("update with the package manager")
 	}
 	if a.updater.cancel != nil || a.updater.state == "installing" {
 		return errors.New("update already in progress")

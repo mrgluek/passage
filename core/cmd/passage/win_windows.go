@@ -97,7 +97,7 @@ func startCommand() string {
 	if p, err := filepath.EvalSymlinks(exe); err == nil {
 		exe = p
 	}
-	return `"` + exe + `" -autostart`
+	return `"` + stableProgramPath(exe) + `" -autostart`
 }
 
 // autostart reports whether sign-in starts this copy: a moved folder

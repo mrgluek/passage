@@ -19,6 +19,7 @@ func registerPassageScheme() error {
 	if err != nil {
 		return err
 	}
+	launch := stableProgramPath(exe)
 	for dir := filepath.Dir(exe); ; dir = filepath.Dir(dir) {
 		if strings.HasPrefix(strings.ToLower(filepath.Base(dir)), ".passage-update-") {
 			return nil
@@ -46,7 +47,7 @@ func registerPassageScheme() error {
 		return err
 	}
 	defer command.Close()
-	return command.SetStringValue("", fmt.Sprintf(`"%s" "%%1"`, exe))
+	return command.SetStringValue("", fmt.Sprintf(`"%s" "%%1"`, launch))
 }
 
 func linkPipeName() *uint16 {
