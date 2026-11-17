@@ -138,6 +138,9 @@ xattr -dr com.apple.quarantine /Applications/Passage.app
 open /Applications/Passage.app
 ```
 
+Adjust the path if you installed it elsewhere. This removes the downloaded
+app's quarantine flag; it does not disable Gatekeeper for other apps.
+
 With [Homebrew](https://brew.sh) the app installs without these steps:
 
 ```bash
@@ -147,11 +150,7 @@ brew install --cask passage
 ```
 
 `brew trust` is needed because newer Homebrew versions load third-party taps
-only after it. The app updates itself as described above; `brew upgrade
---greedy` also works.
-
-Adjust the path if you installed it elsewhere. This removes the downloaded
-app's quarantine flag; it does not disable Gatekeeper for other apps.
+only after it. The app updates itself as described above.
 
 Releases also have `passage-cli` for Linux and macOS (`amd64`, `arm64`) and
 Windows (`amd64`): the same proxy without the app. Unpack the archive for
@@ -164,13 +163,14 @@ passage-cli -link-file link.txt
 with a link saved in `link.txt` (or no flags to run without one), then set
 the SOCKS5 proxy `127.0.0.1:18000` in the other app. `passage-cli -h` lists
 the options. Keep `passage-iroh` next to `passage-cli`: some links need it.
-With Homebrew on macOS or Linux: `brew tap mrgluek/passage`,
-`brew trust mrgluek/passage`, `brew install passage-cli`; the helper is
-installed next to it.
 On macOS, allow the unsigned binaries once with
 `xattr -dr com.apple.quarantine <unpacked folder>`. On Windows,
 `passage-cli.exe` is in the same archive as `passage.exe`; run it from a
 terminal in the unpacked folder.
+
+With Homebrew on macOS or Linux, `brew tap mrgluek/passage`,
+`brew trust mrgluek/passage` and `brew install passage-cli` install it with
+the helper next to it; no `xattr` step is needed.
 
 ## Build
 
