@@ -102,6 +102,12 @@ program first. When a route that needs the helper `passage-iroh` is used for
 the first time, Windows Firewall may ask whether to allow it. The helper only
 makes outgoing connections, so you can choose Cancel; Passage works either way.
 
+With [Scoop](https://scoop.sh), install or update with
+`scoop install https://passage.gluek.info/scoop/passage.json` and
+`scoop update passage`. Quit Passage from its notification area icon before
+updating. Settings are kept in Scoop's persist folder, and the app shows the
+update command instead of replacing its own files.
+
 Settings → **Updates** checks for a new version and installs it: Passage
 replaces its program files in the same folder and starts again, keeping
 `passage.ini`, `link.txt` and the app history. If the new version does not
