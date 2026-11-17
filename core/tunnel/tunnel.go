@@ -1176,21 +1176,7 @@ func (t *Tunnel) dialWithHistory(g *group, addr string, logFailures bool) (net.C
 		if !usable(r) {
 			w = way{}
 		}
-		next := r
-		for n := r + 1; n < numRoutes; n++ {
-			if !tried[n] && usable(n) && !t.groupStalledLocked(g, n) {
-				next = n
-				break
-			}
-		}
-		if next == r && mode == ModeAuto {
-			for n := RouteDirect; n < numRoutes; n++ {
-				if !tried[n] && usable(n) && t.groupStalledLocked(g, n) {
-					next = n
-					break
-				}
-			}
-		}
+		next := t.nextUntriedLocked(g, r, tried, usable, mode)
 		if trial != nil && r == trial.route {
 			next = trial.fallback
 			w.timeout = min(w.timeout, defaultFirstResponseTimeout)
@@ -1250,6 +1236,15 @@ func (t *Tunnel) dialWithHistory(g *group, addr string, logFailures bool) (net.C
 				return c, r, nil
 			}
 			err = cmp.Or(o.primary, err)
+			// The route chosen before the race may be the hedge that has just
+			// failed, and a primary that failed before the hedge started
+			// leaves the hedge route as the natural fallback.
+			t.mu.Lock()
+			next = t.nextUntriedLocked(g, r, tried, usable, mode)
+			if next == r && !o.hedged && hedgeRoute != r && !tried[hedgeRoute] && usable(hedgeRoute) {
+				next = hedgeRoute
+			}
+			t.mu.Unlock()
 		} else {
 			ctx, cancel := context.WithTimeout(t.ctx, w.timeout)
 			if r == RouteTunnel {
@@ -1335,6 +1330,25 @@ func lookupFailureKind(err error) string {
 		return "no answer"
 	}
 	return "error"
+}
+
+// nextUntriedLocked is the route to try after r: the first usable route that
+// is not tried yet and not on hold, then (automatic mode) one that is on hold,
+// else r itself. Caller holds t.mu.
+func (t *Tunnel) nextUntriedLocked(g *group, r Route, tried map[Route]bool, usable func(Route) bool, mode string) Route {
+	for n := r + 1; n < numRoutes; n++ {
+		if !tried[n] && usable(n) && !t.groupStalledLocked(g, n) {
+			return n
+		}
+	}
+	if mode == ModeAuto {
+		for n := RouteDirect; n < numRoutes; n++ {
+			if !tried[n] && usable(n) && t.groupStalledLocked(g, n) {
+				return n
+			}
+		}
+	}
+	return r
 }
 
 // hedgeAllowedLocked: another route may be started alongside the current one

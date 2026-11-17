@@ -55,6 +55,9 @@ object Updater {
 
     private val keyed by lazy { enabled() }
 
+    @Volatile
+    private var cancelRequested = false
+
     fun snapshot(context: Context) = UpdateFlow.Snapshot(
         checking = checking,
         downloading = downloading,
@@ -67,6 +70,7 @@ object Updater {
 
     /** Stops a running download; it then ends without an error. */
     fun cancel() {
+        cancelRequested = true
         Native.updateCancel()
         UpdateDebug.cancel()
     }
@@ -94,10 +98,12 @@ object Updater {
         if (checking || downloading) return
         val app = context.applicationContext
         begin()
+        cancelRequested = false
         downloading = true
         thread(name = "passage-update-download") {
             val outcome = runCatching {
-                (offer ?: check(app).also { checked = true })?.let { if (UpdateDebug.active) UpdateDebug.download(app, it) else download(app, it) }
+                // A cancel that arrives while the release is still being looked up must not start the transfer.
+                (offer ?: check(app).also { checked = true })?.takeUnless { cancelRequested }?.let { if (UpdateDebug.active) UpdateDebug.download(app, it) else download(app, it) }
             }
             downloading = false
             ready = outcome.getOrNull()
