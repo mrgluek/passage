@@ -103,6 +103,7 @@ type group struct {
 
 	lastDirectConn   time.Time
 	lastDirectResult connectionResult
+	directFailures   [telegramDirectFailureMin]time.Time
 	slow             slowTrack
 	dnsLogged        time.Time
 }
@@ -161,7 +162,7 @@ const (
 	tunnelProbeTimeout    = 30 * time.Second // a cold soar session needs its hellos first
 	minProbeGap           = 10 * time.Second
 	blockedAfter          = 2 // consecutive probes showing direct access filtered before switching
-	recoveredAfter        = 3 // consecutive "a relay answers directly" probes before switching back
+	recoveredAfter        = 3 // consecutive successful direct probes before switching back
 	maxProbedRelays       = 4
 	suspiciousLifetime    = 20 * time.Second
 	interceptProbeTimeout = 800 * time.Millisecond
@@ -260,12 +261,13 @@ type routeStats struct {
 }
 
 type probeResult struct {
-	DirectHeld bool `json:"-"`
-	Stalled    bool `json:"stalled,omitempty"`
-	Relays     int  `json:"relays"`
-	RelayOK    int  `json:"relay_ok"`
-	NetworkOK  bool `json:"network_ok"` // a target or canary answered directly
-	CanaryOK   bool `json:"canary_ok"`
+	DirectHeld   bool `json:"-"`
+	Stalled      bool `json:"stalled,omitempty"`
+	Relays       int  `json:"relays"`
+	RelayOK      int  `json:"relay_ok"`
+	TelegramDCOK *int `json:"telegram_dc_ok,omitempty"` // configured DC replies for diagnostics
+	NetworkOK    bool `json:"network_ok"`               // a target or canary answered directly
+	CanaryOK     bool `json:"canary_ok"`
 	// Canaries are needed only when no target answered directly.
 	CanaryChecked bool `json:"canary_checked,omitempty"`
 	// SmartChecked: the probe hosts were tried on the smart route (they
@@ -281,6 +283,17 @@ type probeResult struct {
 	TunnelOK      bool `json:"tunnel_ok,omitempty"`
 
 	hosts []string // the host:ports probed, most recent first
+}
+
+func (r probeResult) directOK() bool {
+	if r.TelegramDCOK != nil {
+		return r.RelayOK >= telegramDirectMinAnswers
+	}
+	return r.RelayOK > 0
+}
+
+func (r probeResult) partialTelegram() bool {
+	return r.TelegramDCOK != nil && r.RelayOK > 0 && !r.directOK()
 }
 
 // Start validates cfg and starts serving SOCKS5. The tunnel starts on demand.
@@ -1232,6 +1245,10 @@ func (t *Tunnel) dialWithHistory(g *group, addr string, logFailures bool) (net.C
 			c, err = o.conn, o.err
 			primaryTook = o.primaryTook
 			if err == nil {
+				if g.kind == kindTelegram && r == RouteDirect && o.primary != nil && !errors.Is(o.primary, context.Canceled) {
+					t.recordFailedDial(g, r.String(), o.primary, o.primaryTook)
+					t.kickProbe()
+				}
 				if o.winner == 1 {
 					r = hedgeRoute
 				}
@@ -1639,7 +1656,7 @@ func (t *Tunnel) probe() map[*group]probeResult {
 		}()
 	}
 	wg.Wait()
-	failed := func(r probeResult) bool { return r.Relays > 0 && r.RelayOK == 0 }
+	failed := func(r probeResult) bool { return r.Relays > 0 && !r.directOK() }
 	anyFailed, networkOK := false, false
 	for _, r := range res {
 		anyFailed = anyFailed || failed(r)
@@ -1688,7 +1705,7 @@ func (t *Tunnel) probeGroup(g *group) probeResult {
 		hosts, _ = withoutIPv6(hosts)
 	}
 	res := probeResult{Relays: len(hosts), hosts: hosts}
-	var ok atomic.Int32
+	var ok, dcOK atomic.Int32
 	var wg sync.WaitGroup
 	for _, hp := range hosts {
 		wg.Add(1)
@@ -1698,11 +1715,18 @@ func (t *Tunnel) probeGroup(g *group) probeResult {
 			defer cancel()
 			if t.probeHost(ctx, g, false, hp) == nil {
 				ok.Add(1)
+				if g.kind == kindTelegram && slices.Contains(telegramDCs, hp) {
+					dcOK.Add(1)
+				}
 			}
 		}()
 	}
 	wg.Wait()
 	res.RelayOK = int(ok.Load())
+	if g.kind == kindTelegram && res.Relays > 0 {
+		count := int(dcOK.Load())
+		res.TelegramDCOK = &count
+	}
 	return res
 }
 
@@ -1772,8 +1796,9 @@ func (t *Tunnel) probeCanaries() bool {
 func (t *Tunnel) confirmViaTunnel(g *group, res probeResult) probeResult {
 	t.mu.Lock()
 	gs := g
-	check := t.mode == ModeAuto && res.Relays > 0 && !res.SmartOK && res.RelayOK == 0 &&
-		(gs.lastProbe.IsZero() || !res.NetworkOK || gs.route == RouteDirect && gs.failStreak+1 >= blockedAfter)
+	check := t.mode == ModeAuto && res.Relays > 0 && !res.SmartOK && !res.directOK() &&
+		(gs.lastProbe.IsZero() || !res.NetworkOK || gs.route == RouteDirect &&
+			(gs.failStreak+1 >= blockedAfter || gs.repeatedDirectFailures(t.timeNow())))
 	t.mu.Unlock()
 	canProbe := t.probeTunnel != nil
 	if g.kind == kindTelegram {
@@ -1815,29 +1840,35 @@ func (t *Tunnel) applyProbe(g *group, res probeResult) {
 	t.tickGroupLocked(g, t.timeNow())
 	gs := g
 	probeResult := res
+	now := t.timeNow()
 	res.DirectHeld = t.groupStalledLocked(g, RouteDirect)
 	if t.groupStalledLocked(g, RouteSmart) {
 		res.SmartOK = false
 	}
 	first := gs.lastProbe.IsZero()
-	gs.lastProbe = t.timeNow()
+	gs.lastProbe = now
 	gs.lastResult = probeResult
 	t.logDisagreementLocked(gs)
 	healthy := gs.tunnelFails == 0 && (t.client == nil || t.client.Established())
 	failStreak := gs.failStreak
-	if first && res.RelayOK == 0 && res.TunnelOK {
+	directOK := res.directOK()
+	repeatedFailures := res.Relays > 0 && !directOK && gs.repeatedDirectFailures(now)
+	if !directOK && (first && res.TunnelOK || repeatedFailures) {
 		failStreak = max(failStreak, blockedAfter-1)
 	}
 	recentReply := !gs.lastDirectConn.IsZero() && gs.lastDirectResult.Outcome == "ok" &&
-		t.timeNow().Sub(gs.lastDirectConn) < time.Minute
+		now.Sub(gs.lastDirectConn) < time.Minute
 	if recentReply {
 		failStreak = 0
 	}
 	route, fail, ok, state := decide(gs.route, res, failStreak, gs.okStreak, healthy)
 	if recentReply {
 		fail = 0
-		if res.RelayOK == 0 && !res.DirectHeld && (gs.route == RouteDirect || gs.route == RouteSmart) {
+		if !directOK && !res.DirectHeld && (gs.route == RouteDirect || gs.route == RouteSmart) {
 			route = gs.route
+			if res.partialTelegram() {
+				state = "direct"
+			}
 		}
 	}
 	if g.kind == kindTelegram && route == RouteSmart {
@@ -1859,10 +1890,10 @@ func (t *Tunnel) applyProbe(g *group, res probeResult) {
 		}
 		t.log.add("%s state %s -> %s (probe hosts %d/%d ok%s)", g.name, gs.state, state, res.RelayOK, res.Relays, via)
 	}
-	if res.DirectHeld && res.RelayOK > 0 {
+	if res.DirectHeld && directOK {
 		ok = gs.okStreak + 1
 	}
-	if res.RelayOK > 0 && gs.failedTrials > 0 {
+	if directOK && gs.failedTrials > 0 {
 		gs.goodSinceTrial = true
 	}
 	gs.failStreak, gs.okStreak, gs.state = fail, ok, state
@@ -1878,13 +1909,24 @@ func (t *Tunnel) applyProbe(g *group, res probeResult) {
 	if t.mode != ModeAuto || g.kind == kindOther {
 		return
 	}
+	if repeatedFailures && gs.route == RouteDirect && route == RouteTunnel && !t.hasTrialHoldLocked(g) &&
+		!strings.HasPrefix(t.only, "route:") {
+		h := gs.stalls[RouteDirect]
+		if h == nil {
+			h = &hold{groupHold: true}
+			gs.stalls[RouteDirect] = h
+		}
+		h.enterHeld(now)
+		h.count = max(h.count, telegramDirectFailureMin)
+		t.log.stalled(now, h, holdUnit(g, RouteDirect), "repeated failures", h.until.Sub(now), h.count)
+	}
 	t.setRouteLocked(g, route, state)
 	// Keep verdicts and route changes in the same order.
 	switch {
-	case state == "blocked" && route == RouteTunnel && probeResult.RelayOK == 0 && !probeResult.SmartOK &&
+	case state == "blocked" && route == RouteTunnel && !directOK && !probeResult.SmartOK &&
 		(probeResult.NetworkOK || probeResult.TunnelOK) && !(probeResult.TunnelChecked && !probeResult.TunnelOK):
 		rememberBlockedAt(t.cfg, g.name, true, t.timeNow())
-	case state == "direct" && route == RouteDirect && t.cleanMemoryAllowedLocked(g):
+	case state == "direct" && route == RouteDirect && directOK && t.cleanMemoryAllowedLocked(g):
 		rememberBlockedAt(t.cfg, g.name, false, t.timeNow())
 	}
 }
@@ -1905,9 +1947,9 @@ func (t *Tunnel) cleanMemoryAllowedLocked(g *group) bool {
 }
 
 // decide is the monitor's state machine, kept pure for tests.
-//   - any probe host answering directly means the network is open; leaving
+//   - a successful direct probe means the network is open; leaving
 //     the tunnel takes recoveredAfter such probes, or one if it is failing;
-//   - every relay failing while the network is reachable means "filtered": the
+//   - a failed direct probe while the network is reachable means "filtered": the
 //     smart route if a strategy works, else the tunnel, unless the relays
 //     fail through a live tunnel too: then they are down ("relays-down")
 //     and the route stays;
@@ -1926,7 +1968,7 @@ func decide(route Route, res probeResult, failStreak, okStreak int, tunnelHealth
 		return route, failStreak, 0, "blocked"
 	case res.Relays == 0:
 		return route, failStreak, okStreak, "unknown"
-	case res.RelayOK > 0:
+	case res.directOK():
 		if res.DirectHeld {
 			return route, 0, 0, "direct"
 		}
@@ -2605,7 +2647,8 @@ func (t *Tunnel) tickGroupLocked(g *group, now time.Time) {
 			g.goodSinceTrial = false
 		}
 		if h.groupHold && h.state == Held && !now.Before(h.until) &&
-			(Route(r) == RouteSmart || g.okStreak >= recoveredAfter || g.probeBlind) && t.mode == ModeAuto && !strings.HasPrefix(t.only, "route:") {
+			(Route(r) == RouteSmart || g.okStreak >= recoveredAfter || g.probeBlind || g.lastResult.partialTelegram()) &&
+			t.mode == ModeAuto && !strings.HasPrefix(t.only, "route:") {
 			expired := h.until
 			h.until = time.Time{}
 			h.trialUntil = now.Add(groupTrialWindow)

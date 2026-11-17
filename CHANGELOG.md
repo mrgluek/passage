@@ -17,6 +17,10 @@
   failures.
 - Reports show recent wins, losses, connection times and stalls for each
   tunnel route.
+- Telegram: direct access counts as working only when at least two targets
+  answer, and repeated failed direct connections count against a lone
+  answer, so the route no longer flips back and forth when only some
+  Telegram servers are reachable.
 - Passage uses less memory when an iroh route is idle: its helper stops after
   ten minutes without traffic and starts again at the next connection, which
   then takes about a second longer.

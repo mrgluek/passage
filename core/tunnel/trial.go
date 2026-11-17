@@ -71,7 +71,7 @@ func (t *Tunnel) startTrialLocked(g *group, usable func(Route) bool, fallback Ro
 	for _, r := range []Route{RouteDirect, RouteSmart} {
 		if h := g.stalls[r]; h != nil && h.state == Trial {
 			route := RouteDirect
-			if r == RouteSmart && g.lastResult.SmartOK && g.lastResult.RelayOK == 0 {
+			if r == RouteSmart && g.lastResult.SmartOK && !g.lastResult.directOK() {
 				route = RouteSmart
 			}
 			if !usable(route) || route == fallback {
@@ -135,6 +135,9 @@ func (t *Tunnel) finishTrial(trial *groupTrial, stalled bool) {
 		g.goodSinceTrial = false
 		g.probeBlind = false
 		g.probeBlindAt = time.Time{}
+		if g.lastResult.partialTelegram() {
+			g.state = "direct"
+		}
 	} else {
 		h.clear()
 	}

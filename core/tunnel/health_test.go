@@ -28,6 +28,10 @@ func TestHealth(t *testing.T) {
 			Groups: map[string]GroupStatus{"a": conn("ok", "r1", time.Minute), "b": conn("ok", "direct", time.Minute)}}, "working", ""},
 		{"probe ok", Status{Started: now.Add(-time.Hour), Groups: map[string]GroupStatus{
 			"a": {LastProbe: *ago(time.Minute), LastResult: probeResult{RelayOK: 1}}}}, "working", ""},
+		{"partial Telegram probe", Status{Started: now.Add(-time.Hour), State: "blocked", LastResult: telegramProbeResult(9, 1, 1),
+			Groups: map[string]GroupStatus{"telegram": {LastProbe: *ago(time.Minute), LastResult: telegramProbeResult(9, 1, 1)}}}, "problem", "no_route"},
+		{"Telegram main DCs answer", Status{Started: now.Add(-time.Hour), Groups: map[string]GroupStatus{
+			"telegram": {LastProbe: *ago(time.Minute), LastResult: telegramProbeResult(9, 3, 2)}}}, "working", ""},
 		{"probe past quiet interval", Status{Started: now.Add(-time.Hour), Groups: map[string]GroupStatus{
 			"a": {LastProbe: *ago(5*time.Minute + time.Second), LastResult: probeResult{RelayOK: 1}}}}, "working", ""},
 		{"quiet probe past ten minutes", Status{Started: now.Add(-time.Hour), Groups: map[string]GroupStatus{
