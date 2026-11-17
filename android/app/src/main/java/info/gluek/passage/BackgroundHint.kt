@@ -30,8 +30,9 @@ object BackgroundHint {
     const val WINDOW_MS = 7L * 24 * 3600 * 1000
 
     fun vendor(manufacturer: String, brand: String): Vendor {
-        val names = listOf(manufacturer, brand).map { it.lowercase(Locale.ROOT) }
-        fun has(vararg words: String) = names.any { name -> words.any { name.contains(it) } }
+        // Whole words: a maker such as OUKITEL must not match "itel".
+        val names = listOf(manufacturer, brand).flatMap { it.lowercase(Locale.ROOT).split(Regex("[^a-z0-9]+")) }
+        fun has(vararg words: String) = names.any { it in words }
         return when {
             has("xiaomi", "redmi", "poco") -> Vendor.XIAOMI
             has("huawei", "honor") -> Vendor.HUAWEI
