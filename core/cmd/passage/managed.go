@@ -8,10 +8,12 @@ import (
 )
 
 // managedInstall names the package manager that owns the folder of this
-// program. Scoop writes install.json next to the files it installs.
+// program. Scoop writes scoop-install.json (install.json in older versions) next to the files it installs.
 func managedInstall(programDir string) string {
-	if _, err := os.Stat(filepath.Join(programDir, "install.json")); err == nil {
-		return "scoop"
+	for _, name := range []string{"scoop-install.json", "install.json"} {
+		if _, err := os.Stat(filepath.Join(programDir, name)); err == nil {
+			return "scoop"
+		}
 	}
 	return ""
 }

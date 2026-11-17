@@ -21,7 +21,7 @@ func TestManagedInstall(t *testing.T) {
 	if managedInstall(version) != "" || stableProgramPath(exe) != exe {
 		t.Fatal("plain folder treated as managed")
 	}
-	os.WriteFile(filepath.Join(version, "install.json"), []byte(`{"bucket":"passage"}`), 0o644)
+	os.WriteFile(filepath.Join(version, "scoop-install.json"), []byte(`{"bucket":"passage"}`), 0o644)
 	if managedInstall(version) != "scoop" {
 		t.Fatal("Scoop folder not detected")
 	}
@@ -31,7 +31,7 @@ func TestManagedInstall(t *testing.T) {
 	if got := stableProgramPath(exe); got != filepath.Join(current, "passage.exe") {
 		t.Fatalf("stable path = %s", got)
 	}
-	os.WriteFile(filepath.Join(current, "install.json"), nil, 0o644)
+	os.WriteFile(filepath.Join(current, "install.json"), nil, 0o644) // older Scoop name
 	if got := stableProgramPath(filepath.Join(current, "passage.exe")); !strings.HasSuffix(got, filepath.Join("current", "passage.exe")) {
 		t.Fatalf("current path changed: %s", got)
 	}
