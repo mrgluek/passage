@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.9.3
+
+- Android, Windows and macOS: the home screen has the same four tabs: Delta
+  Chat, Telegram, WhatsApp and Other. Other shows the host, port and password
+  for any other app, and says that Signal and SimpleX servers are allowed. On
+  Android it also holds the Molly settings.
+- A slow connection no longer fails when the way tried first fails right
+  away: Passage falls back to the other way. A second try that has already
+  failed is not repeated for the same connection.
+- Subscription updates again fetch directly a source that a route does not
+  allow.
+- Android: cancelling an update while Passage is still looking for the new
+  version no longer starts the download.
+- The network test no longer changes the state of a route or its count of
+  failures.
+
 ## 0.9.2
 
 - Slow connections to chat servers no longer make messages wait: when a
