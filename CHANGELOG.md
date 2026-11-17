@@ -19,6 +19,9 @@
   that way keeps its settings in Scoop's persist folder, starts at sign-in
   through the `current` folder and shows the `scoop update passage` command
   instead of updating itself.
+- macOS: Passage can be installed with Homebrew from the
+  `mrgluek/passage` tap (the app as a cask, `passage-cli` as a formula, also
+  for Linux).
 
 ## 0.9.2
 
