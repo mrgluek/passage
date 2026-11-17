@@ -98,7 +98,9 @@ the link in `link.txt` (one link per line) and the app history in
 it again within a few seconds. The window uses the Microsoft Edge WebView2
 Runtime that comes with Windows; on a system without it, Passage offers the
 download and the proxy keeps working. SmartScreen may warn about an unsigned
-program first.
+program first. When a route that needs the helper `passage-iroh` is used for
+the first time, Windows Firewall may ask whether to allow it. The helper only
+makes outgoing connections, so you can choose Cancel; Passage works either way.
 
 Settings → **Updates** checks for a new version and installs it: Passage
 replaces its program files in the same folder and starts again, keeping
