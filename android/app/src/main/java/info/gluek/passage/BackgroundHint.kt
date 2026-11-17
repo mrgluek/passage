@@ -82,13 +82,19 @@ object BackgroundHint {
             ComponentName("com.miui.securitycenter", "com.miui.permcenter.autostart.AutoStartManagementActivity"))
         candidates += Intent(android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS)
             .setData(Uri.parse("package:${activity.packageName}"))
-        for (intent in candidates) {
+        val failures = mutableListOf<String>()
+        for ((index, intent) in candidates.withIndex()) {
             try {
                 activity.startActivity(intent)
+                // The report shows which screen opened, since vendor screens differ and fail silently.
+                val screen = if (index == candidates.lastIndex) "app settings" else "vendor screen"
+                Diagnostics.event("background settings opened: $screen vendor=${vendor.name.lowercase()}" +
+                    if (failures.isEmpty()) "" else " after ${failures.joinToString(",")}")
                 return
-            } catch (_: Exception) {
-                // Try the next screen.
+            } catch (e: Exception) {
+                failures += e.javaClass.simpleName
             }
         }
+        Diagnostics.event("background settings not opened: ${failures.joinToString(",")}")
     }
 }
