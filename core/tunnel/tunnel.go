@@ -1208,13 +1208,14 @@ func (t *Tunnel) dialWithHistory(g *group, addr string, logFailures bool) (net.C
 		}
 		observed := false
 		observe := func(ctx context.Context) context.Context {
-			return context.WithValue(ctx, connectionObserverKey{}, func(via string) {
+			return context.WithValue(ctx, connectionObserverKey{}, func(via string, err error, waited time.Duration) {
 				observed = true
-				t.recordConnection(g, "refused", via)
+				t.recordFailedDial(g, via, err, waited)
 			})
 		}
 		var c net.Conn
 		var err error
+		var primaryTook time.Duration
 		dialStart := time.Now()
 		if hedge.dial != nil {
 			primary := w.dial
@@ -1229,6 +1230,7 @@ func (t *Tunnel) dialWithHistory(g *group, addr string, logFailures bool) (net.C
 				tried[hedgeRoute] = true
 			}
 			c, err = o.conn, o.err
+			primaryTook = o.primaryTook
 			if err == nil {
 				if o.winner == 1 {
 					r = hedgeRoute
@@ -1271,7 +1273,11 @@ func (t *Tunnel) dialWithHistory(g *group, addr string, logFailures bool) (net.C
 			trial = nil
 		}
 		if !observed && !trialFailed {
-			t.recordFailedDial(g, r.String(), err, time.Since(dialStart))
+			waited := time.Since(dialStart)
+			if primaryTook > 0 {
+				waited = primaryTook
+			}
+			t.recordFailedDial(g, r.String(), err, waited)
 		}
 		if r == RouteDirect {
 			t.noteLookupFailure(g, err)

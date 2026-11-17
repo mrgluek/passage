@@ -101,7 +101,7 @@ func TestTunnelReplyClearsTunnelFails(t *testing.T) {
 
 func TestCleanMemoryNeedsOpenHold(t *testing.T) {
 	for _, state := range []holdState{Open, Suspect, Held, Trial} {
-		for _, outcome := range []string{"", "ok", "stall", "later", "refused"} {
+		for _, outcome := range []string{"", "ok", "stall", "later", "refused", "timeout"} {
 			for _, age := range []time.Duration{0, 10*time.Minute - time.Nanosecond, 10 * time.Minute} {
 				t.Run([...]string{"open", "suspect", "held", "trial"}[state]+"/"+outcome+"/"+age.String(), func(t *testing.T) {
 					resetKnownStrategies()

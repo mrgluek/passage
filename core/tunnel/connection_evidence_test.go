@@ -32,7 +32,7 @@ func disagreementLines(t *Tunnel) []string {
 }
 
 func TestConnectionProbeDisagreement(t *testing.T) {
-	for _, outcome := range []string{"ok", "stall", "refused", "later"} {
+	for _, outcome := range []string{"ok", "stall", "refused", "timeout", "later"} {
 		for _, probeOK := range []bool{false, true} {
 			for _, probeFirst := range []bool{false, true} {
 				t.Run(outcome+"/probe="+stringBool(probeOK)+"/first="+stringBool(probeFirst), func(t *testing.T) {
@@ -54,7 +54,7 @@ func TestConnectionProbeDisagreement(t *testing.T) {
 						probe()
 					}
 					lines := disagreementLines(tt)
-					want := probeOK && (outcome == "stall" || outcome == "refused") || !probeOK && outcome == "ok"
+					want := probeOK && (outcome == "stall" || outcome == "refused" || outcome == "timeout") || !probeOK && outcome == "ok"
 					if !want {
 						if len(lines) != 0 {
 							t.Fatal(lines)
@@ -301,7 +301,7 @@ func TestConnectionEvidencePreservesHoldAndRecovery(t *testing.T) {
 
 func TestConnectionEvidenceIgnoresBackgroundDial(t *testing.T) {
 	calls := 0
-	ctx := context.WithValue(context.Background(), connectionObserverKey{}, func(string) { calls++ })
+	ctx := context.WithValue(context.Background(), connectionObserverKey{}, func(string, error, time.Duration) { calls++ })
 	p := &routePool{ids: []string{"route-a"}, ipv6: []bool{false}, clients: []soarClient{
 		&poolFixture{dial: func(context.Context, string, string) (net.Conn, error) { return nil, errDestinationRefused }},
 	}}
@@ -358,3 +358,33 @@ type timeoutError struct{}
 func (timeoutError) Error() string   { return "i/o timeout" }
 func (timeoutError) Timeout() bool   { return true }
 func (timeoutError) Temporary() bool { return true }
+
+func TestPoolObserverGetsTheFailureAndItsWait(t *testing.T) {
+	type seen struct {
+		via    string
+		err    error
+		waited time.Duration
+	}
+	var got []seen
+	ctx := context.WithValue(context.Background(), connectionObserverKey{}, func(via string, err error, waited time.Duration) {
+		got = append(got, seen{via, err, waited})
+	})
+	p := &routePool{ids: []string{"route-a"}, ipv6: []bool{false}, clients: []soarClient{
+		&poolFixture{dial: func(context.Context, string, string) (net.Conn, error) {
+			time.Sleep(30 * time.Millisecond)
+			return nil, context.DeadlineExceeded
+		}},
+	}}
+	if _, err := p.DialContext(ctx, "tcp", "relay.example.org:443"); err == nil {
+		t.Fatal("dial unexpectedly succeeded")
+	}
+	if len(got) != 1 || !errors.Is(got[0].err, context.DeadlineExceeded) || got[0].waited < 25*time.Millisecond {
+		t.Fatalf("observer calls = %+v", got)
+	}
+	g := &group{}
+	tun := &Tunnel{}
+	tun.recordFailedDial(g, got[0].via, got[0].err, 8*time.Second)
+	if g.lastConnResult.Outcome != "timeout" || g.lastConnResult.AfterSecs != 8 {
+		t.Fatalf("a pool timeout was recorded as %+v", g.lastConnResult)
+	}
+}

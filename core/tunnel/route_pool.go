@@ -212,6 +212,7 @@ func (p *routePool) dialContext(ctx context.Context, network, address string, ba
 		conn    net.Conn
 		err     error
 		connect time.Duration
+		waited  time.Duration // how long a failed attempt took
 	}
 	results := make(chan result, len(order))
 	started, pending, reservePending := 0, 0, 0
@@ -278,20 +279,20 @@ func (p *routePool) dialContext(ctx context.Context, network, address string, ba
 			}
 		}
 		go func() {
-			var start time.Time
-			if recordStats {
-				start = time.Now()
-			}
+			start := time.Now()
 			conn, err := dial(child, network, address)
-			var connect time.Duration
+			var connect, waited time.Duration
 			if err == nil && recordStats {
 				connect = time.Since(start)
+			}
+			if err != nil {
+				waited = time.Since(start)
 			}
 			if err != nil && !errors.Is(err, errIrohSleeping) && !errors.Is(err, context.Canceled) && !errors.Is(err, errDestinationRefused) {
 				p.mark(i, true)
 			}
 			cancel()
-			results <- result{i, conn, err, connect}
+			results <- result{i, conn, err, connect, waited}
 		}()
 	}
 	// drain closes connections that win after the race is decided.
@@ -349,8 +350,8 @@ func (p *routePool) dialContext(ctx context.Context, network, address string, ba
 				skipped++
 				sleeping = append(sleeping, r.i)
 			}
-			if observe, ok := ctx.Value(connectionObserverKey{}).(func(string)); ok && !background {
-				observe(p.routeName(r.i))
+			if observe, ok := ctx.Value(connectionObserverKey{}).(func(string, error, time.Duration)); ok && !background {
+				observe(p.routeName(r.i), r.err, r.waited)
 			}
 			if errors.Is(r.err, errDestinationRefused) {
 				refusals++
