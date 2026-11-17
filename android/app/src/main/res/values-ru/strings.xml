@@ -291,7 +291,7 @@
     <string name="report_failed">Не удалось создать файл отчёта. Повторите попытку.</string>
     <string name="home_tab_delta">Delta Chat</string>
     <string name="home_tab_telegram">Telegram</string>
-    <string name="home_tab_other">Molly</string>
+    <string name="home_tab_other">Другое</string>
     <string name="home_delta_how">В приложении Delta Chat (или ArcaneChat) откройте Настройки → Дополнительно → Прокси → Добавить прокси и вставьте ссылку:</string>
     <string name="home_telegram_how">Нажмите кнопку: Telegram откроется и предложит добавить прокси. Если установлено несколько приложений Telegram или у вас неофициальный клиент, ссылка скопирована: вставьте её в Настройки → Данные и память → Прокси:</string>
     <string name="home_dot_on">Прокси включён</string>
@@ -323,6 +323,8 @@
     <string name="channel_tunnel_type">через %1$s-туннель</string>
     <string name="channel_tunnel_id">через туннель (%1$s)</string>
     <string name="channel_tunnel_plain">через туннель</string>
+    <string name="home_molly_title">Molly (Signal для Android)</string>
+    <string name="home_other_servers">Серверы Signal и SimpleX разрешены на маршрутах туннеля.</string>
     <string name="home_molly_how">Molly: Настройки → Сеть → Использовать прокси: SOCKS5, хост и порт указаны ниже.</string>
     <string name="home_molly_intro">Molly — клиент для Signal с открытым кодом, он поддерживает прокси, но не умеет передавать логин и пароль. Разрешите это ниже:</string>
     <string name="allow_no_password">Разрешить приложения без поддержки пароля</string>

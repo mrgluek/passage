@@ -284,7 +284,7 @@
     <string name="report_failed">Couldn\'t create the report file. Try again.</string>
     <string name="home_tab_delta">Delta Chat</string>
     <string name="home_tab_telegram">Telegram</string>
-    <string name="home_tab_other">Molly</string>
+    <string name="home_tab_other">Other</string>
     <string name="home_delta_how">In the Delta Chat (or ArcaneChat) app open Settings → Advanced → Proxy → Add proxy, then paste the link:</string>
     <string name="home_telegram_how">Tap the button: Telegram opens and offers to add the proxy. If several Telegram apps are installed, or yours is not the official one, the link is copied: paste it in Settings → Data and Storage → Proxy:</string>
     <string name="home_dot_on">Proxy on</string>
@@ -316,6 +316,8 @@
     <string name="channel_tunnel_type">via %1$s tunnel</string>
     <string name="channel_tunnel_id">via tunnel (%1$s)</string>
     <string name="channel_tunnel_plain">via tunnel</string>
+    <string name="home_molly_title">Molly (Signal for Android)</string>
+    <string name="home_other_servers">Signal and SimpleX servers are allowed on the tunnel routes.</string>
     <string name="home_molly_how">Molly: Settings → Network → Use proxy: SOCKS5, host and port below.</string>
     <string name="home_molly_intro">Molly is an open-source Signal client. It supports a proxy but cannot send a username and password. Allow that below:</string>
     <string name="allow_no_password">Allow apps that cannot send a password</string>
