@@ -16,6 +16,16 @@ func managedInstall(programDir string) string {
 	return ""
 }
 
+// managedDataDir is where Scoop keeps the data of an app across versions,
+// next to apps: settings must not stay in a version folder it deletes.
+func managedDataDir(programDir string) string {
+	if managedInstall(programDir) == "" {
+		return ""
+	}
+	app := filepath.Dir(programDir)
+	return filepath.Join(filepath.Dir(filepath.Dir(app)), "persist", filepath.Base(app))
+}
+
 // stableProgramPath is the path that survives an update by the package
 // manager: Scoop keeps each version in its own folder and points "current"
 // at the newest.

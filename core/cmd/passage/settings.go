@@ -288,6 +288,9 @@ func portableDir(override string) (string, error) {
 	}
 	if err == nil && runtime.GOOS != "darwin" {
 		dir := filepath.Dir(exe)
+		if persist := managedDataDir(dir); persist != "" {
+			return persist, os.MkdirAll(persist, 0700)
+		}
 		if writable(dir) {
 			return dir, nil
 		}

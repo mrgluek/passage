@@ -25,6 +25,9 @@ func TestManagedInstall(t *testing.T) {
 	if managedInstall(version) != "scoop" {
 		t.Fatal("Scoop folder not detected")
 	}
+	if got, want := managedDataDir(version), filepath.Join(root, "persist", "passage"); got != want {
+		t.Fatalf("data dir = %s, want %s", got, want)
+	}
 	if got := stableProgramPath(exe); got != filepath.Join(current, "passage.exe") {
 		t.Fatalf("stable path = %s", got)
 	}
