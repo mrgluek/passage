@@ -94,7 +94,7 @@ type group struct {
 
 	trial          *groupTrial
 	lastTrial      time.Time
-	failedTrials   int
+	failedTrialAt  time.Time
 	goodSinceTrial bool
 	memoryRestored bool
 	restoredRoute  string
@@ -1893,7 +1893,7 @@ func (t *Tunnel) applyProbe(g *group, res probeResult) {
 	if res.DirectHeld && directOK {
 		ok = gs.okStreak + 1
 	}
-	if directOK && gs.failedTrials > 0 {
+	if directOK && !gs.failedTrialAt.IsZero() {
 		gs.goodSinceTrial = true
 	}
 	gs.failStreak, gs.okStreak, gs.state = fail, ok, state
@@ -2630,9 +2630,12 @@ func (t *Tunnel) tickGroupLocked(g *group, now time.Time) {
 		return
 	}
 	defer t.rememberGroupHoldLocked(g)
-	if g.probeBlind && now.Sub(g.probeBlindAt) >= 24*time.Hour {
+	blindExpired := g.probeBlind && now.Sub(g.probeBlindAt) >= holdMemory
+	if blindExpired {
 		g.probeBlind = false
-		g.failedTrials = 0
+	}
+	if blindExpired || !g.failedTrialAt.IsZero() && now.Sub(g.failedTrialAt) >= holdMemory {
+		g.failedTrialAt = time.Time{}
 		g.goodSinceTrial = false
 	}
 	for r, h := range g.stalls {
@@ -2643,7 +2646,7 @@ func (t *Tunnel) tickGroupLocked(g *group, now time.Time) {
 		step := h.step
 		h.tick(now, t.log, holdUnit(g, Route(r)))
 		if Route(r) == RouteDirect && step > 0 && h.step == 0 {
-			g.failedTrials = 0
+			g.failedTrialAt = time.Time{}
 			g.goodSinceTrial = false
 		}
 		if h.groupHold && h.state == Held && !now.Before(h.until) &&

@@ -90,8 +90,9 @@ func (t *Tunnel) finishTrial(trial *groupTrial, stalled bool) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	g, h := trial.group, trial.hold
+	now := t.timeNow()
 	defer t.rememberGroupHoldLocked(g)
-	t.tickGroupLocked(g, t.timeNow())
+	t.tickGroupLocked(g, now)
 	if g.trial != trial {
 		return
 	}
@@ -100,7 +101,6 @@ func (t *Tunnel) finishTrial(trial *groupTrial, stalled bool) {
 	if t.mode != ModeAuto || strings.HasPrefix(t.only, "route:") || g.kind == kindOther || h.state != Trial {
 		return
 	}
-	now := t.timeNow()
 	outcome := "ok"
 	if stalled {
 		outcome = "stall"
@@ -115,12 +115,12 @@ func (t *Tunnel) finishTrial(trial *groupTrial, stalled bool) {
 		if trial.route != RouteDirect {
 			return
 		}
-		if g.failedTrials > 0 && g.goodSinceTrial && !g.probeBlind {
+		if !g.failedTrialAt.IsZero() && g.goodSinceTrial && !g.probeBlind {
 			g.probeBlind = true
 			g.probeBlindAt = now
 			t.log.add("%s", historyLine(historyTransition{prefix: "disagree", unit: g.historyUnit(), probe: "ok", outcome: "stall", route: "direct", reason: "2 trials failed, probes ignored for return"}))
 		}
-		g.failedTrials++
+		g.failedTrialAt = now
 		g.goodSinceTrial = false
 		return
 	}
@@ -131,7 +131,7 @@ func (t *Tunnel) finishTrial(trial *groupTrial, stalled bool) {
 				h.clear()
 			}
 		}
-		g.failedTrials = 0
+		g.failedTrialAt = time.Time{}
 		g.goodSinceTrial = false
 		g.probeBlind = false
 		g.probeBlindAt = time.Time{}
