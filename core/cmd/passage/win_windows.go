@@ -3,8 +3,6 @@ package main
 import (
 	"errors"
 	"fmt"
-	"os"
-	"path/filepath"
 	"runtime"
 	"strings"
 	"unsafe"
@@ -93,10 +91,7 @@ func (winPlatform) canOpen(scheme string) bool {
 
 // startCommand is how sign-in starts this copy of Passage.
 func startCommand() string {
-	exe, _ := os.Executable()
-	if p, err := filepath.EvalSymlinks(exe); err == nil {
-		exe = p
-	}
+	exe, _ := programExe()
 	return `"` + stableProgramPath(exe) + `" -autostart`
 }
 

@@ -42,11 +42,7 @@ func (winPlatform) updateTarget() string {
 }
 
 func programPath() (string, error) {
-	exe, err := os.Executable()
-	if err != nil {
-		return "", err
-	}
-	return filepath.EvalSymlinks(exe)
+	return programExe()
 }
 
 func (p winPlatform) applyUpdate(archive, version string) error {

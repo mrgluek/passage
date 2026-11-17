@@ -282,10 +282,7 @@ func portableDir(override string) (string, error) {
 		}
 		return dir, err
 	}
-	exe, err := os.Executable()
-	if err == nil {
-		exe, err = filepath.EvalSymlinks(exe)
-	}
+	exe, err := programExe()
 	if err == nil && runtime.GOOS != "darwin" {
 		dir := filepath.Dir(exe)
 		if persist := managedDataDir(dir); persist != "" {

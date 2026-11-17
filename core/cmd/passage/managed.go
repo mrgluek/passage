@@ -46,13 +46,24 @@ func stableProgramPath(exe string) string {
 	return current
 }
 
-var detectManaged = sync.OnceValue(func() string {
+// programExe is this program's path with links resolved. When a link cannot
+// be resolved (a Scoop "current" junction on some systems) the path as
+// started is still usable.
+func programExe() (string, error) {
 	exe, err := os.Executable()
 	if err != nil {
-		return ""
+		return "", err
 	}
 	if p, err := filepath.EvalSymlinks(exe); err == nil {
-		exe = p
+		return p, nil
+	}
+	return exe, nil
+}
+
+var detectManaged = sync.OnceValue(func() string {
+	exe, err := programExe()
+	if err != nil {
+		return ""
 	}
 	return managedInstall(filepath.Dir(exe))
 })
