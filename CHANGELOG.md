@@ -17,6 +17,9 @@
   failures.
 - Reports show recent wins, losses, connection times and stalls for each
   tunnel route.
+- Passage uses less memory when an iroh route is idle: its helper stops after
+  ten minutes without traffic and starts again at the next connection, which
+  then takes about a second longer.
 - Windows: Passage can be installed and updated with Scoop. A copy installed
   that way keeps its settings in Scoop's persist folder, starts at sign-in
   through the `current` folder and shows the `scoop update passage` command
