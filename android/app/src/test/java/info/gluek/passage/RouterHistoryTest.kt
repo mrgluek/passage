@@ -52,6 +52,14 @@ class RouterHistoryTest {
     }
 
     @Test
+    fun copiesHelperRestartLines() {
+        val history = RouterHistory()
+        val restarted = "2026-01-01T00:00:05Z" to "restarted: iroh helper (no answer)"
+        val stopped = "2026-01-01T00:00:06Z" to "iroh helper stopped: idle"
+        assertEquals(listOf(restarted), history.select(listOf(restarted, stopped, restarted)))
+    }
+
+    @Test
     fun copiesDistinctSimultaneousAndBackdatedEvents() {
         val history = RouterHistory()
         val first = "2026-01-01T00:00:02Z" to "stalled: relay-1 direct (first reply), paused for 2 min, count=2"
