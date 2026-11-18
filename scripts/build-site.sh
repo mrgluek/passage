@@ -64,9 +64,14 @@ if [ -f "$apks/update.json" ]; then
 fi
 du -sh "$out/fdroid/repo"
 # Scoop installs and updates from this manifest: scoop install $site_url/scoop/passage.json
-mkdir -p "$out/scoop"
-python3 "$root/scripts/scoop-manifest.py" "$version" "$apks/passage-$version-windows-amd64.zip" \
-  "$repo_url/passage-$version-windows-amd64.zip" "$out/scoop/passage.json"
+# It points at the ZIP on this site, so it is written only when that ZIP is published.
+if [ -f "$out/fdroid/repo/passage-$version-windows-amd64.zip" ]; then
+  mkdir -p "$out/scoop"
+  python3 "$root/scripts/scoop-manifest.py" "$version" "$out/fdroid/repo/passage-$version-windows-amd64.zip" \
+    "$repo_url/passage-$version-windows-amd64.zip" "$out/scoop/passage.json"
+else
+  echo "no Windows ZIP on the site: no Scoop manifest" >&2
+fi
 cp "$root/site/style.css" "$root/site/icon.svg" "$root/site/qrcode.js" "$out/"
 # App Links: lets Android open https://passage.gluek.info/link#… in the app.
 cp -R "$root/site/.well-known" "$out/"
