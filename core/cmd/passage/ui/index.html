@@ -494,7 +494,7 @@ function renderHomeUpdate(u) {
     : u.home_action === "updateInstall" ? t("update_install")
     : u.size > 0 ? t("update_download_size", updateSize(u.size)) : t("update_download");
   setHidden("homeUpdateSecondary", !(downloading && !u.managed) && !u.can_dismiss);
-  $("homeUpdateSecondary").textContent = t(downloading ? "cancel" : "update_later");
+  $("homeUpdateSecondary").textContent = t(downloading ? "cancel" : "update_skip");
 }
 
 function stepRow(kind, done, current, text, number) {

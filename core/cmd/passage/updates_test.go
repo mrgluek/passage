@@ -152,7 +152,7 @@ func TestHomeUpdateUI(t *testing.T) {
 	}
 	for _, lang := range []string{"en", "ru"} {
 		for _, key := range []string{
-			"update_home_title", "update_home_text", "update_download_size", "update_later",
+			"update_home_title", "update_home_text", "update_download_size", "update_skip",
 			"update_try_again", "update_verifying",
 		} {
 			if texts[lang][key] == "" {

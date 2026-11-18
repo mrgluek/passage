@@ -3,8 +3,8 @@
 ## 0.9.4
 
 - Windows and macOS: a new version is offered on the home screen with the
-  download progress and the install button there, like on Android; Later
-  hides the offer for that version. A copy installed with Scoop shows the
+  download progress and the install button there, like on Android; Skip this
+  version hides the offer for that version (Settings still has it). A copy installed with Scoop shows the
   `scoop update passage` command instead.
 - The iroh helper is no longer stopped again right after a failed first
   connection that started it following an idle stop.
