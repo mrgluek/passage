@@ -957,6 +957,8 @@ func (a *App) call(method string, arg json.RawMessage) (any, error) {
 		a.cancelUpdate()
 	case "updateInstall":
 		return nil, a.installUpdate()
+	case "dismissUpdate":
+		return nil, a.dismissUpdate(str())
 	case "setAutoUpdate":
 		a.mu.Lock()
 		a.settings.AutoUpdate = flag()

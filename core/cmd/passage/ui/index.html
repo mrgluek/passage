@@ -70,6 +70,8 @@ h2 { margin: 20px 0 4px; font-size: 14px; font-weight: 600; }
 .hint { color: var(--muted); font-size: 13px; margin: 2px 0; white-space: pre-line; }
 #updateStatus { margin: 8px 0 0; }
 #updateDetail { overflow-wrap: anywhere; user-select: text; }
+#homeUpdateProgress { width: 100%; margin-top: 8px; }
+#homeUpdateReason { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .warn { color: var(--warn); }
 .bubble { display: flex; align-items: center; gap: 8px; margin: 10px 18px; padding: 6px 6px 6px 14px;
   border-radius: 12px; background: var(--shade); color: var(--fg); font-size: 14px; }
@@ -138,7 +140,14 @@ a { color: var(--accent); cursor: pointer; text-decoration: underline; }
 <div id="subscriptionNotice" class="bubble hidden" aria-live="polite"><span id="subscriptionNoticeText"></span><button type="button" class="icon" id="subscriptionNoticeClose">&times;</button></div>
 
 <main id="home">
-  <button id="updateNotice" class="primary hidden"></button>
+  <section class="card hidden" id="homeUpdate" aria-labelledby="homeUpdateTitle">
+    <h2 id="homeUpdateTitle"></h2>
+    <p class="hint" id="homeUpdateStatus" aria-live="polite"></p>
+    <p class="hint warn hidden" id="homeUpdateReason"></p>
+    <progress class="hidden" id="homeUpdateProgress" aria-labelledby="homeUpdateStatus"></progress>
+    <button class="primary wide hidden" id="homeUpdateAction"></button>
+    <button class="textbtn hidden" id="homeUpdateSecondary"></button>
+  </section>
   <section class="card" id="statusCard">
     <div class="titleRow"><span class="dot" id="dot"></span><span class="ctitle" id="sTitle"></span></div>
     <p class="hint" id="sReason"></p>
@@ -405,9 +414,8 @@ function render(v) {
     if (!$("settings").classList.contains("hidden")) showLink(false);
   }
   const u = v.update;
-  $("updateNotice").classList.toggle("hidden", !u.enabled || !["available", "downloading", "ready", "installing"].includes(u.state));
   const updateText = () => u.managed && u.version && u.state === "available" ? t("update_managed_" + u.managed, u.version) : t("update_" + u.state, u.version);
-  $("updateNotice").textContent = updateText();
+  renderHomeUpdate(u);
   $("updateSettings").classList.toggle("hidden", !u.enabled);
   $("updateStatus").textContent = u.error || updateText();
   const failures = u.detail.split("\n").filter(Boolean);
@@ -441,6 +449,54 @@ const TICK = '<svg class="tick" viewBox="0 0 24 24"><path d="M9 16.2 4.8 12l-1.4
 const DOWNLOADS = { delta: "https://download.delta.chat", velta: "https://velta.cc/#download" };
 let tab = 0, tabsOpen = false, showPass = false, flowUntil = 0, lastTraffic = null, shownHome = "";
 function setHidden(id, hidden) { $(id).classList.toggle("hidden", !!hidden); }
+function updateSize(bytes) {
+  const units = ["byte", "kilobyte", "megabyte", "gigabyte"];
+  let unit = 0;
+  while (bytes >= 1000 && unit < units.length - 1) {
+    bytes /= 1000;
+    unit++;
+  }
+  return new Intl.NumberFormat(info.lang, {
+    style: "unit", unit: units[unit], maximumFractionDigits: 1
+  }).format(bytes);
+}
+
+function renderHomeUpdate(u) {
+  setHidden("homeUpdate", !u.home_visible);
+  if (!u.home_visible) return;
+  const downloading = u.state === "downloading";
+  const verifying = downloading && u.total > 0 && u.done >= u.total;
+  const checking = u.state === "checking";
+  const managed = u.managed ? t("update_managed_" + u.managed, u.version) : "";
+  const status = $("homeUpdateStatus");
+  $("homeUpdateTitle").textContent = t("update_home_title", u.version);
+  if (u.state === "available") status.textContent = managed || t("update_home_text");
+  else if (u.state === "error") status.textContent = (u.detail && u.error) || t("update_error");
+  else status.textContent = t(verifying ? "update_verifying" : "update_" + u.state, u.version);
+  if (downloading && u.total > 0 && !verifying) {
+    status.textContent += "\n" + updateSize(u.done) + " / " + updateSize(u.total);
+  }
+  if (managed && u.state !== "available") status.textContent += "\n" + managed;
+  const reason = $("homeUpdateReason");
+  reason.textContent = (u.detail || u.error).split("\n").find(line => line.trim()) || "";
+  reason.title = reason.textContent;
+  setHidden("homeUpdateReason", !reason.textContent);
+  const progress = $("homeUpdateProgress");
+  setHidden("homeUpdateProgress", !downloading && !checking);
+  if (downloading && u.total > 0 && !verifying) {
+    progress.max = u.total;
+    progress.value = u.done;
+  } else {
+    progress.removeAttribute("value");
+  }
+  setHidden("homeUpdateAction", !u.home_action);
+  $("homeUpdateAction").textContent = u.state === "error" ? t("update_try_again")
+    : u.home_action === "updateInstall" ? t("update_install")
+    : u.size > 0 ? t("update_download_size", updateSize(u.size)) : t("update_download");
+  setHidden("homeUpdateSecondary", !(downloading && !u.managed) && !u.can_dismiss);
+  $("homeUpdateSecondary").textContent = t(downloading ? "cancel" : "update_later");
+}
+
 function stepRow(kind, done, current, text, number) {
   const d = document.createElement("div");
   d.className = "step" + (done ? " done" : "") + (current ? " current" : "");
@@ -721,11 +777,22 @@ function page(name) {
   scrollTo(0, 0);
 }
 
-$("updateNotice").onclick = () => page("settings");
 $("autoUpdate").onchange = () => call("setAutoUpdate", $("autoUpdate").checked).catch(fail);
 for (const method of ["updateCheck", "updateDownload", "updateCancel"]) $(method).onclick = () => call(method).then(refresh, fail);
-$("updateInstall").onclick = async () => {
+async function confirmUpdateInstall() {
   if (await modal(t("update_install"), t("update_restart"), t("update_install"), t("cancel"))) call("updateInstall").then(refresh, fail);
+}
+$("updateInstall").onclick = confirmUpdateInstall;
+$("homeUpdateAction").onclick = () => {
+  const action = last?.update.home_action;
+  if (action === "updateInstall") return confirmUpdateInstall();
+  if (action === "updateDownload") return call("updateDownload").then(refresh, fail);
+};
+$("homeUpdateSecondary").onclick = () => {
+  const u = last?.update;
+  if (!u?.home_visible) return;
+  if (u.state === "downloading" && !u.managed) return call("updateCancel").then(refresh, fail);
+  if (u.can_dismiss) return call("dismissUpdate", u.version).then(refresh, fail);
 };
 $("subscriptionNoticeClose").onclick = () => call("dismissSubscriptionNotice").then(refresh, fail);
 $("startStop").onclick = () => call(last && last.running ? "stop" : "start").then(refresh, fail);

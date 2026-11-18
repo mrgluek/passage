@@ -9,6 +9,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -131,6 +132,105 @@ func TestUpdateDisabledAndOptOut(t *testing.T) {
 	}
 }
 
+func TestHomeUpdateUI(t *testing.T) {
+	for _, want := range []string{
+		`class="card hidden" id="homeUpdate"`, `id="homeUpdateTitle"`, `id="homeUpdateStatus"`,
+		`id="homeUpdateReason"`, `id="homeUpdateProgress"`,
+		`class="primary wide hidden" id="homeUpdateAction"`, `class="textbtn hidden" id="homeUpdateSecondary"`,
+		`renderHomeUpdate(u)`, `!u.home_visible`, `!u.home_action`,
+		`$("homeUpdateAction").onclick`, `return confirmUpdateInstall()`,
+		`return call("updateDownload")`, `$("homeUpdateSecondary").onclick`,
+		`return call("updateCancel")`, `return call("dismissUpdate", u.version)`,
+		`$("updateInstall").onclick = confirmUpdateInstall`, `t("update_restart")`,
+	} {
+		if !strings.Contains(indexHTML, want) {
+			t.Errorf("UI missing %q", want)
+		}
+	}
+	if strings.Contains(indexHTML, `id="updateNotice"`) {
+		t.Error("obsolete update strip is still present")
+	}
+	for _, lang := range []string{"en", "ru"} {
+		for _, key := range []string{
+			"update_home_title", "update_home_text", "update_download_size", "update_later",
+			"update_try_again", "update_verifying",
+		} {
+			if texts[lang][key] == "" {
+				t.Errorf("%s: %s is missing", lang, key)
+			}
+		}
+	}
+}
+
+func TestHomeUpdateDismissAndDownload(t *testing.T) {
+	a, p := testUpdateApp(t)
+	sum := sha256.Sum256([]byte("zip"))
+	offer := &update.Offer{Version: "1.0.1", File: update.File{Name: "app.zip", Size: 3, SHA256: hex.EncodeToString(sum[:])}}
+	a.updateTransport = fakeUpdateTransport{offer: offer}
+	if err := a.checkUpdate(); err != nil {
+		t.Fatal(err)
+	}
+	if v := waitUpdate(t, a, "available"); !v.HomeVisible || !v.CanDismiss || v.HomeAction != "updateDownload" || v.Size != offer.File.Size {
+		t.Fatalf("available: %+v", v)
+	}
+	dismiss := func() {
+		t.Helper()
+		if _, err := a.call("dismissUpdate", []byte(`"1.0.1"`)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	dismiss()
+	if v := a.view().Update; v.HomeVisible || v.Version != offer.Version {
+		t.Fatalf("dismissal changed the offer or kept the card visible: %+v", v)
+	}
+	a = newApp(a.dir, "1.0.0", "", "en", p)
+	a.updateTransport = fakeUpdateTransport{offer: offer}
+	if err := a.checkUpdate(); err != nil {
+		t.Fatal(err)
+	}
+	if v := waitUpdate(t, a, "available"); v.HomeVisible {
+		t.Fatalf("dismissal lost after restart: %+v", v)
+	}
+	a.updateTransport = fakeUpdateTransport{wait: true}
+	if _, err := a.call("updateDownload", nil); err != nil {
+		t.Fatal(err)
+	}
+	if v := waitUpdate(t, a, "downloading"); !v.HomeVisible || v.CanDismiss || v.HomeAction != "" {
+		t.Fatalf("dismissed download: %+v", v)
+	}
+	if _, err := a.call("updateCancel", nil); err != nil {
+		t.Fatal(err)
+	}
+	if v := waitUpdate(t, a, "cancelled"); v.HomeVisible {
+		t.Fatalf("dismissed download still visible after cancel: %+v", v)
+	}
+	newer := *offer
+	newer.Version = "1.0.2"
+	a.updateTransport = fakeUpdateTransport{offer: &newer}
+	if err := a.checkUpdate(); err != nil {
+		t.Fatal(err)
+	}
+	waitUpdate(t, a, "available")
+	dismiss() // A click on a stale card must not dismiss the new offer.
+	v := a.view().Update
+	if !v.HomeVisible || v.Version != newer.Version || v.HomeAction != "updateDownload" {
+		t.Fatalf("newer offer: %+v", v)
+	}
+	if _, err := a.call(v.HomeAction, nil); err != nil {
+		t.Fatal(err)
+	}
+	if v := waitUpdate(t, a, "ready"); !v.HomeVisible || !v.Ready || !v.CanDismiss || v.HomeAction != "updateInstall" {
+		t.Fatalf("ready: %+v", v)
+	}
+	t.Cleanup(func() { os.Remove(a.updater.archive) })
+	if _, err := a.call("dismissUpdate", []byte(`"1.0.2"`)); err != nil {
+		t.Fatal(err)
+	}
+	if v := a.view().Update; v.HomeVisible || !v.Ready {
+		t.Fatalf("dismissed ready update: %+v", v)
+	}
+}
+
 func TestUpdateFlowAndFailures(t *testing.T) {
 	a, p := testUpdateApp(t)
 	sum := sha256.Sum256([]byte("zip"))
@@ -156,7 +256,7 @@ func TestUpdateFlowAndFailures(t *testing.T) {
 	if err := a.installUpdate(); err != nil {
 		t.Fatal(err)
 	}
-	if v := waitUpdate(t, a, "error"); v.Error != "install failed" || !v.Ready {
+	if v := waitUpdate(t, a, "error"); v.Error != "install failed" || !v.Ready || v.HomeAction != "updateInstall" {
 		t.Fatal(v)
 	}
 	os.WriteFile(archive, []byte("bad"), 0600)
@@ -177,7 +277,7 @@ func TestUpdateFlowAndFailures(t *testing.T) {
 	if err := a.downloadUpdate(); err != nil {
 		t.Fatal(err)
 	}
-	if v := waitUpdate(t, a, "error"); v.Error != a.t.f("update_download_failed") || v.Detail != "download failed" {
+	if v := waitUpdate(t, a, "error"); v.Error != a.t.f("update_download_failed") || v.Detail != "download failed" || v.HomeAction != "updateDownload" {
 		t.Fatal(v)
 	}
 	a.updateTransport = fakeUpdateTransport{wait: true}
@@ -198,7 +298,9 @@ func TestUpdateFlowAndFailures(t *testing.T) {
 	if err := a.checkUpdate(); err != nil {
 		t.Fatal(err)
 	}
-	waitUpdate(t, a, "current")
+	if v := waitUpdate(t, a, "current"); v.HomeVisible {
+		t.Fatalf("up to date: %+v", v)
+	}
 	if err := a.installUpdate(); err == nil {
 		t.Fatal("install without offer")
 	}

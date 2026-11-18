@@ -33,15 +33,19 @@ type desktopUpdate struct {
 }
 
 type updateView struct {
-	Ready   bool   `json:"ready"`
-	Enabled bool   `json:"enabled"`
-	State   string `json:"state"`
-	Version string `json:"version"`
-	Error   string `json:"error"`
-	Detail  string `json:"detail"`
-	Done    int64  `json:"done"`
-	Total   int64  `json:"total"`
-	Managed string `json:"managed"`
+	Ready       bool   `json:"ready"`
+	Enabled     bool   `json:"enabled"`
+	State       string `json:"state"`
+	Version     string `json:"version"`
+	Error       string `json:"error"`
+	Detail      string `json:"detail"`
+	Done        int64  `json:"done"`
+	Total       int64  `json:"total"`
+	Managed     string `json:"managed"`
+	Size        int64  `json:"size"`
+	HomeVisible bool   `json:"home_visible"`
+	CanDismiss  bool   `json:"can_dismiss"`
+	HomeAction  string `json:"home_action"`
 }
 
 // managedBy is a variable so tests can change it.
@@ -60,8 +64,39 @@ func (a *App) updateViewLocked() updateView {
 	}
 	if u.offer != nil {
 		v.Version = u.offer.Version
+		v.Size = u.offer.File.Size
+	}
+	v.HomeVisible = v.Enabled && v.Version != "" && (v.State == "downloading" || v.Version != a.settings.DismissedUpdate)
+	v.CanDismiss = v.Version != "" && canDismissUpdate(v.State)
+	if v.HomeVisible && v.CanDismiss && v.Managed == "" && v.State != "installing" {
+		v.HomeAction = "updateDownload"
+		if v.Ready {
+			v.HomeAction = "updateInstall"
+		}
 	}
 	return v
+}
+
+func canDismissUpdate(state string) bool {
+	return state != "checking" && state != "downloading"
+}
+
+func (a *App) dismissUpdate(version string) error {
+	a.mu.Lock()
+	if a.updater.offer == nil || a.updater.offer.Version != version || !canDismissUpdate(a.updater.state) {
+		a.mu.Unlock()
+		return nil
+	}
+	settings := a.settings
+	settings.DismissedUpdate = version
+	if err := settings.save(a.path(iniName)); err != nil {
+		a.mu.Unlock()
+		return err
+	}
+	a.settings = settings
+	a.mu.Unlock()
+	a.changed()
+	return nil
 }
 
 func updateDue(now, runningSince, next time.Time, enabled, running bool) bool {

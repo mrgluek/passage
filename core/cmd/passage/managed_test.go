@@ -53,7 +53,7 @@ func TestManagedInstallRefusesDownload(t *testing.T) {
 	}
 	waitUpdate(t, a, "available")
 	managedBy = func() string { return "scoop" }
-	if v := a.view().Update; v.Managed != "scoop" {
+	if v := a.view().Update; v.Managed != "scoop" || !v.HomeVisible || !v.CanDismiss || v.HomeAction != "" {
 		t.Fatalf("view: %+v", v)
 	}
 	if err := a.downloadUpdate(); err == nil {
