@@ -709,7 +709,9 @@ func (c *irohClient) dialContext(ctx context.Context, n, a string, mode irohDial
 			c.mu.Unlock()
 			return nil, err
 		}
-		if c.idleAt.IsZero() {
+		// A traffic dial that starts the helper gets a full deadline. Probes
+		// and checks keep the expired one, so that they return it to sleep.
+		if c.idleAt.IsZero() || mode == irohTraffic {
 			c.idleAt = c.clock().Add(irohIdleTimeout)
 		}
 		c.generation++
