@@ -406,7 +406,7 @@ function render(v) {
   }
   const u = v.update;
   $("updateNotice").classList.toggle("hidden", !u.enabled || !["available", "downloading", "ready", "installing"].includes(u.state));
-  const updateText = () => u.managed && u.version ? t("update_managed_" + u.managed, u.version) : t("update_" + u.state, u.version);
+  const updateText = () => u.managed && u.version && u.state === "available" ? t("update_managed_" + u.managed, u.version) : t("update_" + u.state, u.version);
   $("updateNotice").textContent = updateText();
   $("updateSettings").classList.toggle("hidden", !u.enabled);
   $("updateStatus").textContent = u.error || updateText();
