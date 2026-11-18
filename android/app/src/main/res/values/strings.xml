@@ -164,7 +164,7 @@
     <string name="update_home_downloading">Downloading…</string>
     <string name="update_verifying">Checking the file…</string>
     <string name="update_home_ready">Downloaded and checked. Android will ask you to confirm the install.</string>
-    <string name="update_later">Not now</string>
+    <string name="update_skip">Skip this version</string>
     <string name="update_version">Version %1$s.</string>
     <string name="update_check_failed">Could not check for updates. Try again later.</string>
     <string name="update_download_failed">Could not download the update. Try again.</string>

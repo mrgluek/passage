@@ -6,6 +6,8 @@
   download progress and the install button there, like on Android; Skip this
   version hides the offer for that version (Settings still has it). A copy installed with Scoop shows the
   `scoop update passage` command instead.
+- Android: the button that hides an offered update says Skip this version
+  (the offer stays in Settings; its notification still brings the card back).
 - The iroh helper is no longer stopped again right after a failed first
   connection that started it following an idle stop.
 

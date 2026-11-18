@@ -110,7 +110,7 @@ class UpdateSection(private val activity: Activity, private val home: Boolean) {
         if (home) {
             val second = when {
                 act == UpdateFlow.Action.CANCEL -> android.R.string.cancel to { Updater.cancel() }
-                UpdateFlow.canDismiss(s) -> R.string.update_later to { dismiss(s.available) }
+                UpdateFlow.canDismiss(s) -> R.string.update_skip to { dismiss(s.available) }
                 else -> null
             }
             secondary.visibility = if (second == null) View.GONE else View.VISIBLE
