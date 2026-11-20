@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.9.4
+
+- Windows and macOS: a new version is offered on the home screen with the
+  download progress and the install button there, like on Android; Skip this
+  version hides the offer for that version (Settings still has it). A copy installed with Scoop shows the
+  `scoop update passage` command instead.
+- Android: the button that hides an offered update says Skip this version
+  (the offer stays in Settings; its notification still brings the card back).
+- A reserve route is now also used when some routes are down and the others
+  refuse a destination, not only when all are down.
+- The iroh helper is no longer stopped again right after a failed first
+  connection that started it following an idle stop.
+
 ## 0.9.3
 
 - Android, Windows and macOS: the home screen has the same four tabs: Delta

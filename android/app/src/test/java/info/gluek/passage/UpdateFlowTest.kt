@@ -74,7 +74,7 @@ class UpdateFlowTest {
         val ru = strings("values-ru")
         assertEquals(en.keys, ru.keys)
         for (key in listOf("update_download_size", "update_home_text", "update_home_downloading",
-            "update_verifying", "update_home_ready", "update_later")) {
+            "update_verifying", "update_home_ready", "update_skip")) {
             assertTrue(key, en.containsKey(key))
         }
         val args = Regex("%\\d\\$[sd]")

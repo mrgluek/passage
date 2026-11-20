@@ -44,6 +44,7 @@ type Settings struct {
 	Running           bool
 	AutoUpdate        bool
 	NextUpdate        time.Time
+	DismissedUpdate   string
 	RoutesNotice      string
 	// AppSeen is set once a chat app has sent traffic through the proxy.
 	AppSeen bool
@@ -173,6 +174,8 @@ func loadSettings(path string) (Settings, bool, error) {
 			s.RoutesNotice = v
 		case "next_update":
 			s.NextUpdate, _ = time.Parse(time.RFC3339, v)
+		case "dismissed_update":
+			s.DismissedUpdate = v
 		case "running":
 			s.Running = v != "false" && v != "0"
 		case "app_seen":
@@ -254,10 +257,11 @@ my_route=%s
 running=%t
 auto_update=%t
 next_update=%s
+dismissed_update=%s
 routes_notice=%s
 app_seen=%t
 lang=%s
-`, s.Port, s.User, s.Pass, s.Auth, s.WhatsApp, s.WhatsAppChatPort, s.WhatsAppMediaPort, s.Mode, s.My, s.Running, s.AutoUpdate, s.NextUpdate.Format(time.RFC3339), s.RoutesNotice, s.AppSeen, s.Lang)
+`, s.Port, s.User, s.Pass, s.Auth, s.WhatsApp, s.WhatsAppChatPort, s.WhatsAppMediaPort, s.Mode, s.My, s.Running, s.AutoUpdate, s.NextUpdate.Format(time.RFC3339), s.DismissedUpdate, s.RoutesNotice, s.AppSeen, s.Lang)
 	text += s.editLines()
 	return writeFile(path, []byte(text))
 }

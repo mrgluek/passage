@@ -187,15 +187,18 @@ jobs:
           version=${TAG#v}
           case $version in *-*) echo "pre-release: tap not updated"; exit 0 ;; esac
           test -n "$HOMEBREW_TAP_TOKEN" || { echo "HOMEBREW_TAP_TOKEN missing" >&2; exit 1; }
-          auth="AUTHORIZATION: basic $(printf 'x-access-token:%s' "$HOMEBREW_TAP_TOKEN" | base64 -w0)"
-          echo "::add-mask::$(printf 'x-access-token:%s' "$HOMEBREW_TAP_TOKEN" | base64 -w0)"
-          git -c "http.https://github.com/.extraheader=$auth" clone --depth 1 https://github.com/mrgluek/homebrew-passage.git "$RUNNER_TEMP/tap"
+          token_b64=$(printf 'x-access-token:%s' "$HOMEBREW_TAP_TOKEN" | base64 -w0)
+          echo "::add-mask::$token_b64"
+          # In the environment, not in the arguments, so ps does not show it.
+          export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0="http.https://github.com/.extraheader" GIT_CONFIG_VALUE_0="AUTHORIZATION: basic $token_b64"
+          git clone --depth 1 https://github.com/mrgluek/homebrew-passage.git "$RUNNER_TEMP/tap"
           python3 scripts/homebrew-tap.py "$version" dist/SHA256SUMS "$RUNNER_TEMP/tap"
           cd "$RUNNER_TEMP/tap"
-          if git diff --quiet; then echo "tap already at $version"; exit 0; fi
+          git add Casks/passage.rb Formula/passage-cli.rb
+          if git diff --cached --quiet; then echo "tap already at $version"; exit 0; fi
           git -c user.name="github-actions[bot]" -c user.email="41898282+github-actions[bot]@users.noreply.github.com" \
-            commit -am "Passage $version"
-          git -c "http.https://github.com/.extraheader=$auth" push origin HEAD:main
+            commit -m "Passage $version"
+          git push origin HEAD:main
 
   website:
     needs: release

@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/mrgluek/passage/core/update"
 )
 
 func TestManagedInstall(t *testing.T) {
@@ -43,9 +45,26 @@ func TestManagedInstall(t *testing.T) {
 
 func TestManagedInstallRefusesDownload(t *testing.T) {
 	old := managedBy
-	managedBy = func() string { return "scoop" }
 	defer func() { managedBy = old }()
-	if v := (&App{}).updateViewLocked(); v.Managed != "scoop" {
+	a, _ := testUpdateApp(t)
+	a.updateTransport = fakeUpdateTransport{offer: &update.Offer{Version: "1.0.1"}}
+	if err := a.checkUpdate(); err != nil {
+		t.Fatal(err)
+	}
+	waitUpdate(t, a, "available")
+	managedBy = func() string { return "scoop" }
+	if v := a.view().Update; v.Managed != "scoop" || !v.HomeVisible || !v.CanDismiss || v.HomeAction != "" {
 		t.Fatalf("view: %+v", v)
 	}
+	if err := a.downloadUpdate(); err == nil {
+		t.Fatal("a managed copy started a download")
+	}
+	if st := a.view().Update.State; st != "available" {
+		t.Fatalf("state after the refusal: %s", st)
+	}
+	managedBy = func() string { return "" }
+	if err := a.downloadUpdate(); err != nil {
+		t.Fatalf("an unmanaged copy was refused: %v", err)
+	}
+	waitUpdate(t, a, "ready")
 }

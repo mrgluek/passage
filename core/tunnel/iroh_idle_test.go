@@ -308,3 +308,33 @@ func TestIrohUnsuccessfulDialsDoNotExtendIdle(t *testing.T) {
 		}
 	})
 }
+
+func (h *idleHelper) running() bool {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.dial != nil
+}
+
+func TestIrohFailedDialAfterIdleStopKeepsTheNewHelper(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		h := newIdleHelper(t)
+		defer h.Close()
+		idleDial(t, h.pool.DialContext).Close()
+		idleAdvance(irohIdleTimeout)
+		if h.stops.Load() != 1 || h.running() {
+			t.Fatal("helper did not stop when idle")
+		}
+		h.dialHook = func() error { return errDestinationRefused }
+		if _, err := h.DialContext(context.Background(), "tcp", "target:1"); !errors.Is(err, errDestinationRefused) {
+			t.Fatal(err)
+		}
+		idleAdvance(time.Second)
+		if h.starts.Load() != 2 || h.stops.Load() != 1 || !h.running() {
+			t.Fatalf("a failed dial after an idle stop stopped the new helper: starts=%d stops=%d", h.starts.Load(), h.stops.Load())
+		}
+		idleAdvance(irohIdleTimeout)
+		if h.stops.Load() != 2 || h.running() {
+			t.Fatal("the new helper never went back to sleep")
+		}
+	})
+}
