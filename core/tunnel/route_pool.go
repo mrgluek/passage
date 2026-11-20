@@ -237,11 +237,27 @@ func (p *routePool) dialContext(ctx context.Context, network, address string, ba
 		now := p.clock()
 		p.tickLocked(now)
 		reserveAllowed := pending == 0
+		// A route that refused this address does not block a reserve route,
+		// but a refusal alone never starts one: some route must be down.
+		down, refusedHere := false, false
 		for _, i := range available {
-			if !p.reserveRoute(i) && !now.Before(p.failedUntil[i]) && !p.stalledLocked(p.network, i) {
+			if p.reserveRoute(i) {
+				continue
+			}
+			switch {
+			case now.Before(p.failedUntil[i]) || p.stalledLocked(p.network, i):
+				down = true
+			case now.Before(p.refused[refusedKey(i, address)]):
+				refusedHere = true
+			default:
 				reserveAllowed = false
+			}
+			if !reserveAllowed {
 				break
 			}
+		}
+		if refusedHere && !down {
+			reserveAllowed = false
 		}
 		for n := started; n < len(order); n++ {
 			i := order[n]

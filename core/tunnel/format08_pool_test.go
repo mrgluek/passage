@@ -159,6 +159,49 @@ func TestReserveDoesNotFollowDestinationRefusal(t *testing.T) {
 	}
 }
 
+func TestReserveStartsWhenLiveRoutesRefuse(t *testing.T) {
+	refuse := func(context.Context, string, string) (net.Conn, error) { return nil, errDestinationRefused }
+	down := func(context.Context, string, string) (net.Conn, error) { return nil, errors.New("unavailable") }
+	cases := []struct {
+		name        string
+		primaries   []func(context.Context, string, string) (net.Conn, error)
+		wantReserve int32
+		wantErr     bool
+	}{
+		{"dead and refusing", []func(context.Context, string, string) (net.Conn, error){down, down, refuse, refuse}, 1, false},
+		{"only refusing", []func(context.Context, string, string) (net.Conn, error){refuse, refuse}, 0, true},
+		{"live primary answers", []func(context.Context, string, string) (net.Conn, error){down, refuse, poolSuccess}, 0, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			now := time.Unix(1000, 0)
+			var reserveCalls atomic.Int32
+			var clients []soarClient
+			var uses []string
+			for _, d := range tc.primaries {
+				clients = append(clients, &poolFixture{dial: d})
+				uses = append(uses, "")
+			}
+			clients = append(clients, &poolFixture{dial: func(c context.Context, n, a string) (net.Conn, error) {
+				reserveCalls.Add(1)
+				return poolSuccess(c, n, a)
+			}})
+			uses = append(uses, "reserve")
+			p := &routePool{clients: clients, ipv6: make([]bool, len(clients)), uses: uses, now: func() time.Time { return now }}
+			conn, err := p.DialContext(context.Background(), "tcp", "example.org:443")
+			if (err != nil) != tc.wantErr {
+				t.Fatalf("err = %v, want error %v", err, tc.wantErr)
+			}
+			if conn != nil {
+				conn.Close()
+			}
+			if got := reserveCalls.Load(); got != tc.wantReserve {
+				t.Fatalf("reserve calls = %d, want %d", got, tc.wantReserve)
+			}
+		})
+	}
+}
+
 func TestReserveRefusalStaysRefusal(t *testing.T) {
 	for _, established := range []bool{false, true} {
 		name := "idle"
