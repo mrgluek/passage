@@ -71,7 +71,7 @@ h2 { margin: 20px 0 4px; font-size: 14px; font-weight: 600; }
 #updateStatus { margin: 8px 0 0; }
 #updateDetail { overflow-wrap: anywhere; user-select: text; }
 #homeUpdateProgress { width: 100%; margin-top: 8px; }
-#homeUpdateReason { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#homeUpdateReason { overflow-wrap: anywhere; user-select: text; }
 .warn { color: var(--warn); }
 .bubble { display: flex; align-items: center; gap: 8px; margin: 10px 18px; padding: 6px 6px 6px 14px;
   border-radius: 12px; background: var(--shade); color: var(--fg); font-size: 14px; }
@@ -786,6 +786,7 @@ $("updateInstall").onclick = confirmUpdateInstall;
 $("homeUpdateAction").onclick = () => {
   const action = last?.update.home_action;
   if (action === "updateInstall") return confirmUpdateInstall();
+  if (action === "updateCheck") return call("updateCheck").then(refresh, fail);
   if (action === "updateDownload") return call("updateDownload").then(refresh, fail);
 };
 $("homeUpdateSecondary").onclick = () => {

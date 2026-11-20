@@ -26,6 +26,7 @@ type updateTransport interface {
 type desktopUpdate struct {
 	state       string
 	err, detail string
+	checkFailed bool
 	offer       *update.Offer
 	done, total int64
 	archive     string
@@ -68,9 +69,12 @@ func (a *App) updateViewLocked() updateView {
 	}
 	v.HomeVisible = v.Enabled && v.Version != "" && (v.State == "downloading" || v.Version != a.settings.DismissedUpdate)
 	v.CanDismiss = v.Version != "" && canDismissUpdate(v.State)
-	if v.HomeVisible && v.CanDismiss && v.Managed == "" && v.State != "installing" {
+	if v.HomeVisible && v.CanDismiss && v.Managed == "" {
 		v.HomeAction = "updateDownload"
-		if v.Ready {
+		switch {
+		case u.checkFailed:
+			v.HomeAction = "updateCheck"
+		case v.Ready:
 			v.HomeAction = "updateInstall"
 		}
 	}
@@ -78,7 +82,7 @@ func (a *App) updateViewLocked() updateView {
 }
 
 func canDismissUpdate(state string) bool {
-	return state != "checking" && state != "downloading"
+	return state != "checking" && state != "downloading" && state != "installing"
 }
 
 func (a *App) dismissUpdate(version string) error {
@@ -152,7 +156,7 @@ func (a *App) beginCheckLocked(now time.Time) {
 	a.settings.NextUpdate = nextUpdate(now)
 	a.saveSettings()
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
-	a.updater.state, a.updater.err, a.updater.detail, a.updater.cancel = "checking", "", "", cancel
+	a.updater.state, a.updater.err, a.updater.detail, a.updater.cancel, a.updater.checkFailed = "checking", "", "", cancel, false
 	client, target := a.updateClientLocked(), a.os.updateTarget()
 	go func() {
 		offer, err := client.Check(ctx, a.version, target)
@@ -164,7 +168,7 @@ func (a *App) beginCheckLocked(now time.Time) {
 			a.updater.state = "cancelled"
 		case err != nil:
 			a.event("update check failed: %v", err)
-			a.updater.state, a.updater.err, a.updater.detail = "error", a.t.f("update_check_failed"), err.Error()
+			a.updater.state, a.updater.err, a.updater.detail, a.updater.checkFailed = "error", a.t.f("update_check_failed"), err.Error(), true
 		default:
 			keep := offer != nil && a.updater.offer != nil && offer.Version == a.updater.offer.Version && offer.File == a.updater.offer.File
 			a.updater.offer = offer
@@ -210,7 +214,7 @@ func (a *App) downloadUpdate() error {
 	offer, client := a.updater.offer, a.updateClientLocked()
 	dest := filepath.Join(cache, offer.File.SHA256+".zip")
 	ctx, cancel := context.WithCancel(context.Background())
-	a.updater.state, a.updater.err, a.updater.detail, a.updater.cancel = "downloading", "", "", cancel
+	a.updater.state, a.updater.err, a.updater.detail, a.updater.cancel, a.updater.checkFailed = "downloading", "", "", cancel, false
 	a.updater.done, a.updater.total = 0, offer.File.Size
 	go func() {
 		err := client.Download(ctx, offer, dest, func(done, total int64) {
@@ -252,7 +256,7 @@ func (a *App) installUpdate() error {
 		return errors.New("download the update first")
 	}
 	archive, version, file := a.updater.archive, a.updater.offer.Version, a.updater.offer.File
-	a.updater.state, a.updater.err, a.updater.detail = "installing", "", ""
+	a.updater.state, a.updater.err, a.updater.detail, a.updater.checkFailed = "installing", "", "", false
 	a.mu.Unlock()
 	a.changed()
 	go func() {

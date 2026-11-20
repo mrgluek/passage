@@ -386,7 +386,7 @@ func (a *App) trayState() trayState {
 			st.Tooltip += "\n" + detail
 		}
 	}
-	if a.updater.offer != nil {
+	if a.updater.offer != nil && a.updater.offer.Version != a.settings.DismissedUpdate {
 		st.Update = a.updater.offer.Version
 	}
 	return st

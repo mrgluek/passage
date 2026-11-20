@@ -179,9 +179,15 @@ func TestHomeUpdateDismissAndDownload(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
+	if a.trayState().Update != offer.Version {
+		t.Fatal("tray lost the offer before it was skipped")
+	}
 	dismiss()
 	if v := a.view().Update; v.HomeVisible || v.Version != offer.Version {
 		t.Fatalf("dismissal changed the offer or kept the card visible: %+v", v)
+	}
+	if a.trayState().Update != "" {
+		t.Fatal("tray still offers a skipped version")
 	}
 	a = newApp(a.dir, "1.0.0", "", "en", p)
 	a.updateTransport = fakeUpdateTransport{offer: offer}
@@ -270,7 +276,7 @@ func TestUpdateFlowAndFailures(t *testing.T) {
 	if err := a.checkUpdate(); err != nil {
 		t.Fatal(err)
 	}
-	if v := waitUpdate(t, a, "error"); v.Error != a.t.f("update_check_failed") || v.Detail != "check failed" {
+	if v := waitUpdate(t, a, "error"); v.Error != a.t.f("update_check_failed") || v.Detail != "check failed" || v.HomeAction != "updateCheck" {
 		t.Fatal(v)
 	}
 	a.updateTransport = fakeUpdateTransport{failure: errors.New("download failed")}
@@ -377,6 +383,14 @@ func TestDesktopLinkUpdateSources(t *testing.T) {
 		}
 		if found != c.want {
 			t.Fatal("trusted update source not preserved", client.Sources)
+		}
+	}
+}
+
+func TestCannotSkipWhileInstalling(t *testing.T) {
+	for state, want := range map[string]bool{"available": true, "error": true, "ready": true, "checking": false, "downloading": false, "installing": false} {
+		if got := canDismissUpdate(state); got != want {
+			t.Errorf("canDismissUpdate(%q) = %v, want %v", state, got, want)
 		}
 	}
 }

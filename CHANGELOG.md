@@ -8,8 +8,8 @@
   `scoop update passage` command instead.
 - Android: the button that hides an offered update says Skip this version
   (the offer stays in Settings; its notification still brings the card back).
-- A reserve route is now used when the other routes are down or refuse a
-  destination, not only when they are all down.
+- A reserve route is now also used when some routes are down and the others
+  refuse a destination, not only when all are down.
 - The iroh helper is no longer stopped again right after a failed first
   connection that started it following an idle stop.
 
