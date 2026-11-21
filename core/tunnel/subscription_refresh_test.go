@@ -313,3 +313,59 @@ func TestSubscriptionBusySources(t *testing.T) {
 		})
 	}
 }
+
+func TestSubscriptionDirectFailureMarkNeedsATunnel(t *testing.T) {
+	cfg, raw := subscriptionTestConfig(t, "http://example.org")
+	synctest.Test(t, func(t *testing.T) {
+		directDials := 0
+		ok := subscriptionTestDial(func(context.Context, *http.Request) *http.Response {
+			return subscriptionTestResponse(http.StatusOK, string(raw))
+		})
+		ref := SubscriptionRefresher{directDial: func(ctx context.Context, network, address string) (net.Conn, error) {
+			directDials++
+			if directDials == 1 {
+				return nil, errors.New("connect failed")
+			}
+			return ok(ctx, network, address)
+		}}
+		if out := ref.Refresh(context.Background(), cfg, nil); out.Changed {
+			t.Fatal("the first refresh should fail")
+		}
+		out := ref.Refresh(context.Background(), cfg, nil)
+		if !out.Changed || directDials != 2 {
+			t.Fatalf("no tunnel: the mark kept the only way closed (changed %v, direct dials %d)", out.Changed, directDials)
+		}
+	})
+}
+
+func TestSubscriptionSilentDirectIsMarkedWhenTheTunnelWins(t *testing.T) {
+	cfg, raw := subscriptionTestConfig(t, "http://example.org")
+	synctest.Test(t, func(t *testing.T) {
+		start := time.Now()
+		directDials, tunnelDials := 0, 0
+		ok := subscriptionTestDial(func(context.Context, *http.Request) *http.Response {
+			return subscriptionTestResponse(http.StatusOK, string(raw))
+		})
+		ref := SubscriptionRefresher{directDial: func(ctx context.Context, _, _ string) (net.Conn, error) {
+			directDials++
+			<-ctx.Done()
+			return nil, ctx.Err()
+		}}
+		tunnel := func(ctx context.Context, network, address string) (net.Conn, error) {
+			tunnelDials++
+			return ok(ctx, network, address)
+		}
+		out := ref.Refresh(context.Background(), cfg, []SubscriptionDial{tunnel})
+		synctest.Wait()
+		if !out.Changed || time.Since(start) != 20*time.Second || directDials != 1 || tunnelDials != 1 {
+			t.Fatalf("first refresh: changed %v at %v, direct %d, tunnel %d", out.Changed, time.Since(start), directDials, tunnelDials)
+		}
+		before := time.Now()
+		cfg.Subscriptions[0].Revision = 0
+		out = ref.Refresh(context.Background(), cfg, []SubscriptionDial{tunnel})
+		synctest.Wait()
+		if !out.Changed || time.Since(before) != 0 || directDials != 1 || tunnelDials != 2 {
+			t.Fatalf("second refresh waited again: changed %v after %v, direct %d, tunnel %d", out.Changed, time.Since(before), directDials, tunnelDials)
+		}
+	})
+}

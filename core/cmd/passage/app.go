@@ -486,14 +486,21 @@ func startHint(t tr, running bool, routes int) string {
 	return ""
 }
 
+// view reads the platform's start-at-sign-in state outside a.mu: on macOS it
+// runs on the main thread, which may be waiting for a.mu itself.
 func (a *App) view() view {
+	v, offer := a.viewLocked()
+	v.AutostartOffer = offer && !a.os.autostart()
+	return v
+}
+
+func (a *App) viewLocked() (view, bool) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	s := a.settings
 	v := view{Running: s.Running, HasLink: a.hasLink(), Mode: a.mode(), Routes: a.routes(),
 		My: s.My != "", Auth: s.Auth, Host: host, Port: s.Port, ProxyLink: s.socksURL(), TgLink: s.proxyLink("tg://socks"), VeltaLink: s.veltaLink(),
 		AppSeen: s.AppSeen, Lang: s.Lang, Error: a.lastErr}
-	v.AutostartOffer = s.Running && !s.AutostartDismissed && !a.os.autostart()
 	v.WhatsApp, v.WhatsAppChatPort, v.WhatsAppMediaPort = s.WhatsApp, s.WhatsAppChatPort, s.WhatsAppMediaPort
 	v.WhatsAppError = a.whatsappError
 	if s.Auth {
@@ -555,7 +562,7 @@ func (a *App) view() view {
 	}
 	v.Update = a.updateViewLocked()
 	v.Full = full
-	return v
+	return v, s.Running && !s.AutostartDismissed
 }
 
 // linkView is the settings screen's link part. The text is sent only when
@@ -968,9 +975,10 @@ func (a *App) call(method string, arg json.RawMessage) (any, error) {
 		a.mu.Unlock()
 	case "settings":
 		a.mu.Lock()
-		defer a.mu.Unlock()
-		return map[string]any{"auth": a.settings.Auth, "my": a.settings.My, "autostart": a.os.autostart(),
-			"auto_update": a.settings.AutoUpdate, "soar": tunnel.SoarVersion()}, nil
+		auth, my, autoUpdate := a.settings.Auth, a.settings.My, a.settings.AutoUpdate
+		a.mu.Unlock()
+		return map[string]any{"auth": auth, "my": my, "autostart": a.os.autostart(),
+			"auto_update": autoUpdate, "soar": tunnel.SoarVersion()}, nil
 	case "saveMy":
 		return a.saveMy(str())
 	case "whatsappPorts":

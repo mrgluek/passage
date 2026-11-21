@@ -173,6 +173,7 @@ class PassageService : Service() {
 
     private fun begin(reason: String) {
         active = true
+        BootReceiver.clearNotification(this)
         Settings(this).running = true
         lastError = null
         updateWakeLock()

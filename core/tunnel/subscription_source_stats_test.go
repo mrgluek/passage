@@ -107,6 +107,10 @@ func TestSubscriptionSourceStatsSaturate(t *testing.T) {
 		switch mode.Load().(string) {
 		case "http":
 			w.WriteHeader(404)
+		case "429":
+			w.WriteHeader(http.StatusTooManyRequests)
+		case "503":
+			w.WriteHeader(http.StatusServiceUnavailable)
 		case "bad":
 			w.Write([]byte("invalid"))
 		default:
@@ -120,14 +124,31 @@ func TestSubscriptionSourceStatsSaturate(t *testing.T) {
 	full := SubscriptionSourceStats{Tries: math.MaxUint32, Answered: math.MaxUint32, OK: math.MaxUint32,
 		Fail:   SubscriptionSourceFailures{Net: math.MaxUint32, Timeout: math.MaxUint32, HTTP: math.MaxUint32, Bad: math.MaxUint32},
 		Via:    SubscriptionSourceVia{Direct: math.MaxUint32, Tunnel: math.MaxUint32},
-		Direct: SubscriptionSourceAttempts{Tries: math.MaxUint32, Answered: math.MaxUint32, OK: math.MaxUint32, Fail: SubscriptionSourceFailures{Net: math.MaxUint32, Timeout: math.MaxUint32, HTTP: math.MaxUint32, Bad: math.MaxUint32}},
-		Tunnel: SubscriptionSourceAttempts{Tries: math.MaxUint32, Answered: math.MaxUint32, OK: math.MaxUint32, Fail: SubscriptionSourceFailures{Net: math.MaxUint32, Timeout: math.MaxUint32, HTTP: math.MaxUint32, Bad: math.MaxUint32}}}
+		Direct: SubscriptionSourceAttempts{Tries: math.MaxUint32, Answered: math.MaxUint32, OK: math.MaxUint32, HTTP429: math.MaxUint32, HTTP5xx: math.MaxUint32, Fail: SubscriptionSourceFailures{Net: math.MaxUint32, Timeout: math.MaxUint32, HTTP: math.MaxUint32, Bad: math.MaxUint32}},
+		Tunnel: SubscriptionSourceAttempts{Tries: math.MaxUint32, Answered: math.MaxUint32, OK: math.MaxUint32, HTTP429: math.MaxUint32, HTTP5xx: math.MaxUint32, Fail: SubscriptionSourceFailures{Net: math.MaxUint32, Timeout: math.MaxUint32, HTTP: math.MaxUint32, Bad: math.MaxUint32}}}
 	sub.SourceStats = map[string]SubscriptionSourceStats{sourceStatsKey(server.URL): full}
 	cfg := Config{Subscriptions: []Subscription{sub}}
 	ref := SubscriptionRefresher{directTimeout: time.Second}
 	cfg = ref.Refresh(context.Background(), cfg, nil).Config
-	cfg = ref.Refresh(context.Background(), cfg, []SubscriptionDial{(&net.Dialer{}).DialContext}).Config
-	for _, m := range []string{"http", "bad", "net", "timeout"} {
+	// A failed direct attempt marks the source, so the next refresh goes
+	// straight to the tunnel; each answer below must really use it.
+	var tunnelCalls atomic.Int32
+	tunnel := func(ctx context.Context, network, address string) (net.Conn, error) {
+		tunnelCalls.Add(1)
+		return (&net.Dialer{}).DialContext(ctx, network, address)
+	}
+	ref.directDial = func(context.Context, string, string) (net.Conn, error) { return nil, errors.New("unavailable") }
+	cfg.Operator = "tunnel"
+	cfg = ref.Refresh(context.Background(), cfg, nil).Config
+	for _, m := range []string{"ok", "429", "503"} {
+		mode.Store(m)
+		cfg = ref.Refresh(context.Background(), cfg, []SubscriptionDial{tunnel}).Config
+	}
+	if tunnelCalls.Load() != 3 {
+		t.Fatalf("tunnel dials: %d, want 3", tunnelCalls.Load())
+	}
+	ref.directDial = nil
+	for _, m := range []string{"http", "bad", "429", "503", "net", "timeout"} {
 		mode.Store(m)
 		cfg.Operator = m
 		switch m {
@@ -293,6 +314,10 @@ func TestSubscriptionSourceStatsPartialAnswers(t *testing.T) {
 			sub, _, _ := subFixture(t)
 			sub.Sources = []string{"http://example.org/sub"}
 			ref := SubscriptionRefresher{directTimeout: 50 * time.Millisecond}
+			// The server waits for the test to end, so the only failure the client
+			// can see is its own deadline, not a closed connection.
+			release := make(chan struct{})
+			defer close(release)
 			ref.directDial = func(ctx context.Context, _, _ string) (net.Conn, error) {
 				client, server := net.Pipe()
 				go func() {
@@ -303,7 +328,7 @@ func TestSubscriptionSourceStatsPartialAnswers(t *testing.T) {
 					}
 					if timeout {
 						server.Write([]byte("HTTP/1.1 200 OK\r\nContent-Length: 100\r\n\r\npartial"))
-						<-ctx.Done()
+						<-release
 					} else {
 						server.Write([]byte("invalid HTTP\r\n\r\n"))
 					}

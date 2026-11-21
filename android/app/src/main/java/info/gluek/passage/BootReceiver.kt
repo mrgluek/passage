@@ -54,5 +54,10 @@ class BootReceiver : BroadcastReceiver() {
 
         /** The proxy comes back only if the user left it on and the setting is on. */
         fun shouldStart(startOnBoot: Boolean, running: Boolean) = startOnBoot && running
+
+        /** The proxy is on, so the "off after the restart" notice is stale. */
+        fun clearNotification(context: Context) {
+            (context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager).cancel(NOTIFICATION_ID)
+        }
     }
 }

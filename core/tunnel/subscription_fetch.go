@@ -107,7 +107,8 @@ func (r *SubscriptionRefresher) refreshSubscription(ctx context.Context, out *Su
 	})
 	directPairs := slices.DeleteFunc(subscriptionPairs(sub.Sources, directIndex, directIndex+1, subscriptionPair{last.source, directIndex}), func(pair subscriptionPair) bool {
 		source := strings.TrimRight(pair.source, "/")
-		return !available(pair) || started.Before(r.directFailed[subscriptionNetworkSource{network, source}])
+		// Without a tunnel there is nothing else to try, so a failure mark does not apply.
+		return !available(pair) || len(tunnelPairs) > 0 && started.Before(r.directFailed[subscriptionNetworkSource{network, source}])
 	})
 
 	race, cancelRace := context.WithCancel(ctx)
@@ -173,14 +174,17 @@ func (r *SubscriptionRefresher) refreshSubscription(ctx context.Context, out *Su
 		defer directTimer.Stop()
 	}
 
-	succeeded := false
+	succeeded, tunnelWon := false, false
 	record := func(result subscriptionFetchResult) {
 		pending--
 		pair, stats, code := result.pair, result.stats, result.code
 		source := strings.TrimRight(pair.source, "/")
 		directKey := subscriptionNetworkSource{network, source}
 		sub.recordSourceFetch(pair.source, stats)
-		if !stats.tunnel && (stats.failure == "net" || stats.failure == "timeout" || stats.failure == "refused") {
+		// A direct attempt that got no answer for half the wait and was cut off
+		// when the tunnel won counts as failed too, so the wait is not repeated.
+		silent := tunnelWon && stats.failure == "canceled" && !stats.answered && stats.elapsed >= subscriptionTunnelDelay/2
+		if !stats.tunnel && (silent || stats.failure == "net" || stats.failure == "timeout" || stats.failure == "refused") {
 			if r.directFailed == nil {
 				r.directFailed = make(map[subscriptionNetworkSource]time.Time)
 			}
@@ -245,7 +249,7 @@ func (r *SubscriptionRefresher) refreshSubscription(ctx context.Context, out *Su
 			r.last = make(map[string]subscriptionPair)
 		}
 		r.last[key] = pair
-		succeeded = true
+		succeeded, tunnelWon = true, stats.tunnel
 		nextDirect, nextTunnel = nil, nil
 		cancelRace()
 	}
