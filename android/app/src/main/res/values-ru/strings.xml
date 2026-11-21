@@ -345,6 +345,11 @@
     <string name="whatsapp_ports_busy">Нет свободного порта; попробуйте позже</string>
     <string name="whatsapp_no_ports">Нет свободных локальных портов. Попробуйте ещё раз.</string>
     <string name="channel_my">через мой маршрут</string>
+    <string name="start_on_boot">Запускать после перезагрузки телефона</string>
+    <string name="start_on_boot_help">Если прокси был включён, Passage включит его снова после перезагрузки и разблокировки телефона. На некоторых телефонах для Passage нужно ещё разрешить автозапуск.</string>
+    <string name="restart_channel">Перезагрузка</string>
+    <string name="restart_off_title">Passage выключен после перезагрузки</string>
+    <string name="restart_off_text">Нажмите, чтобы открыть Passage и включить прокси.</string>
     <string name="bg_advance_title">Чтобы Passage не останавливали</string>
     <string name="bg_advance_reason">Некоторые телефоны сами останавливают фоновые приложения. Если Passage остановят, мессенджеры потеряют связь, пока вы не откроете его снова.</string>
     <string name="bg_killed_title">Система остановила Passage</string>

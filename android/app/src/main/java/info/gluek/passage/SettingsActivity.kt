@@ -383,6 +383,12 @@ class SettingsActivity : ThemedActivity() {
         backgroundCard.addView(backgroundState)
         batteryButton = Ui.outlinedButton(this, getString(R.string.battery)) { Ui.askBatteryExemption(this) }
         backgroundCard.addView(spaced(batteryButton))
+        backgroundCard.addView(CheckBox(this).apply {
+            text = getString(R.string.start_on_boot)
+            isChecked = settings.startOnBoot
+            setOnCheckedChangeListener { _, on -> settings.startOnBoot = on }
+        })
+        backgroundCard.addView(Ui.hint(this, getString(R.string.start_on_boot_help)))
 
         val aboutCard = Ui.card(this)
         col.addView(aboutCard)

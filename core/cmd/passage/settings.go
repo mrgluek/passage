@@ -45,7 +45,9 @@ type Settings struct {
 	AutoUpdate        bool
 	NextUpdate        time.Time
 	DismissedUpdate   string
-	RoutesNotice      string
+	// AutostartDismissed hides the home screen offer to start at sign-in.
+	AutostartDismissed bool
+	RoutesNotice       string
 	// AppSeen is set once a chat app has sent traffic through the proxy.
 	AppSeen bool
 	// Lang is "en" or "ru" when chosen in the settings; empty follows the system.
@@ -176,6 +178,8 @@ func loadSettings(path string) (Settings, bool, error) {
 			s.NextUpdate, _ = time.Parse(time.RFC3339, v)
 		case "dismissed_update":
 			s.DismissedUpdate = v
+		case "autostart_dismissed":
+			s.AutostartDismissed = v == "true" || v == "1"
 		case "running":
 			s.Running = v != "false" && v != "0"
 		case "app_seen":
@@ -258,10 +262,11 @@ running=%t
 auto_update=%t
 next_update=%s
 dismissed_update=%s
+autostart_dismissed=%t
 routes_notice=%s
 app_seen=%t
 lang=%s
-`, s.Port, s.User, s.Pass, s.Auth, s.WhatsApp, s.WhatsAppChatPort, s.WhatsAppMediaPort, s.Mode, s.My, s.Running, s.AutoUpdate, s.NextUpdate.Format(time.RFC3339), s.DismissedUpdate, s.RoutesNotice, s.AppSeen, s.Lang)
+`, s.Port, s.User, s.Pass, s.Auth, s.WhatsApp, s.WhatsAppChatPort, s.WhatsAppMediaPort, s.Mode, s.My, s.Running, s.AutoUpdate, s.NextUpdate.Format(time.RFC3339), s.DismissedUpdate, s.AutostartDismissed, s.RoutesNotice, s.AppSeen, s.Lang)
 	text += s.editLines()
 	return writeFile(path, []byte(text))
 }

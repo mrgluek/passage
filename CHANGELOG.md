@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.9.5
+
+- Android: after the phone restarts and is unlocked, Passage turns the proxy
+  back on if it was on. Settings has a switch for it (on by default); if the
+  start fails, a notification offers to open Passage. Some phones also need
+  Autostart allowed for Passage.
+- Windows and macOS: while the proxy runs, the home screen offers to start
+  Passage when you sign in; Don't show again hides the offer.
+
 ## 0.9.4
 
 - Windows and macOS: a new version is offered on the home screen with the

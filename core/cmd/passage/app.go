@@ -439,6 +439,7 @@ type view struct {
 	Subscriptions      []subscriptionRow `json:"subscriptions"`
 	SubscriptionNotice string            `json:"subscription_notice"`
 	Update             updateView        `json:"update"`
+	AutostartOffer     bool              `json:"autostart_offer"`
 	Running            bool              `json:"running"`
 	Title              string            `json:"title"`
 	Caption            string            `json:"caption"`
@@ -492,6 +493,7 @@ func (a *App) view() view {
 	v := view{Running: s.Running, HasLink: a.hasLink(), Mode: a.mode(), Routes: a.routes(),
 		My: s.My != "", Auth: s.Auth, Host: host, Port: s.Port, ProxyLink: s.socksURL(), TgLink: s.proxyLink("tg://socks"), VeltaLink: s.veltaLink(),
 		AppSeen: s.AppSeen, Lang: s.Lang, Error: a.lastErr}
+	v.AutostartOffer = s.Running && !s.AutostartDismissed && !a.os.autostart()
 	v.WhatsApp, v.WhatsAppChatPort, v.WhatsAppMediaPort = s.WhatsApp, s.WhatsAppChatPort, s.WhatsAppMediaPort
 	v.WhatsAppError = a.whatsappError
 	if s.Auth {
@@ -986,6 +988,12 @@ func (a *App) call(method string, arg json.RawMessage) (any, error) {
 		a.newAccess()
 	case "setAutostart":
 		return nil, a.os.setAutostart(flag())
+	case "dismissAutostart":
+		a.mu.Lock()
+		a.settings.AutostartDismissed = true
+		a.saveSettings()
+		a.mu.Unlock()
+		a.changed()
 	case "copy":
 		return nil, a.os.copyText(str())
 	case "open":
