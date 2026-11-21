@@ -82,3 +82,16 @@ class SubscriptionNameTest {
         org.junit.Assert.assertEquals("Example" + emoji.repeat(57), Subscriptions.displayName(name))
     }
 }
+
+class SubscriptionsFreshFailureTest {
+    private val now = 1_000_000L
+
+    @org.junit.Test fun recentUpdateHidesAnUnreachableSourceError() {
+        org.junit.Assert.assertTrue(Subscriptions.freshNetworkFailure("network", now - 3600, now))
+        org.junit.Assert.assertTrue(Subscriptions.freshNetworkFailure("timeout", now - 3600, now))
+        org.junit.Assert.assertFalse(Subscriptions.freshNetworkFailure("network", now - 25 * 3600, now))
+        org.junit.Assert.assertFalse(Subscriptions.freshNetworkFailure("network", 0, now))
+        org.junit.Assert.assertFalse(Subscriptions.freshNetworkFailure("signature", now - 3600, now))
+        org.junit.Assert.assertFalse(Subscriptions.freshNetworkFailure("unchanged", now - 3600, now))
+    }
+}

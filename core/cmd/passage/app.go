@@ -439,6 +439,7 @@ type view struct {
 	Subscriptions      []subscriptionRow `json:"subscriptions"`
 	SubscriptionNotice string            `json:"subscription_notice"`
 	Update             updateView        `json:"update"`
+	AutostartOffer     bool              `json:"autostart_offer"`
 	Running            bool              `json:"running"`
 	Title              string            `json:"title"`
 	Caption            string            `json:"caption"`
@@ -485,7 +486,15 @@ func startHint(t tr, running bool, routes int) string {
 	return ""
 }
 
+// view reads the platform's start-at-sign-in state outside a.mu: on macOS it
+// runs on the main thread, which may be waiting for a.mu itself.
 func (a *App) view() view {
+	v, offer := a.viewLocked()
+	v.AutostartOffer = offer && !a.os.autostart()
+	return v
+}
+
+func (a *App) viewLocked() (view, bool) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	s := a.settings
@@ -553,7 +562,7 @@ func (a *App) view() view {
 	}
 	v.Update = a.updateViewLocked()
 	v.Full = full
-	return v
+	return v, s.Running && !s.AutostartDismissed
 }
 
 // linkView is the settings screen's link part. The text is sent only when
@@ -966,9 +975,10 @@ func (a *App) call(method string, arg json.RawMessage) (any, error) {
 		a.mu.Unlock()
 	case "settings":
 		a.mu.Lock()
-		defer a.mu.Unlock()
-		return map[string]any{"auth": a.settings.Auth, "my": a.settings.My, "autostart": a.os.autostart(),
-			"auto_update": a.settings.AutoUpdate, "soar": tunnel.SoarVersion()}, nil
+		auth, my, autoUpdate := a.settings.Auth, a.settings.My, a.settings.AutoUpdate
+		a.mu.Unlock()
+		return map[string]any{"auth": auth, "my": my, "autostart": a.os.autostart(),
+			"auto_update": autoUpdate, "soar": tunnel.SoarVersion()}, nil
 	case "saveMy":
 		return a.saveMy(str())
 	case "whatsappPorts":
@@ -986,6 +996,12 @@ func (a *App) call(method string, arg json.RawMessage) (any, error) {
 		a.newAccess()
 	case "setAutostart":
 		return nil, a.os.setAutostart(flag())
+	case "dismissAutostart":
+		a.mu.Lock()
+		a.settings.AutostartDismissed = true
+		a.saveSettings()
+		a.mu.Unlock()
+		a.changed()
 	case "copy":
 		return nil, a.os.copyText(str())
 	case "open":

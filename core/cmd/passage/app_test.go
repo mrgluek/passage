@@ -560,3 +560,50 @@ func TestHomeAppPanes(t *testing.T) {
 		}
 	}
 }
+
+type autostartPlatform struct {
+	fakePlatform
+	on bool
+}
+
+func (p *autostartPlatform) autostart() bool { return p.on }
+func (p *autostartPlatform) setAutostart(on bool) error {
+	p.on = on
+	return nil
+}
+
+func TestAutostartOffer(t *testing.T) {
+	dir := t.TempDir()
+	p := &autostartPlatform{}
+	a := newApp(dir, "test", "", "en", p)
+	a.mu.Lock()
+	a.settings.Running = false
+	a.mu.Unlock()
+	if a.view().AutostartOffer {
+		t.Fatal("offer shown while the proxy is stopped")
+	}
+	a.mu.Lock()
+	a.settings.Running = true
+	a.mu.Unlock()
+	if !a.view().AutostartOffer {
+		t.Fatal("no offer while the proxy runs and start at sign-in is off")
+	}
+	p.on = true
+	if a.view().AutostartOffer {
+		t.Fatal("offer shown with start at sign-in already on")
+	}
+	p.on = false
+	if _, err := a.call("dismissAutostart", nil); err != nil {
+		t.Fatal(err)
+	}
+	if a.view().AutostartOffer {
+		t.Fatal("offer shown after Don't show again")
+	}
+	b := newApp(dir, "test", "", "en", p)
+	b.mu.Lock()
+	b.settings.Running = true
+	b.mu.Unlock()
+	if b.view().AutostartOffer {
+		t.Fatal("dismissal lost after restart")
+	}
+}

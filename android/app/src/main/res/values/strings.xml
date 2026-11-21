@@ -193,6 +193,7 @@
         <item quantity="one">revision %1$d · %2$d route</item>
         <item quantity="other">revision %1$d · %2$d routes</item>
     </plurals>
+    <string name="sub_check_failed">last check failed</string>
     <string name="sub_just_now">updated just now</string>
     <string name="sub_minutes">updated %1$d min ago</string>
     <string name="sub_hours">updated %1$d h ago</string>
@@ -338,6 +339,11 @@
     <string name="whatsapp_ports_busy">No free port; try again later</string>
     <string name="whatsapp_no_ports">No local ports available. Try again.</string>
     <string name="channel_my">via my route</string>
+    <string name="start_on_boot">Start after the phone restarts</string>
+    <string name="start_on_boot_help">If the proxy was on, Passage turns it on again after the phone restarts and is unlocked. Some phones also need Autostart allowed for Passage.</string>
+    <string name="restart_channel">Restart notifications</string>
+    <string name="restart_off_title">Passage is off after the restart</string>
+    <string name="restart_off_text">Tap to open Passage and turn the proxy on.</string>
     <string name="bg_advance_title">Keep Passage from being stopped</string>
     <string name="bg_advance_reason">Some phones stop background apps on their own. If Passage is stopped, your messaging apps lose their connection until you open it again.</string>
     <string name="bg_killed_title">The system stopped Passage</string>

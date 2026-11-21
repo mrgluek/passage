@@ -461,3 +461,37 @@ func TestHomeOffersSettingsWithoutRoutes(t *testing.T) {
 		}
 	}
 }
+
+func TestFreshNetworkFailureIsNotShownAsAProblem(t *testing.T) {
+	now := time.Now().Unix()
+	for _, c := range []struct {
+		code string
+		ok   int64
+		want bool
+	}{
+		{"network", now - 3600, true},
+		{"timeout", now - 3600, true},
+		{"network", now - 25*3600, false},
+		{"network", 0, false},
+		{"signature", now - 3600, false},
+		{"rollback", now - 3600, false},
+		{"", now - 3600, false},
+		{"unchanged", now - 3600, false},
+	} {
+		if got := freshNetworkFailure(c.code, c.ok, now); got != c.want {
+			t.Errorf("%q ok %d ago: %v, want %v", c.code, now-c.ok, got, c.want)
+		}
+	}
+	for _, lang := range []string{"en", "ru"} {
+		sub := tunnel.Subscription{ID: "example", Name: "Example", Revision: 2, LastError: "network", LastOK: now - 3*3600}
+		a := &App{t: tr(table(lang)), linkCfg: tunnel.Config{Subscriptions: []tunnel.Subscription{sub}}}
+		detail := a.subscriptionRowsLocked()[0].Detail
+		if strings.Contains(detail, a.t.f("sub_error_network")) || !strings.Contains(detail, a.t.f("sub_check_failed")) || !strings.Contains(detail, a.t.f("sub_hours", 3)) {
+			t.Fatal(detail)
+		}
+		a.linkCfg.Subscriptions[0].LastOK = now - 30*3600
+		if detail = a.subscriptionRowsLocked()[0].Detail; !strings.Contains(detail, a.t.f("sub_error_network")) {
+			t.Fatal(detail)
+		}
+	}
+}

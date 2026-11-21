@@ -148,6 +148,12 @@ a { color: var(--accent); cursor: pointer; text-decoration: underline; }
     <button class="primary wide hidden" id="homeUpdateAction"></button>
     <button class="textbtn hidden" id="homeUpdateSecondary"></button>
   </section>
+  <section class="card hidden" id="homeAutostart" aria-labelledby="homeAutostartTitle">
+    <h2 id="homeAutostartTitle" data-t="autostart_offer_title"></h2>
+    <p class="hint" data-t="autostart_offer_text"></p>
+    <button class="primary wide" id="homeAutostartOn" data-t="autostart_offer_on"></button>
+    <button class="textbtn" id="homeAutostartHide" data-t="autostart_offer_hide"></button>
+  </section>
   <section class="card" id="statusCard">
     <div class="titleRow"><span class="dot" id="dot"></span><span class="ctitle" id="sTitle"></span></div>
     <p class="hint" id="sReason"></p>
@@ -416,6 +422,7 @@ function render(v) {
   const u = v.update;
   const updateText = () => u.managed && u.version && u.state === "available" ? t("update_managed_" + u.managed, u.version) : t("update_" + u.state, u.version);
   renderHomeUpdate(u);
+  setHidden("homeAutostart", !v.autostart_offer);
   $("updateSettings").classList.toggle("hidden", !u.enabled);
   $("updateStatus").textContent = u.error || updateText();
   const failures = u.detail.split("\n").filter(Boolean);
@@ -795,6 +802,8 @@ $("homeUpdateSecondary").onclick = () => {
   if (u.state === "downloading" && !u.managed) return call("updateCancel").then(refresh, fail);
   if (u.can_dismiss) return call("dismissUpdate", u.version).then(refresh, fail);
 };
+$("homeAutostartOn").onclick = () => call("setAutostart", true).then(refresh, fail);
+$("homeAutostartHide").onclick = () => call("dismissAutostart").then(refresh, fail);
 $("subscriptionNoticeClose").onclick = () => call("dismissSubscriptionNotice").then(refresh, fail);
 $("startStop").onclick = () => call(last && last.running ? "stop" : "start").then(refresh, fail);
 $("settingsBtn").onclick = () => page("settings");

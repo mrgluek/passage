@@ -3,6 +3,7 @@ package tunnel
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"net/http"
 	"strconv"
 	"strings"
 	"time"
@@ -26,23 +27,21 @@ type SubscriptionSourceAttempts struct {
 	Tries    uint32                     `json:"tries,omitempty"`
 	Answered uint32                     `json:"answered,omitempty"`
 	OK       uint32                     `json:"ok,omitempty"`
+	HTTP429  uint32                     `json:"http_429,omitempty"`
+	HTTP5xx  uint32                     `json:"http_5xx,omitempty"`
 	Fail     SubscriptionSourceFailures `json:"fail,omitempty,omitzero"`
 }
 
 type SubscriptionSourceStats struct {
-	Tunnel          SubscriptionSourceAttempts `json:"tunnel,omitempty,omitzero"`
-	Direct          SubscriptionSourceAttempts `json:"direct,omitempty,omitzero"`
-	LastDirectCheck int64                      `json:"last_direct_check,omitempty"`
-	// TunnelRefusedAt is when the tunnel last refused this source; for a while
-	// after it the source is fetched directly alongside the tunnel ones.
-	TunnelRefusedAt int64                      `json:"tunnel_refused_at,omitempty"`
-	Tries           uint32                     `json:"tries,omitempty"`
-	Answered        uint32                     `json:"answered,omitempty"`
-	OK              uint32                     `json:"ok,omitempty"`
-	Fail            SubscriptionSourceFailures `json:"fail,omitempty,omitzero"`
-	Via             SubscriptionSourceVia      `json:"via,omitempty,omitzero"`
-	LastOK          int64                      `json:"last_ok,omitempty"`
-	LastMS          int64                      `json:"last_ms,omitempty"`
+	Tunnel   SubscriptionSourceAttempts `json:"tunnel,omitempty,omitzero"`
+	Direct   SubscriptionSourceAttempts `json:"direct,omitempty,omitzero"`
+	Tries    uint32                     `json:"tries,omitempty"`
+	Answered uint32                     `json:"answered,omitempty"`
+	OK       uint32                     `json:"ok,omitempty"`
+	Fail     SubscriptionSourceFailures `json:"fail,omitempty,omitzero"`
+	Via      SubscriptionSourceVia      `json:"via,omitempty,omitzero"`
+	LastOK   int64                      `json:"last_ok,omitempty"`
+	LastMS   int64                      `json:"last_ms,omitempty"`
 }
 
 type SubscriptionSourceStatus struct {
@@ -51,11 +50,13 @@ type SubscriptionSourceStatus struct {
 }
 
 type subscriptionFetchStats struct {
-	tunnel   bool
-	started  bool
-	answered bool
-	failure  string
-	elapsed  time.Duration
+	tunnel     bool
+	started    bool
+	answered   bool
+	failure    string
+	elapsed    time.Duration
+	busyStatus int
+	retryAfter time.Time
 }
 
 func sourceStatsKey(source string) string {
@@ -129,8 +130,12 @@ func (s *Subscription) recordSourceFetch(source string, result subscriptionFetch
 	case "bad":
 		incrementSourceCounter(&attempts.Fail.Bad)
 	}
-	if result.tunnel && result.failure == "refused" {
-		stats.TunnelRefusedAt = time.Now().Unix()
+	switch result.busyStatus {
+	case 0:
+	case http.StatusTooManyRequests:
+		incrementSourceCounter(&attempts.HTTP429)
+	default:
+		incrementSourceCounter(&attempts.HTTP5xx)
 	}
 	s.SourceStats[key] = stats
 }
@@ -142,7 +147,6 @@ func (s *Subscription) recordSourceOK(source string, tunnel bool, elapsed time.D
 	if tunnel {
 		incrementSourceCounter(&stats.Via.Tunnel)
 		incrementSourceCounter(&stats.Tunnel.OK)
-		stats.TunnelRefusedAt = 0
 	} else {
 		incrementSourceCounter(&stats.Via.Direct)
 		incrementSourceCounter(&stats.Direct.OK)
@@ -176,18 +180,4 @@ func (s Subscription) sourceStatuses() []SubscriptionSourceStatus {
 		out = append(out, SubscriptionSourceStatus{ID: id, SubscriptionSourceStats: stats})
 	}
 	return out
-}
-
-// tunnelRefusalMemory is how long a source that the tunnel refused goes
-// directly: the exits may be updated, so the tunnel is tried again after it.
-const tunnelRefusalMemory = 7 * 24 * time.Hour
-
-func (s Subscription) tunnelRefusedRecently(source string, now time.Time) bool {
-	at := s.SourceStats[sourceStatsKey(source)].TunnelRefusedAt
-	if at == 0 {
-		return false
-	}
-	// A mark in the future (the clock went back) is not a recent refusal.
-	age := now.Sub(time.Unix(at, 0))
-	return age >= 0 && age < tunnelRefusalMemory
 }

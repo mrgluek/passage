@@ -74,8 +74,10 @@ func TestSubscriptionSourceFetchStats(t *testing.T) {
 	ref.directDial = func(ctx context.Context, _, _ string) (net.Conn, error) { <-ctx.Done(); return nil, ctx.Err() }
 	cfg = ref.Refresh(context.Background(), cfg, nil).Config
 	ref.directDial = func(context.Context, string, string) (net.Conn, error) { return nil, errors.New("unavailable") }
+	cfg.Operator = "other"
 	cfg = ref.Refresh(context.Background(), cfg, nil).Config
 	ref.directDial = dial
+	cfg.Operator = "third"
 	ref.directTimeout = time.Second
 	mode.Store("http")
 	cfg = ref.Refresh(context.Background(), cfg, nil).Config
@@ -85,7 +87,7 @@ func TestSubscriptionSourceFetchStats(t *testing.T) {
 		t.Fatal("expected signature rejection", cfg.Subscriptions[0].LastError)
 	}
 	got := cfg.Subscriptions[0].SourceStats[sourceStatsKey(server.URL)]
-	if got.Tries != 7 || got.Answered != 5 || got.OK != 3 || got.Fail.Net != 1 || got.Fail.Timeout != 1 || got.Fail.HTTP != 1 || got.Fail.Bad != 1 || got.Via.Direct != 1 || got.Via.Tunnel != 2 || got.LastOK == 0 || got.LastMS < 3 {
+	if got.Tries != 7 || got.Answered != 5 || got.OK != 3 || got.Fail.Net != 1 || got.Fail.Timeout != 1 || got.Fail.HTTP != 1 || got.Fail.Bad != 1 || got.Via.Direct != 3 || got.Via.Tunnel != 0 || got.LastOK == 0 || got.LastMS < 3 {
 		t.Fatalf("sequence: %+v", got)
 	}
 	if len(sub.SourceStats) != 0 {
@@ -105,6 +107,10 @@ func TestSubscriptionSourceStatsSaturate(t *testing.T) {
 		switch mode.Load().(string) {
 		case "http":
 			w.WriteHeader(404)
+		case "429":
+			w.WriteHeader(http.StatusTooManyRequests)
+		case "503":
+			w.WriteHeader(http.StatusServiceUnavailable)
 		case "bad":
 			w.Write([]byte("invalid"))
 		default:
@@ -118,15 +124,33 @@ func TestSubscriptionSourceStatsSaturate(t *testing.T) {
 	full := SubscriptionSourceStats{Tries: math.MaxUint32, Answered: math.MaxUint32, OK: math.MaxUint32,
 		Fail:   SubscriptionSourceFailures{Net: math.MaxUint32, Timeout: math.MaxUint32, HTTP: math.MaxUint32, Bad: math.MaxUint32},
 		Via:    SubscriptionSourceVia{Direct: math.MaxUint32, Tunnel: math.MaxUint32},
-		Direct: SubscriptionSourceAttempts{Tries: math.MaxUint32, Answered: math.MaxUint32, OK: math.MaxUint32, Fail: SubscriptionSourceFailures{Net: math.MaxUint32, Timeout: math.MaxUint32, HTTP: math.MaxUint32, Bad: math.MaxUint32}},
-		Tunnel: SubscriptionSourceAttempts{Tries: math.MaxUint32, Answered: math.MaxUint32, OK: math.MaxUint32, Fail: SubscriptionSourceFailures{Net: math.MaxUint32, Timeout: math.MaxUint32, HTTP: math.MaxUint32, Bad: math.MaxUint32}}}
+		Direct: SubscriptionSourceAttempts{Tries: math.MaxUint32, Answered: math.MaxUint32, OK: math.MaxUint32, HTTP429: math.MaxUint32, HTTP5xx: math.MaxUint32, Fail: SubscriptionSourceFailures{Net: math.MaxUint32, Timeout: math.MaxUint32, HTTP: math.MaxUint32, Bad: math.MaxUint32}},
+		Tunnel: SubscriptionSourceAttempts{Tries: math.MaxUint32, Answered: math.MaxUint32, OK: math.MaxUint32, HTTP429: math.MaxUint32, HTTP5xx: math.MaxUint32, Fail: SubscriptionSourceFailures{Net: math.MaxUint32, Timeout: math.MaxUint32, HTTP: math.MaxUint32, Bad: math.MaxUint32}}}
 	sub.SourceStats = map[string]SubscriptionSourceStats{sourceStatsKey(server.URL): full}
 	cfg := Config{Subscriptions: []Subscription{sub}}
 	ref := SubscriptionRefresher{directTimeout: time.Second}
 	cfg = ref.Refresh(context.Background(), cfg, nil).Config
-	cfg = ref.Refresh(context.Background(), cfg, []SubscriptionDial{(&net.Dialer{}).DialContext}).Config
-	for _, m := range []string{"http", "bad", "net", "timeout"} {
+	// A failed direct attempt marks the source, so the next refresh goes
+	// straight to the tunnel; each answer below must really use it.
+	var tunnelCalls atomic.Int32
+	tunnel := func(ctx context.Context, network, address string) (net.Conn, error) {
+		tunnelCalls.Add(1)
+		return (&net.Dialer{}).DialContext(ctx, network, address)
+	}
+	ref.directDial = func(context.Context, string, string) (net.Conn, error) { return nil, errors.New("unavailable") }
+	cfg.Operator = "tunnel"
+	cfg = ref.Refresh(context.Background(), cfg, nil).Config
+	for _, m := range []string{"ok", "429", "503"} {
 		mode.Store(m)
+		cfg = ref.Refresh(context.Background(), cfg, []SubscriptionDial{tunnel}).Config
+	}
+	if tunnelCalls.Load() != 3 {
+		t.Fatalf("tunnel dials: %d, want 3", tunnelCalls.Load())
+	}
+	ref.directDial = nil
+	for _, m := range []string{"http", "bad", "429", "503", "net", "timeout"} {
+		mode.Store(m)
+		cfg.Operator = m
 		switch m {
 		case "net":
 			ref.directDial = func(context.Context, string, string) (net.Conn, error) { return nil, errors.New("unavailable") }
@@ -152,7 +176,7 @@ func TestSubscriptionSourceStatsPersistenceAndPruning(t *testing.T) {
 	sub, _, _ := subFixture(t)
 	one, two, three := "https://example.org/one", "https://example.org/two", "https://example.org/three"
 	sub.Sources = []string{one, two, three}
-	sub.SourceStats = map[string]SubscriptionSourceStats{sourceStatsKey(one): {Tries: 1, Answered: 2, OK: 3, Fail: SubscriptionSourceFailures{Net: 4, Timeout: 5, HTTP: 6, Bad: 7}, Via: SubscriptionSourceVia{Direct: 8, Tunnel: 9}, Direct: SubscriptionSourceAttempts{Tries: 10}, Tunnel: SubscriptionSourceAttempts{Tries: 11}, LastDirectCheck: 123, LastOK: 100, LastMS: 20}, sourceStatsKey(two): {Tries: 2}, sourceStatsKey(three): {Tries: 3}}
+	sub.SourceStats = map[string]SubscriptionSourceStats{sourceStatsKey(one): {Tries: 1, Answered: 2, OK: 3, Fail: SubscriptionSourceFailures{Net: 4, Timeout: 5, HTTP: 6, Bad: 7}, Via: SubscriptionSourceVia{Direct: 8, Tunnel: 9}, Direct: SubscriptionSourceAttempts{Tries: 10}, Tunnel: SubscriptionSourceAttempts{Tries: 11}, LastOK: 100, LastMS: 20}, sourceStatsKey(two): {Tries: 2}, sourceStatsKey(three): {Tries: 3}}
 	path := filepath.Join(t.TempDir(), "subscriptions.json")
 	if err := SaveSubscriptionState(path, Config{Subscriptions: []Subscription{sub}}); err != nil {
 		t.Fatal(err)
@@ -256,33 +280,11 @@ func TestMergeSubscriptionSourcesTrailingSlashes(t *testing.T) {
 	}
 }
 
-func TestSubscriptionSourceStatsRaceAndReorder(t *testing.T) {
-	sub, key, bundle := subFixture(t)
-	raw, err := links.SealSubFile(bundle, bundle.Sub, sub.ReadKey, key)
-	if err != nil {
-		t.Fatal(err)
-	}
-	entered := make(chan struct{})
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { <-entered; w.Write(raw) }))
-	defer server.Close()
+func TestSubscriptionSourceStatsReorder(t *testing.T) {
+	sub, _, _ := subFixture(t)
 	subscriptionTestHTTP = true
 	t.Cleanup(func() { subscriptionTestHTTP = false })
-	sub.Sources = []string{server.URL}
-	slow := func(ctx context.Context, _, _ string) (net.Conn, error) {
-		close(entered)
-		<-ctx.Done()
-		return nil, errors.New("dial stopped")
-	}
-	ref := SubscriptionRefresher{}
-	out := ref.Refresh(context.Background(), Config{Subscriptions: []Subscription{sub}}, []SubscriptionDial{slow, (&net.Dialer{}).DialContext})
-	stats := out.Config.Subscriptions[0].SourceStats[sourceStatsKey(server.URL)]
-	if stats.Tries != 2 || stats.Answered != 1 || stats.OK != 1 || stats.Via.Tunnel != 1 || stats.Via.Direct != 0 || stats.Fail != (SubscriptionSourceFailures{}) {
-		t.Fatalf("race: %+v", stats)
-	}
-	if out.Config.Subscriptions[0].LastError != "" {
-		t.Fatal("loser changed winning metadata")
-	}
-
+	var ref SubscriptionRefresher
 	failures := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(404) }))
 	defer failures.Close()
 	one, two := failures.URL+"/one", failures.URL+"/two"
@@ -298,7 +300,7 @@ func TestSubscriptionSourceStatsRaceAndReorder(t *testing.T) {
 	}
 	cfg.Subscriptions[0].Sources = []string{two}
 	cfg = ref.Refresh(context.Background(), cfg, nil).Config
-	stats = cfg.Subscriptions[0].SourceStats[sourceStatsKey(two)]
+	stats := cfg.Subscriptions[0].SourceStats[sourceStatsKey(two)]
 	if len(cfg.Subscriptions[0].SourceStats) != 1 || stats.Tries != 3 || stats.Fail.HTTP != 3 {
 		t.Fatal("removed source not pruned", cfg.Subscriptions[0].SourceStats)
 	}
@@ -312,6 +314,10 @@ func TestSubscriptionSourceStatsPartialAnswers(t *testing.T) {
 			sub, _, _ := subFixture(t)
 			sub.Sources = []string{"http://example.org/sub"}
 			ref := SubscriptionRefresher{directTimeout: 50 * time.Millisecond}
+			// The server waits for the test to end, so the only failure the client
+			// can see is its own deadline, not a closed connection.
+			release := make(chan struct{})
+			defer close(release)
 			ref.directDial = func(ctx context.Context, _, _ string) (net.Conn, error) {
 				client, server := net.Pipe()
 				go func() {
@@ -322,7 +328,7 @@ func TestSubscriptionSourceStatsPartialAnswers(t *testing.T) {
 					}
 					if timeout {
 						server.Write([]byte("HTTP/1.1 200 OK\r\nContent-Length: 100\r\n\r\npartial"))
-						<-ctx.Done()
+						<-release
 					} else {
 						server.Write([]byte("invalid HTTP\r\n\r\n"))
 					}
@@ -336,54 +342,6 @@ func TestSubscriptionSourceStatsPartialAnswers(t *testing.T) {
 			}
 			if timeout && stats.Fail.Timeout != 1 || !timeout && stats.Fail.Net != 1 {
 				t.Fatalf("classification: %+v", stats)
-			}
-		})
-	}
-}
-
-func TestSubscriptionUnchangedWaitsForNewer(t *testing.T) {
-	for _, newer := range []bool{true, false} {
-		t.Run(map[bool]string{true: "newer", false: "unchanged"}[newer], func(t *testing.T) {
-			sub, key, bundle := subFixture(t)
-			sub.Revision = bundle.Revision
-			bundle.Revision++
-			raw, err := links.SealSubFile(bundle, bundle.Sub, sub.ReadKey, key)
-			if err != nil {
-				t.Fatal(err)
-			}
-			subscriptionTestHTTP = true
-			t.Cleanup(func() { subscriptionTestHTTP = false })
-			fast := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				w.WriteHeader(http.StatusNotModified)
-			}))
-			defer fast.Close()
-			slow := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				time.Sleep(100 * time.Millisecond)
-				if newer {
-					w.Write(raw)
-				} else {
-					w.WriteHeader(http.StatusNotFound)
-				}
-			}))
-			defer slow.Close()
-			sub.Sources = []string{fast.URL, slow.URL}
-			sub.ETag, sub.ETagSource = "test", fast.URL
-			ref := SubscriptionRefresher{}
-			out := ref.Refresh(context.Background(), Config{Subscriptions: []Subscription{sub}}, nil)
-			got := out.Config.Subscriptions[0]
-			if out.Changed != newer || got.LastOK == 0 {
-				t.Fatalf("changed=%t, revision=%d, last error=%q", out.Changed, got.Revision, got.LastError)
-			}
-			fastStats := got.SourceStats[sourceStatsKey(fast.URL)]
-			slowStats := got.SourceStats[sourceStatsKey(slow.URL)]
-			if fastStats.OK != 1 || slowStats.Answered != 1 {
-				t.Fatalf("fast=%+v slow=%+v", fastStats, slowStats)
-			}
-			if newer && (got.Revision != bundle.Revision || got.ETagSource != slow.URL || slowStats.OK != 1) {
-				t.Fatal("newer source did not win")
-			}
-			if !newer && (got.LastError != "unchanged" || got.ETagSource != fast.URL || slowStats.Fail.HTTP != 1) {
-				t.Fatal("unchanged fallback was lost")
 			}
 		})
 	}
@@ -425,74 +383,5 @@ func TestSourceAttemptCounters(t *testing.T) {
 				}
 			})
 		}
-	}
-}
-
-func TestFailedTunnelSourceDirectCheck(t *testing.T) {
-	sub, key, bundle := subFixture(t)
-	raw, err := links.SealSubFile(bundle, bundle.Sub, sub.ReadKey, key)
-	if err != nil {
-		t.Fatal(err)
-	}
-	newer := bundle
-	newer.Revision++
-	diagnosticRaw, err := links.SealSubFile(newer, newer.Sub, sub.ReadKey, key)
-	if err != nil {
-		t.Fatal(err)
-	}
-	subscriptionTestHTTP = true
-	t.Cleanup(func() { subscriptionTestHTTP = false })
-	failed := make(chan struct{}, 4)
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if strings.HasPrefix(r.URL.Path, "/winner/") {
-			<-failed
-		}
-		if strings.HasPrefix(r.URL.Path, "/mirror/") {
-			w.Write(diagnosticRaw)
-		} else {
-			w.Write(raw)
-		}
-	}))
-	defer server.Close()
-	winner, mirror := server.URL+"/winner", server.URL+"/mirror"
-	sub.Sources = []string{winner, mirror}
-	var directCalls atomic.Int32
-	dial := (&net.Dialer{}).DialContext
-	ref := SubscriptionRefresher{directDial: func(ctx context.Context, network, address string) (net.Conn, error) {
-		directCalls.Add(1)
-		return dial(ctx, network, address)
-	}}
-	// Separate hostnames let the tunnel dialer fail one source without changing source order.
-	sub.Sources[1] = "http://example.org/mirror"
-	mirror = sub.Sources[1]
-	ref.directDial = func(ctx context.Context, network, _ string) (net.Conn, error) {
-		directCalls.Add(1)
-		return dial(ctx, network, server.Listener.Addr().String())
-	}
-	tunnelDial := func(ctx context.Context, network, address string) (net.Conn, error) {
-		if strings.HasPrefix(address, "example.org:") {
-			failed <- struct{}{}
-			return nil, errors.New("unavailable")
-		}
-		return dial(ctx, network, address)
-	}
-	cfg := Config{Subscriptions: []Subscription{sub}}
-	for i := range 2 {
-		cfg = ref.Refresh(context.Background(), cfg, []SubscriptionDial{tunnelDial}).Config
-		got := cfg.Subscriptions[0]
-		stats := got.SourceStats[sourceStatsKey(mirror)]
-		if directCalls.Load() != 1 || stats.Direct.Tries != 1 || stats.Direct.OK != 1 || stats.Tunnel.Tries != uint32(i+1) || stats.Tunnel.Fail.Net != uint32(i+1) || stats.LastDirectCheck == 0 {
-			t.Fatalf("refresh %d: %+v calls=%d", i, stats, directCalls.Load())
-		}
-		if got.Revision != bundle.Revision || got.ETagSource != winner || got.LastError != "" && got.LastError != "unchanged" {
-			t.Fatal("diagnostic replaced winner", got.ETagSource, got.LastError)
-		}
-	}
-	stats := cfg.Subscriptions[0].SourceStats[sourceStatsKey(mirror)]
-	stats.LastDirectCheck = time.Now().Add(-25 * time.Hour).Unix()
-	cfg.Subscriptions[0].SourceStats[sourceStatsKey(mirror)] = stats
-	ref.Refresh(context.Background(), cfg, []SubscriptionDial{tunnelDial})
-	if directCalls.Load() != 2 {
-		t.Fatal("daily check did not renew")
 	}
 }

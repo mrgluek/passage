@@ -192,6 +192,11 @@ class Settings(context: Context) {
         set(v) = prefs.edit().putBoolean("running", v).apply()
 
 
+    /** Turn the proxy on again after the phone restarts, if it was on. */
+    var startOnBoot: Boolean
+        get() = prefs.getBoolean("start_on_boot", true)
+        set(v) = prefs.edit().putBoolean("start_on_boot", v).apply()
+
     val hasLink: Boolean
         get() = link.isNotEmpty() || subscriptions.isNotEmpty() || savedRoutes.isNotEmpty()
 
