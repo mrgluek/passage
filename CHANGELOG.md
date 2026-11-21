@@ -10,6 +10,8 @@
   Passage when you sign in; Don't show again hides the offer.
 - Subscription refreshes are faster, and a source that answers busy is asked
   again only at the next refresh.
+- A subscription updated within the last day no longer shows "Could not
+  connect" when a check fails; it says the last check failed.
 
 ## 0.9.4
 

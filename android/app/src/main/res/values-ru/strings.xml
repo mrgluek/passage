@@ -197,6 +197,7 @@
         <item quantity="many">Версия %1$d · %2$d маршрутов</item>
         <item quantity="other">Версия %1$d · %2$d маршрута</item>
     </plurals>
+    <string name="sub_check_failed">последняя проверка не удалась</string>
     <string name="sub_just_now">обновлено только что</string>
     <string name="sub_minutes">обновлено %1$d мин. назад</string>
     <string name="sub_hours">обновлено %1$d ч. назад</string>

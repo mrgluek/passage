@@ -140,6 +140,21 @@ func subscriptionFailure(t tr, code string) string {
 	}
 }
 
+// networkFailure reports a failed attempt that says nothing about the file itself.
+func networkFailure(code string) bool {
+	switch code {
+	case "", "unchanged", "http", "size", "decrypt", "signature", "rollback", "collision", "required":
+		return false
+	}
+	return true
+}
+
+// freshNetworkFailure: the list was updated within a day, so a failed
+// attempt to reach the sources is not shown as a problem.
+func freshNetworkFailure(code string, lastOK, now int64) bool {
+	return lastOK > 0 && networkFailure(code) && now-lastOK < 24*3600
+}
+
 func refreshResult(t tr, before, after tunnel.Subscription) string {
 	if msg := subscriptionFailure(t, after.LastError); msg != "" {
 		return t.f("sub_failed", msg)
@@ -164,18 +179,25 @@ func (a *App) subscriptionRowsLocked() []subscriptionRow {
 	for _, sub := range a.linkCfg.Subscriptions {
 		detail := a.t.quantity("sub_detail", int64(len(sub.RouteIDs)), sub.Revision, len(sub.RouteIDs))
 		status := subscriptionFailure(a.t, sub.LastError)
-		if status == "" && sub.LastOK > 0 {
+		age := ""
+		if sub.LastOK > 0 {
 			mins := max(int64(0), (time.Now().Unix()-sub.LastOK)/60)
 			switch {
 			case mins < 1:
-				status = a.t.f("sub_just_now")
+				age = a.t.f("sub_just_now")
 			case mins < 60:
-				status = a.t.f("sub_minutes", mins)
+				age = a.t.f("sub_minutes", mins)
 			case mins < 1440:
-				status = a.t.f("sub_hours", mins/60)
+				age = a.t.f("sub_hours", mins/60)
 			default:
-				status = a.t.quantity("sub_days", mins/1440, mins/1440)
+				age = a.t.quantity("sub_days", mins/1440, mins/1440)
 			}
+		}
+		switch {
+		case freshNetworkFailure(sub.LastError, sub.LastOK, time.Now().Unix()):
+			status = age + ", " + a.t.f("sub_check_failed")
+		case status == "":
+			status = age
 		}
 		if status != "" {
 			detail += " · " + status

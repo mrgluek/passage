@@ -78,15 +78,21 @@ object Subscriptions {
         else -> R.string.sub_error_network
     }
 
+    /** The list was updated within a day, so a failed attempt to reach the sources is not shown as a problem. */
+    fun freshNetworkFailure(code: String, last: Long, now: Long): Boolean =
+        last > 0 && errorResource(code) == R.string.sub_error_network && now - last < 24 * 3600
+
     fun isClosed(sub: JSONObject): Boolean = sub.optBoolean("closed")
 
     fun detail(context: Context, sub: JSONObject, now: Long = System.currentTimeMillis() / 1000): String {
         if (isClosed(sub)) return context.getString(R.string.sub_closed)
         val count = if (sub.has("routes")) sub.optInt("routes") else sub.optJSONArray("route_ids")?.length() ?: 0
         val heading = context.resources.getQuantityString(R.plurals.sub_detail, count, sub.optLong("revision"), count)
-        val error = errorResource(sub.optString("last_error"))
-        if (error != null) return heading + "\n" + context.getString(error)
+        val code = sub.optString("last_error")
+        val error = errorResource(code)
         val last = sub.optLong("last_ok")
+        val fresh = freshNetworkFailure(code, last, now)
+        if (error != null && !fresh) return heading + "\n" + context.getString(error)
         if (last <= 0) return heading
         val minutes = ((now - last).coerceAtLeast(0) / 60)
         val time = when {
@@ -95,7 +101,7 @@ object Subscriptions {
             minutes < 1440 -> context.getString(R.string.sub_hours, minutes / 60)
             else -> context.resources.getQuantityString(R.plurals.sub_days, (minutes / 1440).coerceAtMost(Int.MAX_VALUE.toLong()).toInt(), minutes / 1440)
         }
-        return "$heading\n$time"
+        return if (fresh) "$heading\n$time, ${context.getString(R.string.sub_check_failed)}" else "$heading\n$time"
     }
 
     fun request(config: String): JSONObject = JSONObject().put("existing", if (config.isEmpty()) JSONObject() else JSONObject(config))

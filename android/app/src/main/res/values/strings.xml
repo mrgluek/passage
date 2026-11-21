@@ -193,6 +193,7 @@
         <item quantity="one">revision %1$d · %2$d route</item>
         <item quantity="other">revision %1$d · %2$d routes</item>
     </plurals>
+    <string name="sub_check_failed">last check failed</string>
     <string name="sub_just_now">updated just now</string>
     <string name="sub_minutes">updated %1$d min ago</string>
     <string name="sub_hours">updated %1$d h ago</string>
