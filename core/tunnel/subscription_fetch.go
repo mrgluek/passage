@@ -105,10 +105,19 @@ func (r *SubscriptionRefresher) refreshSubscription(ctx context.Context, out *Su
 	tunnelPairs := slices.DeleteFunc(subscriptionPairs(sub.Sources, 0, directIndex, last), func(pair subscriptionPair) bool {
 		return !available(pair)
 	})
+	// Direct sources that failed lately are left for last: tried only if the
+	// tunnel tier gets no answer either, so a stale mark cannot lock a refresh out.
+	var deferred []subscriptionPair
 	directPairs := slices.DeleteFunc(subscriptionPairs(sub.Sources, directIndex, directIndex+1, subscriptionPair{last.source, directIndex}), func(pair subscriptionPair) bool {
 		source := strings.TrimRight(pair.source, "/")
-		// Without a tunnel there is nothing else to try, so a failure mark does not apply.
-		return !available(pair) || len(tunnelPairs) > 0 && started.Before(r.directFailed[subscriptionNetworkSource{network, source}])
+		if !available(pair) {
+			return true
+		}
+		if len(tunnelPairs) > 0 && started.Before(r.directFailed[subscriptionNetworkSource{network, source}]) {
+			deferred = append(deferred, pair)
+			return true
+		}
+		return false
 	})
 
 	race, cancelRace := context.WithCancel(ctx)
@@ -122,7 +131,7 @@ func (r *SubscriptionRefresher) refreshSubscription(ctx context.Context, out *Su
 	cancelTunnel := func() {}
 	defer func() { cancelTunnel() }()
 
-	results := make(chan subscriptionFetchResult, len(directPairs)+len(tunnelPairs))
+	results := make(chan subscriptionFetchResult, len(directPairs)+len(tunnelPairs)+len(deferred))
 	fetching := sub
 	pending := 0
 	launch := func(attempt context.Context, pair subscriptionPair, dial SubscriptionDial) {
@@ -175,15 +184,36 @@ func (r *SubscriptionRefresher) refreshSubscription(ctx context.Context, out *Su
 	}
 
 	succeeded, tunnelWon := false, false
+	// "Unchanged" is an answer, but another source may hold a newer file, so
+	// the first one is kept and accepted only if no source delivers one.
+	var held *subscriptionFetchResult
+	accept := func(result subscriptionFetchResult, code string) {
+		pair, stats := result.pair, result.stats
+		directKey := subscriptionNetworkSource{network, strings.TrimRight(pair.source, "/")}
+		sub.LastError = code
+		sub.recordSourceOK(pair.source, stats.tunnel, stats.elapsed)
+		if !stats.tunnel {
+			delete(r.directFailed, directKey)
+		}
+		sub.LastOK = time.Now().Unix()
+		sub.ETag, sub.ETagSource = result.etag, pair.source
+		if r.last == nil || len(r.last) >= 128 {
+			r.last = make(map[string]subscriptionPair)
+		}
+		r.last[key] = pair
+		succeeded, tunnelWon = true, stats.tunnel
+		nextDirect, nextTunnel = nil, nil
+		cancelRace()
+	}
 	record := func(result subscriptionFetchResult) {
 		pending--
 		pair, stats, code := result.pair, result.stats, result.code
 		source := strings.TrimRight(pair.source, "/")
 		directKey := subscriptionNetworkSource{network, source}
 		sub.recordSourceFetch(pair.source, stats)
-		// A direct attempt that got no answer for half the wait and was cut off
+		// A direct attempt that got no answer for a few seconds and was cut off
 		// when the tunnel won counts as failed too, so the wait is not repeated.
-		silent := tunnelWon && stats.failure == "canceled" && !stats.answered && stats.elapsed >= subscriptionTunnelDelay/2
+		silent := tunnelWon && stats.failure == "canceled" && !stats.answered && stats.elapsed >= 2*subscriptionDirectStagger
 		if !stats.tunnel && (silent || stats.failure == "net" || stats.failure == "timeout" || stats.failure == "refused") {
 			if r.directFailed == nil {
 				r.directFailed = make(map[subscriptionNetworkSource]time.Time)
@@ -235,23 +265,20 @@ func (r *SubscriptionRefresher) refreshSubscription(ctx context.Context, out *Su
 				out.Changed = true
 			}
 		}
-		sub.LastError = code
 		if code != "" && code != "unchanged" {
+			sub.LastError = code
 			return
 		}
-		sub.recordSourceOK(pair.source, stats.tunnel, stats.elapsed)
-		if !stats.tunnel {
-			delete(r.directFailed, directKey)
+		if code == "unchanged" {
+			if held == nil {
+				result.code = code
+				held = &result
+			}
+			// An answer exists: the tunnel is not needed, the other direct sources still run.
+			nextTunnel = nil
+			return
 		}
-		sub.LastOK = time.Now().Unix()
-		sub.ETag, sub.ETagSource = result.etag, pair.source
-		if r.last == nil || len(r.last) >= 128 {
-			r.last = make(map[string]subscriptionPair)
-		}
-		r.last[key] = pair
-		succeeded, tunnelWon = true, stats.tunnel
-		nextDirect, nextTunnel = nil, nil
-		cancelRace()
+		accept(result, code)
 	}
 	drain := func() {
 		for pending > 0 {
@@ -264,25 +291,44 @@ func (r *SubscriptionRefresher) refreshSubscription(ctx context.Context, out *Su
 		}
 	}
 	done := ctx.Done()
-	for pending > 0 || nextDirect != nil || nextTunnel != nil {
-		select {
-		case result := <-results:
-			record(result)
-		case <-nextDirect:
-			drain()
-			nextDirect = nil
-			if !succeeded && directCtx.Err() == nil && time.Now().Before(cutoff) {
-				startDirect()
+	loop := func() {
+		for pending > 0 || nextDirect != nil || nextTunnel != nil {
+			select {
+			case result := <-results:
+				record(result)
+				// Every direct attempt has ended without an answer: nothing to wait for.
+				if !succeeded && pending == 0 && nextDirect == nil && nextTunnel != nil && race.Err() == nil {
+					startTunnel()
+				}
+			case <-nextDirect:
+				drain()
+				nextDirect = nil
+				if !succeeded && directCtx.Err() == nil && time.Now().Before(cutoff) {
+					startDirect()
+				}
+			case <-nextTunnel:
+				drain()
+				if nextTunnel != nil && race.Err() == nil {
+					startTunnel()
+				}
+				nextTunnel = nil
+			case <-done:
+				done, nextDirect, nextTunnel = nil, nil, nil
 			}
-		case <-nextTunnel:
-			drain()
-			if nextTunnel != nil && race.Err() == nil {
-				startTunnel()
-			}
-			nextTunnel = nil
-		case <-done:
-			done, nextDirect, nextTunnel = nil, nil, nil
 		}
+	}
+	loop()
+	if !succeeded && held == nil && len(deferred) > 0 && ctx.Err() == nil {
+		directPairs, deferred = deferred, nil
+		second, cancelSecond := context.WithTimeout(race, directTimeout)
+		defer cancelSecond()
+		directCtx = second
+		cutoff = time.Now().Add(subscriptionTunnelDelay)
+		startDirect()
+		loop()
+	}
+	if !succeeded && held != nil {
+		accept(*held, "unchanged")
 	}
 	sub.SourceStats = sub.retainedSourceStats()
 	out.Config.Subscriptions[index] = sub

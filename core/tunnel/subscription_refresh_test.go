@@ -64,17 +64,23 @@ func TestSubscriptionDirectStagger(t *testing.T) {
 	for _, test := range []struct {
 		name      string
 		unchanged bool
+		newer     bool
 		remember  bool
 	}{
 		{name: "second wins"},
-		{name: "unchanged wins", unchanged: true},
+		{name: "unchanged waits for the others", unchanged: true},
+		{name: "newer file after unchanged", unchanged: true, newer: true},
 		{name: "last winner first", remember: true},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			cfg, raw := subscriptionTestConfig(t, "http://one.example.org", "http://two.example.org", "http://three.example.org")
 			sub := &cfg.Subscriptions[0]
 			if test.unchanged {
+				// Only the first source gets the saved tag; the others answer with a file.
 				sub.Revision, sub.ETag, sub.ETagSource = 1, "saved", sub.Sources[0]
+				if test.newer {
+					sub.Revision = 0
+				}
 			}
 			synctest.Test(t, func(t *testing.T) {
 				first := "one.example.org"
@@ -95,13 +101,16 @@ func TestSubscriptionDirectStagger(t *testing.T) {
 							close(loserCanceled)
 							return nil, ctx.Err()
 						}
-					} else {
-						if test.unchanged || test.remember || address != "two.example.org:80" || time.Since(start) != 2*time.Second {
+					} else if test.unchanged {
+						want := map[string]time.Duration{"two.example.org:80": 2 * time.Second, "three.example.org:80": 4 * time.Second}
+						if at, ok := want[address]; !ok || time.Since(start) != at || test.newer && address != "two.example.org:80" {
 							t.Errorf("unexpected direct dial %s at %v", address, time.Since(start))
 						}
+					} else if test.remember || address != "two.example.org:80" || time.Since(start) != 2*time.Second {
+						t.Errorf("unexpected direct dial %s at %v", address, time.Since(start))
 					}
 					dial := subscriptionTestDial(func(_ context.Context, req *http.Request) *http.Response {
-						if test.unchanged {
+						if test.unchanged && strings.HasPrefix(req.Host, "one.example.org") {
 							if req.Header.Get("If-None-Match") != "saved" {
 								t.Error("missing conditional request")
 							}
@@ -117,9 +126,13 @@ func TestSubscriptionDirectStagger(t *testing.T) {
 				}
 				out := ref.Refresh(context.Background(), cfg, []SubscriptionDial{tunnel})
 				got := out.Config.Subscriptions[0]
-				if test.unchanged {
-					if out.Changed || got.LastError != "unchanged" || time.Since(start) != 0 {
-						t.Fatalf("unchanged did not stop the race at once: %q at %v", got.LastError, time.Since(start))
+				if test.unchanged && !test.newer {
+					if out.Changed || got.LastError != "unchanged" || time.Since(start) != 4*time.Second {
+						t.Fatalf("unchanged did not wait for the other sources: %q at %v", got.LastError, time.Since(start))
+					}
+				} else if test.newer {
+					if !out.Changed || got.ETagSource != sub.Sources[1] || time.Since(start) != 2*time.Second {
+						t.Fatalf("a newer file did not beat unchanged: changed %v at %v", out.Changed, time.Since(start))
 					}
 				} else if !out.Changed || got.ETagSource != sub.Sources[1] {
 					t.Fatal("second source did not win")
@@ -202,12 +215,13 @@ func TestSubscriptionDirectFailureMemory(t *testing.T) {
 		start := time.Now()
 		ref := SubscriptionRefresher{}
 		directDials, tunnelDials := make(chan time.Duration, 4), make(chan time.Duration, 4)
+		dials := 0
 		ok := subscriptionTestDial(func(context.Context, *http.Request) *http.Response {
 			return subscriptionTestResponse(http.StatusOK, string(raw))
 		})
 		ref.directDial = func(ctx context.Context, network, address string) (net.Conn, error) {
 			directDials <- time.Since(start)
-			if time.Since(start) == 0 {
+			if dials++; dials == 1 {
 				return nil, errors.New("connect failed")
 			}
 			return ok(ctx, network, address)
@@ -235,10 +249,10 @@ func TestSubscriptionDirectFailureMemory(t *testing.T) {
 				}
 			}
 		}
-		refresh(cfg, 20*time.Second, true, true)
+		refresh(cfg, 0, true, true)
 		refresh(cfg, 0, false, true)
 		refresh(other, 0, true, false)
-		time.Sleep(30*time.Minute - 21*time.Second)
+		time.Sleep(30*time.Minute - time.Second)
 		refresh(cfg, 0, false, true)
 		time.Sleep(time.Second)
 		refresh(cfg, 0, true, false)
@@ -290,6 +304,9 @@ func TestSubscriptionBusySources(t *testing.T) {
 				stats := sub.SourceStats[sourceStatsKey(sub.Sources[0])]
 				if !out.Changed || sub.ETagSource != sub.Sources[1] || len(requests) != 1 || stats.Direct.Tries != 1 || stats.Tunnel.Tries != 0 || stats.Direct.Fail.Net != 0 {
 					t.Fatalf("busy source: %+v, %d requests", stats, len(requests))
+				}
+				if (test.status == http.StatusTooManyRequests) != (stats.Direct.HTTP429 == 1) || (test.status != http.StatusTooManyRequests) != (stats.Direct.HTTP5xx == 1) || stats.Direct.HTTP429+stats.Direct.HTTP5xx != 1 {
+					t.Fatalf("busy answers not counted: 429 %d, 5xx %d", stats.Direct.HTTP429, stats.Direct.HTTP5xx)
 				}
 				if test.wait > 0 {
 					out = ref.Refresh(context.Background(), cfg, nil)
@@ -366,6 +383,34 @@ func TestSubscriptionSilentDirectIsMarkedWhenTheTunnelWins(t *testing.T) {
 		synctest.Wait()
 		if !out.Changed || time.Since(before) != 0 || directDials != 1 || tunnelDials != 2 {
 			t.Fatalf("second refresh waited again: changed %v after %v, direct %d, tunnel %d", out.Changed, time.Since(before), directDials, tunnelDials)
+		}
+	})
+}
+
+func TestSubscriptionMarkedDirectIsTriedWhenTheTunnelFails(t *testing.T) {
+	cfg, raw := subscriptionTestConfig(t, "http://example.org")
+	synctest.Test(t, func(t *testing.T) {
+		directDials, tunnelDials := 0, 0
+		ok := subscriptionTestDial(func(context.Context, *http.Request) *http.Response {
+			return subscriptionTestResponse(http.StatusOK, string(raw))
+		})
+		ref := SubscriptionRefresher{directDial: func(ctx context.Context, network, address string) (net.Conn, error) {
+			if directDials++; directDials == 1 {
+				return nil, errors.New("connect failed")
+			}
+			return ok(ctx, network, address)
+		}}
+		deadTunnel := func(context.Context, string, string) (net.Conn, error) {
+			tunnelDials++
+			return nil, errors.New("tunnel down")
+		}
+		if out := ref.Refresh(context.Background(), cfg, []SubscriptionDial{deadTunnel}); out.Changed {
+			t.Fatal("the first refresh should fail")
+		}
+		// The source is marked and the tunnel is down: the direct way is still tried.
+		out := ref.Refresh(context.Background(), cfg, []SubscriptionDial{deadTunnel})
+		if !out.Changed || directDials != 2 || tunnelDials != 2 {
+			t.Fatalf("changed %v, direct dials %d, tunnel dials %d", out.Changed, directDials, tunnelDials)
 		}
 	})
 }

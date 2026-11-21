@@ -8,8 +8,8 @@
   Autostart allowed for Passage.
 - Windows and macOS: while the proxy runs, the home screen offers to start
   Passage when you sign in; Don't show again hides the offer.
-- Subscription refreshes are faster, and a source that answers busy is asked
-  again only at the next refresh.
+- Subscription refreshes are faster. A source that answers busy is skipped
+  for the rest of that refresh, and for as long as it asks (up to an hour).
 - A subscription updated within the last day no longer shows "Could not
   connect" when a check fails; it says the last check failed.
 
