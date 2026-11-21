@@ -41,6 +41,8 @@ var (
 	mu  sync.Mutex
 	cur *tunnel.Tunnel
 
+	stoppedSubscriptionRefresher tunnel.SubscriptionRefresher
+
 	updateMu     sync.Mutex
 	offer        *update.Offer
 	stopDownload context.CancelFunc
@@ -144,8 +146,7 @@ func Java_info_gluek_passage_Native_refreshSubscriptions(env *C.JNIEnv, cls C.jc
 		}
 		return result(env, t.RefreshSubscriptions(context.Background()))
 	}
-	var ref tunnel.SubscriptionRefresher
-	return result(env, ref.Refresh(context.Background(), in.Existing, nil))
+	return result(env, stoppedSubscriptionRefresher.Refresh(context.Background(), in.Existing, nil))
 }
 
 // start (re)starts the proxy from a config JSON and returns {"addr": "…"}.

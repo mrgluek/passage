@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.9.5
+
+- Subscription refreshes are faster and handle busy sources better.
+
 ## 0.9.4
 
 - Windows and macOS: a new version is offered on the home screen with the
