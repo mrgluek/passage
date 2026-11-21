@@ -13,6 +13,8 @@ import android.os.Build
 class BootReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
         if (intent.action != Intent.ACTION_BOOT_COMPLETED) return
+        // The app was opened before this broadcast arrived: leave the running proxy alone.
+        if (PassageService.active) return
         val settings = Settings(context)
         // The user opted out: the proxy stays off after the restart, and opening the app does not turn it on.
         if (!settings.startOnBoot && settings.running) {
@@ -20,8 +22,6 @@ class BootReceiver : BroadcastReceiver() {
             Diagnostics.event("device restarted: start after restart is off")
         }
         if (!shouldStart(settings.startOnBoot, settings.running)) return
-        // The app was opened before this broadcast arrived: do not restart the router.
-        if (PassageService.active) return
         Diagnostics.event("device restarted")
         try {
             PassageService.start(context, "device restarted")

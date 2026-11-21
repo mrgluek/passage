@@ -47,6 +47,25 @@ func subscriptionTestResponse(status int, body string) *http.Response {
 	return res
 }
 
+// subscriptionTestConfigNewer is subscriptionTestConfig plus a sealed file of the next revision.
+func subscriptionTestConfigNewer(t *testing.T, sources ...string) (Config, []byte, []byte) {
+	t.Helper()
+	subscriptionTestHTTP = true
+	t.Cleanup(func() { subscriptionTestHTTP = false })
+	sub, key, bundle := subFixture(t)
+	raw, err := links.SealSubFile(bundle, bundle.Sub, sub.ReadKey, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	bundle.Revision++
+	newer, err := links.SealSubFile(bundle, bundle.Sub, sub.ReadKey, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sub.Sources = sources
+	return Config{Subscriptions: []Subscription{sub}}, raw, newer
+}
+
 func subscriptionTestConfig(t *testing.T, sources ...string) (Config, []byte) {
 	t.Helper()
 	subscriptionTestHTTP = true
@@ -73,14 +92,11 @@ func TestSubscriptionDirectStagger(t *testing.T) {
 		{name: "last winner first", remember: true},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			cfg, raw := subscriptionTestConfig(t, "http://one.example.org", "http://two.example.org", "http://three.example.org")
+			cfg, raw, newer := subscriptionTestConfigNewer(t, "http://one.example.org", "http://two.example.org", "http://three.example.org")
 			sub := &cfg.Subscriptions[0]
 			if test.unchanged {
 				// Only the first source gets the saved tag; the others answer with a file.
 				sub.Revision, sub.ETag, sub.ETagSource = 1, "saved", sub.Sources[0]
-				if test.newer {
-					sub.Revision = 0
-				}
 			}
 			synctest.Test(t, func(t *testing.T) {
 				first := "one.example.org"
@@ -116,6 +132,9 @@ func TestSubscriptionDirectStagger(t *testing.T) {
 							}
 							return subscriptionTestResponse(http.StatusNotModified, "")
 						}
+						if test.newer {
+							return subscriptionTestResponse(http.StatusOK, string(newer))
+						}
 						return subscriptionTestResponse(http.StatusOK, string(raw))
 					})
 					return dial(ctx, network, address)
@@ -131,8 +150,9 @@ func TestSubscriptionDirectStagger(t *testing.T) {
 						t.Fatalf("unchanged did not wait for the other sources: %q at %v", got.LastError, time.Since(start))
 					}
 				} else if test.newer {
-					if !out.Changed || got.ETagSource != sub.Sources[1] || time.Since(start) != 2*time.Second {
-						t.Fatalf("a newer file did not beat unchanged: changed %v at %v", out.Changed, time.Since(start))
+					first := got.SourceStats[sourceStatsKey(sub.Sources[0])]
+					if !out.Changed || got.ETagSource != sub.Sources[1] || time.Since(start) != 2*time.Second || first.Fail.HTTP != 0 || first.OK != 1 {
+						t.Fatalf("a newer file did not beat unchanged: changed %v at %v, first source %+v", out.Changed, time.Since(start), first)
 					}
 				} else if !out.Changed || got.ETagSource != sub.Sources[1] {
 					t.Fatal("second source did not win")
@@ -411,6 +431,26 @@ func TestSubscriptionMarkedDirectIsTriedWhenTheTunnelFails(t *testing.T) {
 		out := ref.Refresh(context.Background(), cfg, []SubscriptionDial{deadTunnel})
 		if !out.Changed || directDials != 2 || tunnelDials != 2 {
 			t.Fatalf("changed %v, direct dials %d, tunnel dials %d", out.Changed, directDials, tunnelDials)
+		}
+	})
+}
+
+func TestSubscriptionBusyTunnelAnswerDoesNotSendTheDeferredDirectRequest(t *testing.T) {
+	cfg, _ := subscriptionTestConfig(t, "http://example.org")
+	synctest.Test(t, func(t *testing.T) {
+		directDials := 0
+		ref := SubscriptionRefresher{directDial: func(context.Context, string, string) (net.Conn, error) {
+			directDials++
+			return nil, errors.New("connect failed")
+		}}
+		busy := subscriptionTestDial(func(context.Context, *http.Request) *http.Response {
+			return subscriptionTestResponse(http.StatusTooManyRequests, "")
+		})
+		// The first refresh marks the source; the second goes to the tunnel, which says busy.
+		ref.Refresh(context.Background(), cfg, nil)
+		ref.Refresh(context.Background(), cfg, []SubscriptionDial{busy})
+		if directDials != 1 {
+			t.Fatalf("the busy source was asked directly again: %d direct dials", directDials)
 		}
 	})
 }

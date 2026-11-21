@@ -189,12 +189,7 @@ func (r *SubscriptionRefresher) refreshSubscription(ctx context.Context, out *Su
 	var held *subscriptionFetchResult
 	accept := func(result subscriptionFetchResult, code string) {
 		pair, stats := result.pair, result.stats
-		directKey := subscriptionNetworkSource{network, strings.TrimRight(pair.source, "/")}
 		sub.LastError = code
-		sub.recordSourceOK(pair.source, stats.tunnel, stats.elapsed)
-		if !stats.tunnel {
-			delete(r.directFailed, directKey)
-		}
 		sub.LastOK = time.Now().Unix()
 		sub.ETag, sub.ETagSource = result.etag, pair.source
 		if r.last == nil || len(r.last) >= 128 {
@@ -269,6 +264,11 @@ func (r *SubscriptionRefresher) refreshSubscription(ctx context.Context, out *Su
 			sub.LastError = code
 			return
 		}
+		// Any valid answer, even one that is not used, counts as the source working.
+		sub.recordSourceOK(pair.source, stats.tunnel, stats.elapsed)
+		if !stats.tunnel {
+			delete(r.directFailed, directKey)
+		}
 		if code == "unchanged" {
 			if held == nil {
 				result.code = code
@@ -318,6 +318,7 @@ func (r *SubscriptionRefresher) refreshSubscription(ctx context.Context, out *Su
 		}
 	}
 	loop()
+	deferred = slices.DeleteFunc(deferred, func(pair subscriptionPair) bool { return !available(pair) })
 	if !succeeded && held == nil && len(deferred) > 0 && ctx.Err() == nil {
 		directPairs, deferred = deferred, nil
 		second, cancelSecond := context.WithTimeout(race, directTimeout)
