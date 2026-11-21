@@ -6,9 +6,12 @@ import (
 	"encoding/hex"
 	"errors"
 	"io"
+	"maps"
 	"net"
 	"net/http"
 	"net/url"
+	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -23,12 +26,26 @@ type subscriptionPair struct {
 	dial   int
 }
 
-// SubscriptionRefresher remembers successful source/dialer pairs per network.
-type SubscriptionRefresher struct {
-	mu   sync.Mutex
-	last map[string]subscriptionPair
+const (
+	subscriptionTunnelTimeout = 20 * time.Second
+	subscriptionDirectStagger = 2 * time.Second
+	subscriptionTunnelDelay   = 20 * time.Second
+	subscriptionDirectBackoff = 30 * time.Minute
+	subscriptionMaxRetryAfter = time.Hour
+)
 
-	tunnelTimeout time.Duration
+type subscriptionNetworkSource struct {
+	network string
+	source  string
+}
+
+// SubscriptionRefresher remembers successful pairs and source backoffs.
+type SubscriptionRefresher struct {
+	mu           sync.Mutex
+	last         map[string]subscriptionPair
+	directFailed map[subscriptionNetworkSource]time.Time
+	retryAfter   map[string]time.Time
+
 	directTimeout time.Duration
 	directDial    SubscriptionDial
 }
@@ -38,183 +55,233 @@ type SubscriptionRefreshResult struct {
 	Changed bool   `json:"changed"`
 }
 
-// Refresh races tunnel pairs first, then falls back to direct pairs.
+type subscriptionFetchResult struct {
+	stats      subscriptionFetchStats
+	pair       subscriptionPair
+	blob       []byte
+	etag, code string
+}
+
+// Refresh staggers direct requests before starting the tunnel race.
 func (r *SubscriptionRefresher) Refresh(ctx context.Context, cfg Config, dialers []SubscriptionDial) SubscriptionRefreshResult {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	cfg.Subscriptions = append([]Subscription(nil), cfg.Subscriptions...)
+
+	now := time.Now()
+	maps.DeleteFunc(r.directFailed, func(_ subscriptionNetworkSource, until time.Time) bool { return !now.Before(until) })
+	maps.DeleteFunc(r.retryAfter, func(_ string, until time.Time) bool { return !now.Before(until) })
+	cfg.Subscriptions = slices.Clone(cfg.Subscriptions)
 	out := SubscriptionRefreshResult{Config: cfg}
+	busy := make(map[string]bool)
+	network := networkKey(cfg)
 	for index, sub := range cfg.Subscriptions {
-		if sub.Closed {
-			continue
-		}
 		if ctx.Err() != nil {
 			break
 		}
-		sub.SourceStats = sub.retainedSourceStats()
-		sub.LastTry = time.Now().Unix()
-		sub.LastError = "network"
-		key := networkKey(cfg) + ":" + sub.ID
-		last := r.last[key]
-		direct := r.directDial
-		if direct == nil {
-			direct = (&net.Dialer{}).DialContext
+		if !sub.Closed {
+			r.refreshSubscription(ctx, &out, index, dialers, network, busy)
 		}
-		dials := append(append([]SubscriptionDial(nil), dialers...), direct)
-		tunnelTimeout, directTimeout := r.tunnelTimeout, r.directTimeout
-		if tunnelTimeout <= 0 {
-			tunnelTimeout = 20 * time.Second
-		}
-		if directTimeout <= 0 {
-			directTimeout = 40 * time.Second
-		}
-		type response struct {
-			stats      subscriptionFetchStats
-			pair       subscriptionPair
-			blob       []byte
-			etag, code string
-		}
-		succeeded := false
-		directFirst := map[string]bool{} // sources already fetched directly in the tunnel tier
-		failedTunnel := map[string]bool{}
-		successfulTunnel := map[string]bool{}
-		for _, tier := range []struct {
-			first, end int
-			timeout    time.Duration
-		}{{0, len(dialers), tunnelTimeout}, {len(dialers), len(dials), directTimeout}} {
-			diagnostic := succeeded && tier.first == len(dialers)
-			if ctx.Err() != nil || tier.first == tier.end {
-				continue
-			}
-			pairs := subscriptionPairs(sub.Sources, tier.first, tier.end, last)
-			if tier.first == 0 && len(dialers) > 0 {
-				pairs = routeRefusedSourcesDirect(sub, pairs, len(dialers), time.Now(), directFirst)
-			}
-			if diagnostic {
-				pairs = nil
-				now := time.Now().Unix()
-				for _, source := range sub.Sources {
-					stats := sub.SourceStats[sourceStatsKey(source)]
-					if failedTunnel[source] && !successfulTunnel[source] && (stats.LastDirectCheck == 0 || now-stats.LastDirectCheck >= 86400) {
-						pairs = append(pairs, subscriptionPair{source, len(dialers)})
-						stats.LastDirectCheck = now
-						sub.SourceStats[sourceStatsKey(source)] = stats
-					}
-				}
-			}
-			if !diagnostic && tier.first == len(dialers) {
-				for _, pair := range pairs {
-					if failedTunnel[pair.source] {
-						stats := sub.SourceStats[sourceStatsKey(pair.source)]
-						stats.LastDirectCheck = time.Now().Unix()
-						sub.SourceStats[sourceStatsKey(pair.source)] = stats
-					}
-				}
-			}
-			attempt, cancel := context.WithTimeout(ctx, tier.timeout)
-			results := make(chan response, len(pairs))
-			var workers sync.WaitGroup
-			fetching := sub
-			for _, pair := range pairs {
-				workers.Go(func() {
-					var stats subscriptionFetchStats
-					start := time.Now()
-					blob, etag, code := fetchSubscriptionWithStats(attempt, fetching, pair.source, dials[pair.dial], &stats)
-					stats.elapsed = time.Since(start)
-					stats.tunnel = pair.dial < len(dialers)
-					results <- response{stats, pair, blob, etag, code}
-				})
-			}
-			accept := func(result response) {
-				sub.LastError = result.code
-				sub.LastOK = time.Now().Unix()
-				sub.ETag, sub.ETagSource = result.etag, result.pair.source
-				if r.last == nil {
-					r.last = map[string]subscriptionPair{}
-				}
-				if len(r.last) >= 128 {
-					clear(r.last)
-				}
-				r.last[key] = result.pair
-				succeeded = true
-			}
-			var unchanged *response
-			for range pairs {
-				result := <-results
-				pair, blob, code := result.pair, result.blob, result.code
-				if result.stats.tunnel && result.stats.failure != "" && result.stats.failure != "canceled" {
-					failedTunnel[pair.source] = true
-				}
-				sub.recordSourceFetch(pair.source, result.stats)
-				if succeeded && !diagnostic {
-					continue
-				}
-				if code == "" {
-					id, _ := hex.DecodeString(sub.ID)
-					opened, err := links.OpenSubFile(blob, id, sub.ReadKey, ed25519.PublicKey(sub.Signer))
-					if err != nil {
-						sub.recordSourceFetch(pair.source, subscriptionFetchStats{failure: "bad", tunnel: pair.dial < len(dialers)})
-						if pair.dial < len(dialers) {
-							failedTunnel[pair.source] = true
-						}
-						if !diagnostic {
-							sub.LastError = subscriptionError(err)
-						}
-						continue
-					}
-					candidate, err := ApplySubFile(out.Config, sub, opened.Bundle)
-					if errors.Is(err, links.ErrNotNewer) {
-						code = "unchanged"
-					} else if err != nil {
-						sub.recordSourceFetch(pair.source, subscriptionFetchStats{failure: "bad", tunnel: pair.dial < len(dialers)})
-						if pair.dial < len(dialers) {
-							failedTunnel[pair.source] = true
-						}
-						if !diagnostic {
-							sub.LastError = subscriptionError(err)
-						}
-						continue
-					} else if !diagnostic {
-						out.Config = candidate
-						stats := sub.SourceStats
-						sub = candidate.Subscriptions[index]
-						sub.SourceStats = stats
-						out.Changed = true
-					}
-				}
-				if code != "" && code != "unchanged" {
-					if !diagnostic {
-						sub.LastError = code
-					}
-					continue
-				}
-				sub.recordSourceOK(pair.source, pair.dial < len(dialers), result.stats.elapsed)
-				if pair.dial < len(dialers) {
-					successfulTunnel[pair.source] = true
-				}
-				if diagnostic {
-					continue
-				}
-				result.code = code
-				if code == "unchanged" {
-					if unchanged == nil {
-						unchanged = &result
-					}
-					continue
-				}
-				accept(result)
-				cancel()
-			}
-			if !succeeded && unchanged != nil {
-				accept(*unchanged)
-			}
-			cancel()
-			workers.Wait()
-		}
-		sub.SourceStats = sub.retainedSourceStats()
-		out.Config.Subscriptions[index] = sub
 	}
 	return out
+}
+
+func (r *SubscriptionRefresher) refreshSubscription(ctx context.Context, out *SubscriptionRefreshResult, index int, dialers []SubscriptionDial, network string, busy map[string]bool) {
+	sub := out.Config.Subscriptions[index]
+	sub.SourceStats = sub.retainedSourceStats()
+	started := time.Now()
+	sub.LastTry = started.Unix()
+	sub.LastError = "network"
+	key := network + ":" + sub.ID
+	last := r.last[key]
+	directIndex := len(dialers)
+	direct := r.directDial
+	if direct == nil {
+		direct = (&net.Dialer{}).DialContext
+	}
+	available := func(pair subscriptionPair) bool {
+		source := strings.TrimRight(pair.source, "/")
+		return !busy[source] && !started.Before(r.retryAfter[source])
+	}
+	tunnelPairs := slices.DeleteFunc(subscriptionPairs(sub.Sources, 0, directIndex, last), func(pair subscriptionPair) bool {
+		return !available(pair)
+	})
+	directPairs := slices.DeleteFunc(subscriptionPairs(sub.Sources, directIndex, directIndex+1, subscriptionPair{last.source, directIndex}), func(pair subscriptionPair) bool {
+		source := strings.TrimRight(pair.source, "/")
+		return !available(pair) || started.Before(r.directFailed[subscriptionNetworkSource{network, source}])
+	})
+
+	race, cancelRace := context.WithCancel(ctx)
+	defer cancelRace()
+	directTimeout := r.directTimeout
+	if directTimeout <= 0 {
+		directTimeout = 40 * time.Second
+	}
+	directCtx, cancelDirect := context.WithTimeout(race, directTimeout)
+	defer cancelDirect()
+	cancelTunnel := func() {}
+	defer func() { cancelTunnel() }()
+
+	results := make(chan subscriptionFetchResult, len(directPairs)+len(tunnelPairs))
+	fetching := sub
+	pending := 0
+	launch := func(attempt context.Context, pair subscriptionPair, dial SubscriptionDial) {
+		pending++
+		go func() {
+			stats := subscriptionFetchStats{tunnel: pair.dial < directIndex}
+			start := time.Now()
+			blob, etag, code := fetchSubscriptionWithStats(attempt, fetching, pair.source, dial, &stats)
+			stats.elapsed = time.Since(start)
+			results <- subscriptionFetchResult{stats, pair, blob, etag, code}
+		}()
+	}
+	var directTimer, tunnelTimer *time.Timer
+	var nextDirect, nextTunnel <-chan time.Time
+	startTunnel := func() {
+		nextTunnel, nextDirect = nil, nil
+		var attempt context.Context
+		attempt, cancelTunnel = context.WithTimeout(race, subscriptionTunnelTimeout)
+		for _, pair := range tunnelPairs {
+			launch(attempt, pair, dialers[pair.dial])
+		}
+	}
+	cutoff := started.Add(subscriptionTunnelDelay)
+	startDirect := func() {
+		pair := directPairs[0]
+		directPairs = directPairs[1:]
+		launch(directCtx, pair, direct)
+		nextDirect = nil
+		if len(directPairs) > 0 && time.Until(cutoff) > subscriptionDirectStagger {
+			if directTimer == nil {
+				directTimer = time.NewTimer(subscriptionDirectStagger)
+			} else {
+				directTimer.Reset(subscriptionDirectStagger)
+			}
+			nextDirect = directTimer.C
+		}
+	}
+	if len(directPairs) > 0 {
+		startDirect()
+		if len(tunnelPairs) > 0 {
+			tunnelTimer = time.NewTimer(time.Until(cutoff))
+			nextTunnel = tunnelTimer.C
+			defer tunnelTimer.Stop()
+		}
+	} else if len(tunnelPairs) > 0 {
+		startTunnel()
+	}
+	if directTimer != nil {
+		defer directTimer.Stop()
+	}
+
+	succeeded := false
+	record := func(result subscriptionFetchResult) {
+		pending--
+		pair, stats, code := result.pair, result.stats, result.code
+		source := strings.TrimRight(pair.source, "/")
+		directKey := subscriptionNetworkSource{network, source}
+		sub.recordSourceFetch(pair.source, stats)
+		if !stats.tunnel && (stats.failure == "net" || stats.failure == "timeout" || stats.failure == "refused") {
+			if r.directFailed == nil {
+				r.directFailed = make(map[subscriptionNetworkSource]time.Time)
+			}
+			r.directFailed[directKey] = time.Now().Add(subscriptionDirectBackoff)
+		}
+		if stats.busyStatus != 0 {
+			busy[source] = true
+			if !stats.retryAfter.IsZero() {
+				if r.retryAfter == nil {
+					r.retryAfter = make(map[string]time.Time)
+				}
+				if stats.retryAfter.After(r.retryAfter[source]) {
+					r.retryAfter[source] = stats.retryAfter
+				}
+			}
+			if nextTunnel != nil {
+				tunnelPairs = slices.DeleteFunc(tunnelPairs, func(pair subscriptionPair) bool {
+					return strings.TrimRight(pair.source, "/") == source
+				})
+				if len(tunnelPairs) == 0 {
+					nextTunnel = nil
+				}
+			}
+		}
+		if succeeded {
+			return
+		}
+		if code == "" {
+			id, _ := hex.DecodeString(sub.ID)
+			opened, err := links.OpenSubFile(result.blob, id, sub.ReadKey, ed25519.PublicKey(sub.Signer))
+			if err != nil {
+				sub.recordSourceFetch(pair.source, subscriptionFetchStats{failure: "bad", tunnel: stats.tunnel})
+				sub.LastError = subscriptionError(err)
+				return
+			}
+			candidate, err := ApplySubFile(out.Config, sub, opened.Bundle)
+			if errors.Is(err, links.ErrNotNewer) {
+				code = "unchanged"
+			} else if err != nil {
+				sub.recordSourceFetch(pair.source, subscriptionFetchStats{failure: "bad", tunnel: stats.tunnel})
+				sub.LastError = subscriptionError(err)
+				return
+			} else {
+				out.Config = candidate
+				sourceStats := sub.SourceStats
+				sub = candidate.Subscriptions[index]
+				sub.SourceStats = sourceStats
+				out.Changed = true
+			}
+		}
+		sub.LastError = code
+		if code != "" && code != "unchanged" {
+			return
+		}
+		sub.recordSourceOK(pair.source, stats.tunnel, stats.elapsed)
+		if !stats.tunnel {
+			delete(r.directFailed, directKey)
+		}
+		sub.LastOK = time.Now().Unix()
+		sub.ETag, sub.ETagSource = result.etag, pair.source
+		if r.last == nil || len(r.last) >= 128 {
+			r.last = make(map[string]subscriptionPair)
+		}
+		r.last[key] = pair
+		succeeded = true
+		nextDirect, nextTunnel = nil, nil
+		cancelRace()
+	}
+	drain := func() {
+		for pending > 0 {
+			select {
+			case result := <-results:
+				record(result)
+			default:
+				return
+			}
+		}
+	}
+	done := ctx.Done()
+	for pending > 0 || nextDirect != nil || nextTunnel != nil {
+		select {
+		case result := <-results:
+			record(result)
+		case <-nextDirect:
+			drain()
+			nextDirect = nil
+			if !succeeded && directCtx.Err() == nil && time.Now().Before(cutoff) {
+				startDirect()
+			}
+		case <-nextTunnel:
+			drain()
+			if nextTunnel != nil && race.Err() == nil {
+				startTunnel()
+			}
+			nextTunnel = nil
+		case <-done:
+			done, nextDirect, nextTunnel = nil, nil, nil
+		}
+	}
+	sub.SourceStats = sub.retainedSourceStats()
+	out.Config.Subscriptions[index] = sub
 }
 
 func subscriptionPairs(sources []string, first, end int, last subscriptionPair) []subscriptionPair {
@@ -226,7 +293,8 @@ func subscriptionPairs(sources []string, first, end int, last subscriptionPair) 
 	}
 	for i := range pairs {
 		if pairs[i] == last {
-			pairs[0], pairs[i] = pairs[i], pairs[0]
+			copy(pairs[1:i+1], pairs[:i])
+			pairs[0] = last
 			break
 		}
 	}
@@ -253,8 +321,9 @@ func fetchSubscriptionWithStats(ctx context.Context, sub Subscription, source st
 	defer cancel()
 	var answered atomic.Bool
 	defer func() { stats.answered = stats.answered || answered.Load() }()
-	transport := &http.Transport{DialContext: func(ctx context.Context, network, address string) (net.Conn, error) {
-		conn, err := dial(ctx, network, address)
+	// The transport detaches its dial context from request cancellation.
+	transport := &http.Transport{DialContext: func(_ context.Context, network, address string) (net.Conn, error) {
+		conn, err := dial(attempt, network, address)
 		if err != nil {
 			return nil, err
 		}
@@ -297,6 +366,10 @@ func fetchSubscriptionWithStats(ctx context.Context, sub Subscription, source st
 		return nil, etag, "unchanged"
 	}
 	if resp.StatusCode != http.StatusOK {
+		if resp.StatusCode == http.StatusTooManyRequests || resp.StatusCode >= 500 && resp.StatusCode <= 599 {
+			stats.busyStatus = resp.StatusCode
+			stats.retryAfter = subscriptionRetryAfter(resp.Header.Get("Retry-After"), time.Now())
+		}
 		stats.failure = "http"
 		return nil, "", "http"
 	}
@@ -350,21 +423,13 @@ func (c *subscriptionResponseConn) Read(p []byte) (int, error) {
 	return n, err
 }
 
-// routeRefusedSourcesDirect swaps the tunnel pairs of sources that the tunnel
-// refused recently for one direct pair each, so they are fetched at once next
-// to the tunnel ones instead of after the tunnel deadline. The sources it moves
-// are recorded in moved.
-func routeRefusedSourcesDirect(sub Subscription, pairs []subscriptionPair, direct int, now time.Time, moved map[string]bool) []subscriptionPair {
-	kept := pairs[:0:0]
-	for _, pair := range pairs {
-		if sub.tunnelRefusedRecently(pair.source, now) {
-			if !moved[pair.source] {
-				moved[pair.source] = true
-				kept = append(kept, subscriptionPair{pair.source, direct})
-			}
-			continue
-		}
-		kept = append(kept, pair)
+func subscriptionRetryAfter(value string, now time.Time) time.Time {
+	seconds, err := strconv.ParseUint(value, 10, 64)
+	if err == nil || errors.Is(err, strconv.ErrRange) {
+		return now.Add(time.Duration(min(seconds, uint64(subscriptionMaxRetryAfter/time.Second))) * time.Second)
 	}
-	return kept
+	if date, err := http.ParseTime(value); err == nil && date.After(now) {
+		return now.Add(min(date.Sub(now), subscriptionMaxRetryAfter))
+	}
+	return time.Time{}
 }

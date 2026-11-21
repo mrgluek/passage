@@ -8,6 +8,8 @@
   Autostart allowed for Passage.
 - Windows and macOS: while the proxy runs, the home screen offers to start
   Passage when you sign in; Don't show again hides the offer.
+- Subscription refreshes are faster, and a source that answers busy is asked
+  again only at the next refresh.
 
 ## 0.9.4
 
