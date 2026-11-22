@@ -142,6 +142,18 @@ func (d *channelDisplay) sample(t tr, s tunnel.Status, now time.Time) string {
 	return d.value
 }
 
+// limitedLine starts the second line with the network-limited prefix; the
+// prefix stands alone when the line is empty. Titles never use it.
+func limitedLine(t tr, limited bool, line string) string {
+	if !limited {
+		return line
+	}
+	if line == "" {
+		return t.f("net_limited")
+	}
+	return t.f("net_limited") + " · " + line
+}
+
 // statusDetail is the line under the status title: the channels while
 // Passage works, nothing otherwise, so the state's own reason shows.
 func statusDetail(t tr, h tunnel.Health, lines string) string {

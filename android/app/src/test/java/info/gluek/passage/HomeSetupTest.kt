@@ -9,6 +9,16 @@ class HomeSetupTest {
             assertEquals(1, HomeSetup.step(false, running, seen))
         }
     }
+    @Test fun networkLimitedPrefixesOnlyTheSecondLine() {
+        val p = "Network limited"
+        assertEquals("Mail: direct", HomeSetup.withNetworkLimited(false, p, "Mail: direct"))
+        assertEquals("", HomeSetup.withNetworkLimited(false, p, ""))
+        assertEquals("Network limited · Mail: direct", HomeSetup.withNetworkLimited(true, p, "Mail: direct"))
+        assertEquals("Network limited", HomeSetup.withNetworkLimited(true, p, ""))
+        // The title comes from plain(), which takes no network-limited input.
+        assertEquals(HomeSetup.Plain.WORKING, HomeSetup.plain(true, false, true, "working", ""))
+        assertEquals(R.string.home_working_title, HomeSetup.Plain.WORKING.title)
+    }
     @Test fun setupFollowsServiceAndTraffic() {
         assertEquals(2, HomeSetup.step(true, false, false))
         assertEquals(2, HomeSetup.step(true, false, true))

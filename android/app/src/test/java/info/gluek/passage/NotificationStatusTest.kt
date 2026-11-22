@@ -66,6 +66,25 @@ class NotificationStatusTest {
         assertTrue(service.contains(".setPublicVersion("))
     }
 
+    @Test fun networkLimitedTouchesOnlyTheBodyLine() {
+        val status = JSONObject().put("running", true).put("network_limited", true)
+            .put("health", JSONObject().put("state", "working"))
+        assertEquals(
+            R.string.home_working_title to R.string.home_working_reason,
+            StatusText.notificationResources(status, appSeen = true, fallbackRunning = true),
+        )
+        val src = File("src/main/java/info/gluek/passage/StatusText.kt").readText()
+        assertTrue(src.contains("return c.getString(plain.title) to HomeSetup.withNetworkLimited("))
+        val service = File("src/main/java/info/gluek/passage/PassageService.kt").readText()
+        assertFalse(service.contains("network_limited"))
+        assertFalse(service.contains("R.string.network_limited"))
+    }
+
+    @Test fun fullStatusShowsCanaryTextOnlyWhenChecked() {
+        val src = File("src/main/java/info/gluek/passage/StatusText.kt").readText()
+        assertTrue(src.contains("!r.optBoolean(\"canary_checked\") -> \"\""))
+    }
+
     @Test
     fun asksForALinkWhileThereAreNoRoutes() {
         val status = JSONObject().put("running", true).put("route_count", 0).put("subscriptions", org.json.JSONArray())

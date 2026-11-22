@@ -229,6 +229,7 @@
     <string name="home_connecting_title">Connecting…</string>
     <string name="home_connecting_reason">This can take up to a minute.</string>
     <string name="home_limited_reason">Using a backup route. It may be slower.</string>
+    <string name="network_limited">Network limited</string>
     <string name="home_no_internet_title">No internet</string>
     <string name="home_no_internet_reason">Check Wi‑Fi or mobile data. Passage will retry by itself.</string>
     <string name="home_server_down_title">Server isn\'t answering</string>
