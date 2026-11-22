@@ -64,7 +64,7 @@ func health(s Status, now time.Time) Health {
 	evidence := !allStalled && (okConns > 0 || probeOK || tunnelUp)
 	age := now.Sub(s.Started)
 	switch {
-	case s.State == "offline":
+	case s.State == "offline" && s.LastResult.CanaryChecked:
 		return Health{State: "problem", Reason: "no_internet"}
 	case evidence && okConns > 0 && reserveOnly == okConns:
 		return Health{State: "limited", Reason: "reserve"}

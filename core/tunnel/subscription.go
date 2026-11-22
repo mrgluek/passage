@@ -30,6 +30,7 @@ type Subscription struct {
 	InviteSources []string                           `json:"invite_sources,omitempty"`
 	BundleSources []string                           `json:"bundle_sources,omitempty"`
 	Canaries      []string                           `json:"canaries,omitempty"`
+	References    []string                           `json:"references,omitempty"`
 	ReadKey       []byte                             `json:"read_key"`
 	Revision      uint64                             `json:"revision"`
 	ETag          string                             `json:"etag,omitempty"`
@@ -102,6 +103,9 @@ func (s Subscription) validate() error {
 		return errors.New("invalid subscription sources")
 	}
 	if err := links.ValidateCanaries(s.Canaries); err != nil {
+		return err
+	}
+	if err := links.ValidateReferences(s.References); err != nil {
 		return err
 	}
 	sourcesForValidation := func(list []string) []string {
@@ -177,6 +181,7 @@ func ApplySubFile(cfg Config, sub Subscription, bundle links.Bundle) (Config, er
 	sub.InviteSources = slices.Clone(current.InviteSources)
 	sub.BundleSources = slices.Clone(current.BundleSources)
 	sub.Canaries = slices.Clone(current.Canaries)
+	sub.References = slices.Clone(current.References)
 	sub.RouteIDs = slices.Clone(current.RouteIDs)
 	if len(cfg.Routes) == 0 && cfg.Zone != "" {
 		cfg.Routes = legacyRoutes(cfg)
@@ -252,6 +257,10 @@ func ApplySubFile(cfg Config, sub Subscription, bundle links.Bundle) (Config, er
 			sub.Canaries = slices.Clone(bundle.Canaries)
 			cfg.Canaries = slices.Clone(bundle.Canaries)
 		}
+		if bundle.References != nil { // an empty list clears the stored one
+			sub.References = nilIfEmpty(bundle.References)
+			cfg.References = nilIfEmpty(bundle.References)
+		}
 	}
 	cfg.Subscriptions[index] = sub
 	if trustedAuthor && len(bundle.Updates) > 0 {
@@ -294,6 +303,7 @@ func SubscribeLink(cfg Config, text string, replaceSigner bool) (ImportResult, e
 			if decoded.Signature == "trusted_author" {
 				sub.BundleSources = slices.Clone(old.BundleSources)
 				sub.Canaries = slices.Clone(old.Canaries)
+				sub.References = slices.Clone(old.References)
 				sub.Sources = mergeSubscriptionSources(sub.BundleSources, sub.InviteSources)
 			}
 			if slices.Equal(sub.Sources, old.Sources) && bytes.Equal(sub.ReadKey, old.ReadKey) {
@@ -403,4 +413,12 @@ func (s Subscription) originalSources() []string {
 		return s.InviteSources
 	}
 	return s.Sources
+}
+
+// nilIfEmpty copies a list; an empty one becomes nil.
+func nilIfEmpty(list []string) []string {
+	if len(list) == 0 {
+		return nil
+	}
+	return slices.Clone(list)
 }

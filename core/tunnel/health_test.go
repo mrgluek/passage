@@ -17,7 +17,10 @@ func TestHealth(t *testing.T) {
 		state  string
 		reason string
 	}{
-		{"offline", Status{State: "offline", Started: now.Add(-time.Hour)}, "problem", "no_internet"},
+		{"offline", Status{State: "offline", Started: now.Add(-time.Hour), LastResult: probeResult{CanaryChecked: true}}, "problem", "no_internet"},
+		{"offline without canaries is not proven", Status{State: "offline", Started: now.Add(-time.Hour)}, "ready", "waiting_app"},
+		{"offline group probed, no canary check", Status{State: "offline", Started: now.Add(-time.Hour), Groups: map[string]GroupStatus{
+			"a": {LastProbe: *ago(time.Minute)}}}, "problem", "slow"},
 		{"real connection", Status{Started: now.Add(-time.Hour), Groups: map[string]GroupStatus{"a": conn("ok", "direct", time.Minute)}}, "working", ""},
 		{"old connection is no evidence", Status{Started: now.Add(-time.Hour), Groups: map[string]GroupStatus{"a": conn("ok", "direct", time.Hour)}}, "ready", "waiting_app"},
 		{"reserve only", Status{Started: now.Add(-time.Hour), Tunnels: []RouteState{{ID: "r1", Use: "reserve"}},

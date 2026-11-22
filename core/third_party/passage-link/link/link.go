@@ -65,6 +65,7 @@ type Route struct {
 type Bundle struct {
 	Sources     []string `json:"sources,omitempty" cbor:"sources,omitempty"`
 	Canaries    []string `json:"canaries,omitempty" cbor:"canaries,omitempty"`
+	References  []string `json:"references,omitzero" cbor:"references,omitzero"` // nil: key absent; empty: sent as [] (clears)
 	Closed      bool     `json:"closed,omitempty" cbor:"closed,omitempty"`
 	Revision    uint64   `json:"revision,omitempty" cbor:"revision,omitempty"`
 	Sub         []byte   `json:"sub,omitempty" cbor:"sub,omitempty"`
@@ -475,7 +476,7 @@ func (b Bundle) Validate() ([]string, error) {
 	} else if b.Revision != 0 {
 		return nil, errors.New("revision requires subscription id")
 	}
-	if b.Closed && (b.Sub == nil || b.Mode != "replace" || len(b.Routes) != 0 || len(b.Updates) != 0 || len(b.Sources) != 0 || len(b.Canaries) != 0) {
+	if b.Closed && (b.Sub == nil || b.Mode != "replace" || len(b.Routes) != 0 || len(b.Updates) != 0 || len(b.Sources) != 0 || len(b.Canaries) != 0 || len(b.References) != 0) {
 		return nil, errors.New("invalid closed subscription")
 	}
 	if b.V != 2 || b.Kind != "routes" || b.Mode != "merge" && b.Mode != "replace" || len(b.Name) > 128 || !b.Closed && len(b.Routes) < 1 || len(b.Routes) > limit {
@@ -488,6 +489,9 @@ func (b Bundle) Validate() ([]string, error) {
 		return nil, err
 	}
 	if err := ValidateCanaries(b.Canaries); err != nil {
+		return nil, err
+	}
+	if err := ValidateReferences(b.References); err != nil {
 		return nil, err
 	}
 	if err := ValidateUpdates(b.Updates); err != nil {
@@ -827,6 +831,14 @@ func ValidateUpdates(updates []string) error {
 // ValidateCanaries checks up to eight host:port probe targets.
 func ValidateCanaries(canaries []string) error {
 	return validateCanaries(canaries, true)
+}
+
+// ValidateReferences checks up to eight host:port targets, like canaries.
+func ValidateReferences(references []string) error {
+	if len(references) > 8 {
+		return errors.New("too many references")
+	}
+	return ValidateCanaries(references)
 }
 
 func validateCanaries(canaries []string, checkHost bool) error {

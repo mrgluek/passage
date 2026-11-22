@@ -23,6 +23,12 @@ func SaveSubscriptionState(path string, cfg Config) error {
 			break
 		}
 	}
+	for _, sub := range cfg.Subscriptions {
+		if len(sub.References) > 0 {
+			state.References = slices.Clone(cfg.References)
+			break
+		}
+	}
 	owned := map[string]bool{}
 	for _, sub := range cfg.Subscriptions {
 		for _, id := range sub.RouteIDs {
@@ -141,7 +147,7 @@ func RestoreSubscriptionState(cfg Config, path string) (Config, error) {
 			saved.Name, saved.Sources, saved.ReadKey = sub.Name, sources, slices.Clone(sub.ReadKey)
 			saved.InviteSources = slices.Clone(sub.originalSources())
 			if !trusted {
-				saved.BundleSources, saved.Canaries = nil, nil
+				saved.BundleSources, saved.Canaries, saved.References = nil, nil, nil
 			}
 			saved.SourceStats = saved.retainedSourceStats()
 			cfg.Subscriptions[j] = saved
@@ -156,6 +162,9 @@ func RestoreSubscriptionState(cfg Config, path string) (Config, error) {
 			}
 			if trusted && len(saved.Canaries) > 0 && len(stored.Canaries) > 0 {
 				cfg.Canaries = slices.Clone(stored.Canaries)
+			}
+			if trusted && len(saved.References) > 0 && len(stored.References) > 0 {
+				cfg.References = slices.Clone(stored.References)
 			}
 			if keys, e := authorKeys(); e == nil && len(keys) > 0 && bytes.Equal(saved.Signer, keys[0]) && len(stored.UpdateSources) > 0 {
 				cfg.UpdateSources = slices.Clone(stored.UpdateSources)

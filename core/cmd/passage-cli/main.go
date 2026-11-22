@@ -33,7 +33,8 @@ var version = "dev"
 
 func main() {
 	link := flag.String("link", "", "Passage link (none: no tunnel)")
-	canaries := flag.String("canaries", "", "comma-separated host:port canaries, replacing the link's or the defaults")
+	references := flag.String("references", "", "comma-separated host:port reference targets, replacing the subscription's (the next trusted refresh replaces it again)")
+	canaries := flag.String("canaries", "", "comma-separated host:port canaries, replacing the link's or the subscription's (the next trusted refresh replaces it again)")
 	linkFile := flag.String("link-file", "", "read the Passage link from this file")
 	systemDNS := flag.Bool("system-dns", true, "add this machine's DNS servers (resolv.conf) as first resolver paths")
 	operator := flag.String("operator", "", "SIM operator MCC+MNC (e.g. 00101) to add its known resolvers")
@@ -84,6 +85,9 @@ func main() {
 			fmt.Fprintln(os.Stderr, "passage-cli:", err)
 			os.Exit(2)
 		}
+	}
+	if *references != "" {
+		cfg.References = strings.Split(*references, ",")
 	}
 	if *canaries != "" {
 		cfg.Canaries = strings.Split(*canaries, ",")

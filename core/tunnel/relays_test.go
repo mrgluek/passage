@@ -23,7 +23,7 @@ func twoRelays(t *testing.T, direct dialFunc) *Tunnel {
 	tt.testGroup("filtered.example.org:993")
 	tt.testGroup("open.example.org:993")
 	tt.probeTLS = func(_ context.Context, hostport, _ string) error {
-		if hostport == DefaultCanaries[0] || hostport == "open.example.org:993" {
+		if hostport == testCanaries[0] || hostport == "open.example.org:993" {
 			return nil
 		}
 		return errors.New("refused")

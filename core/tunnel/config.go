@@ -51,9 +51,6 @@ var DefaultResolvers = []string{
 	"9.9.9.9:53",
 }
 
-// DefaultCanaries are hosts used to tell a dead network from a filtered one.
-var DefaultCanaries = []string{"ya.ru:443", "max.ru:443", "gosuslugi.ru:443"}
-
 const maxResolvers = 64
 
 // Config combines server settings from the link with local app state.
@@ -70,6 +67,7 @@ type Config struct {
 	Key           string   `json:"key"` // server Ed25519 public key, standard base64
 	Resolvers     []string `json:"resolvers"`
 	Canaries      []string `json:"canaries,omitempty"`
+	References    []string `json:"references,omitempty"`
 	TunnelIPv6    bool     `json:"tunnel_ipv6,omitempty"` // IPv6 destinations allowed by the server
 	// ProbeTargets fixes the hosts the monitor TLS-probes to decide the route
 	// (host:port, bare host = :443). Empty = learn them from the hostnames
@@ -108,7 +106,7 @@ const (
 // ParseLink parses passage://tunnel?v=1&zone=<zone>&key=<base64>[&r=<ip:port,…>][&c=<host:port,…>].
 // The web form https://passage.gluek.info/link#v=1&zone=… and the older
 // velta://tunnel form carry the same fields.
-// r adds resolvers to the defaults; c replaces the default canaries.
+// r adds resolvers to the defaults; c sets the canaries.
 // ipv6=1 enables IPv6 destinations through the server; omitted or 0 disables them.
 // The key may be standard or URL-safe base64, padded or not.
 func ParseLink(link string) (Config, error) {
@@ -148,11 +146,6 @@ func ParseLink(link string) (Config, error) {
 	n, err := cfg.Normalize()
 	if err != nil {
 		return Config{}, err
-	}
-	// Keep only what the link set: default canaries are filled at start, so
-	// an app update with better ones reaches tunnels installed earlier.
-	if len(cfg.Canaries) == 0 {
-		n.Canaries = nil
 	}
 	return n, nil
 }
@@ -256,10 +249,16 @@ func (c Config) Normalize() (Config, error) {
 	if err != nil {
 		return Config{}, err
 	}
-	if len(cs) == 0 {
-		cs = append([]string(nil), DefaultCanaries...)
-	}
 	c.Canaries = cs
+	if c.References, err = hostPorts(c.References, "references"); err != nil {
+		return Config{}, err
+	}
+	if err = links.ValidateCanaries(c.Canaries); err != nil {
+		return Config{}, fmt.Errorf("canaries: %w", err)
+	}
+	if err = links.ValidateReferences(c.References); err != nil {
+		return Config{}, fmt.Errorf("references: %w", err)
+	}
 	if c.ProbeTargets, err = hostPorts(c.ProbeTargets, "probe targets"); err != nil {
 		return Config{}, err
 	}

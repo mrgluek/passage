@@ -62,6 +62,11 @@ gets its icon and manifest from `go-winres`, run by the script:
 scripts/build-cli.sh <version> <out-dir> [os/arch ...]
 ```
 
+Canary and reference targets come from a trusted subscription; a source
+build has none until then. `passage-cli -canaries a.example.org:443,b.example.org:443
+-references c.example.org:443` sets them by hand (the next trusted refresh
+replaces them).
+
 macOS app bundle (macOS 13+, Xcode command line tools and Rust):
 
 ```bash

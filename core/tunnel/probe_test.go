@@ -195,3 +195,26 @@ func TestReachableRelaySkipsSmartSearch(t *testing.T) {
 		t.Fatalf("reachable relay needs no smart search: %+v", g)
 	}
 }
+
+func TestNoCanariesNothingChecked(t *testing.T) {
+	var n atomic.Int32
+	tt := newTestTunnel(t, ModeAuto, echoDialer("D:", &n), echoDialer("T:", &n))
+	tt.mu.Lock()
+	tt.cfg.Canaries = nil
+	tt.mu.Unlock()
+	mail := tt.testGroup("relay.example.org:443")
+	probe, seen := probeLog()
+	tt.probeTLS = probe
+	for range blockedAfter {
+		tt.check()
+	}
+	g := tt.Status(0).Groups[mail.name]
+	if g.LastResult.CanaryChecked || g.LastResult.CanaryOK || g.State != "offline" {
+		t.Fatalf("no canaries: nothing checked, state offline: %+v", g)
+	}
+	for _, host := range seen() {
+		if slices.Contains(testCanaries, host) {
+			t.Fatalf("unexpected canary probe: %s", host)
+		}
+	}
+}
