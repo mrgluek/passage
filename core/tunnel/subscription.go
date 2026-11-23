@@ -31,14 +31,17 @@ type Subscription struct {
 	BundleSources []string                           `json:"bundle_sources,omitempty"`
 	Canaries      []string                           `json:"canaries,omitempty"`
 	References    []string                           `json:"references,omitempty"`
-	ReadKey       []byte                             `json:"read_key"`
-	Revision      uint64                             `json:"revision"`
-	ETag          string                             `json:"etag,omitempty"`
-	ETagSource    string                             `json:"etag_source,omitempty"`
-	RouteIDs      []string                           `json:"route_ids,omitempty"`
-	LastOK        int64                              `json:"last_ok"`
-	LastTry       int64                              `json:"last_try"`
-	LastError     string                             `json:"last_error,omitempty"`
+	// RefsCleared records an explicit empty list from the trusted author, so a
+	// list from a static link does not come back after a restart.
+	RefsCleared bool     `json:"references_cleared,omitempty"`
+	ReadKey     []byte   `json:"read_key"`
+	Revision    uint64   `json:"revision"`
+	ETag        string   `json:"etag,omitempty"`
+	ETagSource  string   `json:"etag_source,omitempty"`
+	RouteIDs    []string `json:"route_ids,omitempty"`
+	LastOK      int64    `json:"last_ok"`
+	LastTry     int64    `json:"last_try"`
+	LastError   string   `json:"last_error,omitempty"`
 }
 
 // DisplayName returns the subscription name as a single line of up to 64 characters.
@@ -182,6 +185,7 @@ func ApplySubFile(cfg Config, sub Subscription, bundle links.Bundle) (Config, er
 	sub.BundleSources = slices.Clone(current.BundleSources)
 	sub.Canaries = slices.Clone(current.Canaries)
 	sub.References = slices.Clone(current.References)
+	sub.RefsCleared = current.RefsCleared
 	sub.RouteIDs = slices.Clone(current.RouteIDs)
 	if len(cfg.Routes) == 0 && cfg.Zone != "" {
 		cfg.Routes = legacyRoutes(cfg)
@@ -259,6 +263,7 @@ func ApplySubFile(cfg Config, sub Subscription, bundle links.Bundle) (Config, er
 		}
 		if bundle.References != nil { // an empty list clears the stored one
 			sub.References = nilIfEmpty(bundle.References)
+			sub.RefsCleared = len(bundle.References) == 0
 			cfg.References = nilIfEmpty(bundle.References)
 		}
 	}

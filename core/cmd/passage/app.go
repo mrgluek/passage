@@ -382,7 +382,7 @@ func (a *App) trayState() trayState {
 	st.Tooltip = captionTitle(a.t, a.trayTitleKey())
 	if a.tun != nil {
 		s := a.tun.Status(0)
-		if detail := limitedLine(a.t, s.NetworkLimited, statusDetail(a.t, s.Health, a.channels.sample(a.t, s, time.Now()))); detail != "" {
+		if detail := limitedLine(a.t, showLimited(s.NetworkLimited, a.settings.Running, a.lastErr, a.hasLink()), statusDetail(a.t, s.Health, a.channels.sample(a.t, s, time.Now()))); detail != "" {
 			st.Tooltip += "\n" + detail
 		}
 	}
@@ -391,6 +391,12 @@ func (a *App) trayState() trayState {
 		st.Update = a.updater.offer.Version
 	}
 	return st
+}
+
+// showLimited gates the limited-network prefix like the window does: only
+// while the proxy runs with a link and no error.
+func showLimited(limited, running bool, err string, hasLink bool) bool {
+	return limited && running && err == "" && hasLink
 }
 
 // maxTooltip is the Windows tray tooltip limit, in characters.

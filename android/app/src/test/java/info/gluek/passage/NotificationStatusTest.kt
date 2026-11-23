@@ -80,6 +80,19 @@ class NotificationStatusTest {
         assertFalse(service.contains("R.string.network_limited"))
     }
 
+    @Test fun networkLimitedNotShownWithoutALinkOrWhenStopped() {
+        val limited = JSONObject().put("running", true).put("network_limited", true)
+            .put("health", JSONObject().put("state", "working"))
+        assertTrue(StatusText.limitedShown(limited, true, true))
+        assertFalse(StatusText.limitedShown(limited, true, false)) // add your link
+        val none = JSONObject().put("running", true).put("network_limited", true).put("route_count", 0)
+            .put("subscriptions", org.json.JSONArray())
+        assertFalse(StatusText.limitedShown(none, true, null))
+        val stopped = JSONObject().put("running", false).put("network_limited", true)
+        assertFalse(StatusText.limitedShown(stopped, false, true))
+        assertFalse(StatusText.limitedShown(null, true, true))
+    }
+
     @Test fun fullStatusShowsCanaryTextOnlyWhenChecked() {
         val src = File("src/main/java/info/gluek/passage/StatusText.kt").readText()
         assertTrue(src.contains("!r.optBoolean(\"canary_checked\") -> \"\""))

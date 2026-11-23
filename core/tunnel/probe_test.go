@@ -218,3 +218,39 @@ func TestNoCanariesNothingChecked(t *testing.T) {
 		}
 	}
 }
+
+// Without canaries the smart check needs a relay that answers; with one, it
+// runs for the groups that failed. With none answering it does not run.
+func TestNoCanariesSmartCheckNeedsAnAnsweringRelay(t *testing.T) {
+	var n atomic.Int32
+	tt := twoRelays(t, echoDialer("D:", &n))
+	tt.mu.Lock()
+	tt.cfg.Canaries = nil
+	tt.mu.Unlock()
+	tt.strategies = []strategy{{"works", echoDialer("S:", &n)}}
+	var smart atomic.Int32
+	tt.smartProbe = func(_ context.Context, _ dialFunc, hostport, _ string) error {
+		smart.Add(1)
+		return nil
+	}
+	var filtered, open *group
+	for g, r := range tt.probe() {
+		switch {
+		case g.kind != kindRelay:
+		case r.directOK():
+			open = g
+		default:
+			filtered = g
+		}
+	}
+	if open == nil || filtered == nil || smart.Load() == 0 {
+		t.Fatalf("the failed relay needs a smart check: %v %v %d", open, filtered, smart.Load())
+	}
+	probe, _ := probeLog()
+	tt.probeTLS = probe // nothing answers any more
+	smart.Store(0)
+	tt.probe()
+	if smart.Load() != 0 {
+		t.Fatal("smart check ran with no canaries and no answering relay")
+	}
+}

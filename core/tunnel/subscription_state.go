@@ -147,7 +147,7 @@ func RestoreSubscriptionState(cfg Config, path string) (Config, error) {
 			saved.Name, saved.Sources, saved.ReadKey = sub.Name, sources, slices.Clone(sub.ReadKey)
 			saved.InviteSources = slices.Clone(sub.originalSources())
 			if !trusted {
-				saved.BundleSources, saved.Canaries, saved.References = nil, nil, nil
+				saved.BundleSources, saved.Canaries, saved.References, saved.RefsCleared = nil, nil, nil, false
 			}
 			saved.SourceStats = saved.retainedSourceStats()
 			cfg.Subscriptions[j] = saved
@@ -165,6 +165,9 @@ func RestoreSubscriptionState(cfg Config, path string) (Config, error) {
 			}
 			if trusted && len(saved.References) > 0 && len(stored.References) > 0 {
 				cfg.References = slices.Clone(stored.References)
+			}
+			if trusted && saved.RefsCleared && len(saved.References) == 0 {
+				cfg.References = nil // a clear outlives the link's own list
 			}
 			if keys, e := authorKeys(); e == nil && len(keys) > 0 && bytes.Equal(saved.Signer, keys[0]) && len(stored.UpdateSources) > 0 {
 				cfg.UpdateSources = slices.Clone(stored.UpdateSources)

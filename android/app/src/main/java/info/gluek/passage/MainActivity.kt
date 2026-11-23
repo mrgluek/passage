@@ -641,7 +641,7 @@ class MainActivity : ThemedActivity() {
         val plain = HomeSetup.plain(active, error, settings.hasLink, healthState, healthReason)
         stateView.text = getString(plain.title)
         val reason = getString(plain.reason(settings.appSeen))
-        reasonView.text = if (active) HomeSetup.withNetworkLimited(networkLimited, getString(R.string.network_limited), plain.detail(reason, channelLine)) else reason
+        reasonView.text = if (active) HomeSetup.withNetworkLimited(HomeSetup.showLimited(networkLimited, plain), getString(R.string.network_limited), plain.detail(reason, channelLine)) else reason
         renderDot(HomeSetup.dotFor(plain, SystemClock.elapsedRealtime() < trafficUntil))
     }
 

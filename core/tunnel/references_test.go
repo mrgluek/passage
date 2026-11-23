@@ -336,22 +336,79 @@ func TestReferenceVerdictInvalidated(t *testing.T) {
 	})
 }
 
+// blockingRefs makes the relay fail and the canary answer; reference dials
+// block until released or cancelled, and report their start and end.
+func blockingRefs(tt *Tunnel) (started chan string, ended chan string, release chan struct{}) {
+	started, ended, release = make(chan string, 16), make(chan string, 16), make(chan struct{})
+	tt.probeTLS = func(ctx context.Context, hp, _ string) error {
+		if hp == testCanaries[0] {
+			return nil
+		}
+		if !slices.Contains(testReferences, hp) {
+			return errors.New("blocked")
+		}
+		started <- hp
+		defer func() { ended <- hp }()
+		select {
+		case <-release:
+		case <-ctx.Done():
+		}
+		return errors.New("silent")
+	}
+	return
+}
+
+func recv(t *testing.T, ch chan string, what string) string {
+	t.Helper()
+	select {
+	case s := <-ch:
+		return s
+	case <-time.After(3 * time.Second):
+		t.Fatal("timeout: " + what)
+	}
+	return ""
+}
+
 func TestReferencePassDroppedMidFlight(t *testing.T) {
 	tt, _, _ := refTunnel(t, testReferences, testCanaries[0])
-	release := make(chan struct{})
-	tt.probeTLS = func(ctx context.Context, hp, _ string) error {
-		if slices.Contains(testReferences, hp) {
-			<-release
-			return errors.New("silent")
-		}
-		return nil
-	}
+	started, _, release := blockingRefs(tt)
 	tt.probe()
-	tt.NetworkChanged() // drops the pass in flight
+	recv(t, started, "pass did not start")
+	tt.dropVerdict() // drops the pass in flight
 	close(release)
 	waitPass(t, tt)
+	time.Sleep(50 * time.Millisecond)
 	if set, _ := verdict(tt); set {
 		t.Fatal("a dropped pass stored its verdict")
+	}
+}
+
+// A dropped or superseded pass stops dialling and frees the way for a new one.
+func TestReferencePassCancelledOnDrop(t *testing.T) {
+	for name, drop := range map[string]func(*Tunnel){
+		"verdict dropped": func(tt *Tunnel) { tt.dropVerdict() },
+		"mode change":     func(tt *Tunnel) { _ = tt.SetMode(ModeOff) },
+	} {
+		t.Run(name, func(t *testing.T) {
+			tt, _, _ := refTunnel(t, testReferences, testCanaries[0])
+			started, ended, _ := blockingRefs(tt)
+			tt.probe()
+			first := recv(t, started, "pass did not start")
+			drop(tt)
+			if got := recv(t, ended, "dial kept running after the drop"); got != first {
+				t.Fatalf("ended %s, want %s", got, first)
+			}
+			select {
+			case h := <-started:
+				t.Fatalf("a dropped pass went on to dial %s", h)
+			case <-time.After(100 * time.Millisecond):
+			}
+			if name == "mode change" {
+				return
+			}
+			tt.probe() // a fresh pass can start at once
+			recv(t, started, "no fresh pass after the drop")
+		})
 	}
 }
 
@@ -521,5 +578,80 @@ func TestNormalizeValidatesTargets(t *testing.T) {
 	c.References = []string{"example.org"}
 	if got, err := c.Normalize(); err != nil || got.References[0] != "example.org:443" {
 		t.Fatalf("bare host: %v %v", got.References, err)
+	}
+}
+
+// When every group is skipped as probe-blind nothing was probed, so the
+// cached verdict stays.
+func TestVerdictKeptWhenNothingProbed(t *testing.T) {
+	tt, g, _ := refTunnel(t, testReferences, testCanaries[0])
+	now := time.Now()
+	tt.now = func() time.Time { return now }
+	tt.probe()
+	waitPass(t, tt)
+	if set, limited := verdict(tt); !set || !limited {
+		t.Fatal("no limited verdict")
+	}
+	tt.mu.Lock()
+	g.probeBlind, g.probeBlindAt, g.lastProbe = true, now, now
+	tt.mu.Unlock()
+	now = now.Add(15 * time.Second)
+	tt.probe()
+	if set, limited := verdict(tt); !set || !limited {
+		t.Fatal("the cached verdict was dropped although nothing was probed")
+	}
+}
+
+// A clear from the trusted author outlives a restart even when the static
+// link carries references; without a clear the link's list is kept.
+func TestClearedReferencesBeatLinkAfterRestart(t *testing.T) {
+	sub, _, bundle := subFixture(t)
+	trustSubscription(t, sub)
+	link := Config{Subscriptions: []Subscription{sub}, References: slices.Clone(testReferences)}
+	bundle.References = []string{"example.net:443"}
+	cfg, err := ApplySubFile(link, sub, bundle)
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(t.TempDir(), "subscriptions.json")
+	if err = SaveSubscriptionState(path, cfg); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := RestoreSubscriptionState(link, path); err != nil || !slices.Equal(got.References, []string{"example.net:443"}) {
+		t.Fatalf("a subscription list is restored over the link's: %v %v", got.References, err)
+	}
+	bundle.Revision++
+	bundle.References = []string{}
+	if cfg, err = ApplySubFile(cfg, cfg.Subscriptions[0], bundle); err != nil || len(cfg.References) != 0 {
+		t.Fatal("not cleared", err)
+	}
+	if err = SaveSubscriptionState(path, cfg); err != nil {
+		t.Fatal(err)
+	}
+	got, err := RestoreSubscriptionState(link, path)
+	if err != nil || len(got.References) != 0 {
+		t.Fatalf("the link's list came back after a clear: %v %v", got.References, err)
+	}
+	// A later list sets them again, and the marker goes.
+	bundle.Revision++
+	bundle.References = testReferences
+	if cfg, err = ApplySubFile(cfg, cfg.Subscriptions[0], bundle); err != nil || cfg.Subscriptions[0].RefsCleared {
+		t.Fatal("marker kept", err)
+	}
+	// Without any clear the link's list is kept.
+	sub2, _, bundle2 := subFixture(t)
+	trustSubscription(t, sub2)
+	bundle2.References = nil
+	cfg2, err := ApplySubFile(Config{Subscriptions: []Subscription{sub2}}, sub2, bundle2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	path2 := filepath.Join(t.TempDir(), "subscriptions.json")
+	if err = SaveSubscriptionState(path2, cfg2); err != nil {
+		t.Fatal(err)
+	}
+	got, err = RestoreSubscriptionState(Config{Subscriptions: []Subscription{sub2}, References: slices.Clone(testReferences)}, path2)
+	if err != nil || !slices.Equal(got.References, testReferences) {
+		t.Fatalf("link list lost without a clear: %v %v", got.References, err)
 	}
 }

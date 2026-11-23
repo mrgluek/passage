@@ -117,3 +117,21 @@ func TestFitTooltip(t *testing.T) {
 		t.Errorf("short tooltip changed: %q", got)
 	}
 }
+
+func TestShowLimited(t *testing.T) {
+	for _, tc := range []struct {
+		limited, running bool
+		err              string
+		hasLink, want    bool
+	}{
+		{true, true, "", true, true},
+		{false, true, "", true, false},
+		{true, false, "", true, false},
+		{true, true, "start failed", true, false},
+		{true, true, "", false, false}, // "add your link" never carries the prefix
+	} {
+		if got := showLimited(tc.limited, tc.running, tc.err, tc.hasLink); got != tc.want {
+			t.Errorf("%+v: got %v", tc, got)
+		}
+	}
+}

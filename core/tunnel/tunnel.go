@@ -231,7 +231,8 @@ type Tunnel struct {
 	refSet, refLimited, refRunning bool
 	refAt                          time.Time
 	refGen                         int
-	strategy                       *strategy // the smart route's working strategy, if any
+	refCancel                      context.CancelFunc // stops the pass in flight
+	strategy                       *strategy          // the smart route's working strategy, if any
 	stats                          [numRoutes]routeStats
 	// started, health, healthGood and healthSince back Status.Health.
 	started     time.Time
@@ -768,8 +769,7 @@ func (t *Tunnel) SetMode(mode string) error {
 	}
 	t.mu.Lock()
 	t.mode = mode
-	t.refGen++
-	t.refSet = false
+	t.dropVerdictLocked()
 	if previous != kind {
 		t.routeGen.Add(1)
 		for c := range t.conns {
@@ -1673,8 +1673,9 @@ func (t *Tunnel) probe() map[*group]probeResult {
 	}
 	wg.Wait()
 	failed := func(r probeResult) bool { return r.Relays > 0 && !r.directOK() }
-	anyFailed, networkOK := false, false
+	anyFailed, networkOK, anyProbed := false, false, false
 	for _, r := range res {
+		anyProbed = anyProbed || r.Relays > 0
 		anyFailed = anyFailed || failed(r)
 		networkOK = networkOK || r.RelayOK > 0
 	}
@@ -1692,9 +1693,9 @@ func (t *Tunnel) probe() map[*group]probeResult {
 	if canaryOK && haveRefs {
 		// Never waits: a stale verdict starts a background pass.
 		refChecked, limited = t.referenceVerdict()
-	} else {
+	} else if anyProbed {
 		t.dropVerdict() // canaries flipped, or the network is open
-	}
+	} // nothing probed: the cached verdict stands
 	for g, r := range res {
 		r.NetworkOK = networkOK
 		if failed(r) {
@@ -1763,14 +1764,14 @@ func (t *Tunnel) probeCanaries() bool {
 	t.mu.Lock()
 	list := slices.Clone(t.cfg.Canaries)
 	t.mu.Unlock()
-	return t.probeFirst(list, &t.lastCanary)
+	return t.probeFirst(t.ctx, list, &t.lastCanary)
 }
 
 // probeFirst reports whether any of list completes a TLS handshake. They go
 // one at a time, the one that answered last (*last, guarded by t.mu) first:
 // the next starts when the previous fails or has had canaryStagger without
 // an answer, and the first answer cancels the rest.
-func (t *Tunnel) probeFirst(list []string, last *string) bool {
+func (t *Tunnel) probeFirst(parent context.Context, list []string, last *string) bool {
 	t.mu.Lock()
 	order := slices.Clone(list)
 	prev := *last
@@ -1781,7 +1782,7 @@ func (t *Tunnel) probeFirst(list []string, last *string) bool {
 	if len(order) == 0 {
 		return false
 	}
-	ctx, cancel := context.WithCancel(t.ctx)
+	ctx, cancel := context.WithCancel(parent)
 	defer cancel()
 	type answer struct {
 		target string
@@ -1829,9 +1830,20 @@ func (t *Tunnel) probeFirst(list []string, last *string) bool {
 // dropVerdict forgets the cached reference verdict and any pass in flight.
 func (t *Tunnel) dropVerdict() {
 	t.mu.Lock()
+	t.dropVerdictLocked()
+	t.mu.Unlock()
+}
+
+// dropVerdictLocked also cancels the pass in flight and frees the guard, so
+// a new pass can start; the old one ends without a result. Caller holds t.mu.
+func (t *Tunnel) dropVerdictLocked() {
 	t.refGen++
 	t.refSet = false
-	t.mu.Unlock()
+	if t.refCancel != nil {
+		t.refCancel()
+		t.refCancel = nil
+	}
+	t.refRunning = false
 }
 
 // freshVerdictLocked returns the cached verdict while it is fresh. Caller holds t.mu.
@@ -1857,21 +1869,30 @@ func (t *Tunnel) referenceVerdict() (checked, limited bool) {
 			refs = refs[:maxReferences]
 		}
 		gen := t.refGen
+		ctx, cancel := context.WithCancel(t.ctx)
+		t.refCancel = cancel
 		t.wg.Add(1)
-		go t.referencePass(slices.Clone(refs), gen)
+		go t.referencePass(ctx, slices.Clone(refs), gen)
 	}
 	return false, false
 }
 
 // referencePass tries the references one at a time and caches the verdict,
 // unless it was dropped meanwhile or the router is stopping (unknown).
-func (t *Tunnel) referencePass(refs []string, gen int) {
+func (t *Tunnel) referencePass(ctx context.Context, refs []string, gen int) {
 	defer t.wg.Done()
-	ok := t.probeFirst(refs, &t.lastRef)
+	ok := t.probeFirst(ctx, refs, &t.lastRef)
 	t.mu.Lock()
 	defer t.mu.Unlock()
+	if gen != t.refGen { // dropped: a newer pass may own the guard
+		return
+	}
 	t.refRunning = false
-	if t.ctx.Err() != nil || gen != t.refGen {
+	if t.refCancel != nil {
+		t.refCancel()
+		t.refCancel = nil
+	}
+	if t.ctx.Err() != nil {
 		return
 	}
 	t.refSet, t.refLimited, t.refAt = true, !ok, t.timeNow()
