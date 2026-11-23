@@ -230,6 +230,8 @@ type Tunnel struct {
 	// The cached reference verdict (see refreshReferences); refGen is bumped to drop it.
 	refSet, refLimited, refRunning bool
 	refAt                          time.Time
+	refLogged, refLoggedLimited    bool      // the last verdict written to the event log
+	canaryAt                       time.Time // last canary round that answered; zero after one that did not
 	refGen                         int
 	refCancel                      context.CancelFunc // stops the pass in flight
 	strategy                       *strategy          // the smart route's working strategy, if any
@@ -1689,6 +1691,12 @@ func (t *Tunnel) probe() map[*group]probeResult {
 		canaryChecked = true
 		canaryOK = t.probeCanaries()
 		networkOK = canaryOK
+		t.mu.Lock()
+		t.canaryAt = time.Time{}
+		if canaryOK {
+			t.canaryAt = t.timeNow()
+		}
+		t.mu.Unlock()
 	}
 	if canaryOK && haveRefs {
 		// Never waits: a stale verdict starts a background pass.
@@ -1862,7 +1870,7 @@ func (t *Tunnel) referenceVerdict() (checked, limited bool) {
 	if limited, ok := t.freshVerdictLocked(); ok {
 		return true, limited
 	}
-	if !t.refRunning && t.ctx.Err() == nil {
+	if !t.refRunning && t.ctx.Err() == nil && t.mode == ModeAuto {
 		t.refRunning = true
 		refs := t.cfg.References
 		if len(refs) > maxReferences {
@@ -1896,6 +1904,10 @@ func (t *Tunnel) referencePass(ctx context.Context, refs []string, gen int) {
 		return
 	}
 	t.refSet, t.refLimited, t.refAt = true, !ok, t.timeNow()
+	if !t.refLogged || t.refLoggedLimited != t.refLimited {
+		t.refLogged, t.refLoggedLimited = true, t.refLimited
+		t.log.add("reference verdict: limited=%v", t.refLimited)
+	}
 }
 
 // confirmViaTunnel checks before switching, and when nothing answers directly.
@@ -2431,7 +2443,7 @@ func (t *Tunnel) statusLocked(n int) Status {
 		Operator:       t.cfg.Operator,
 		LastProbe:      mail.lastProbe.UTC(),
 		LastResult:     mail.lastResult,
-		NetworkLimited: t.networkLimitedLocked(mail),
+		NetworkLimited: t.networkLimitedLocked(),
 		Routes:         t.routes(),
 		Strategy:       t.strategyNameLocked(),
 		Active:         map[string]int{},
@@ -2802,9 +2814,10 @@ func (g *group) historyUnit() string {
 }
 
 // networkLimitedLocked is the cached verdict, shown only in auto mode while
-// it is fresh and the last canary check answered. Caller holds t.mu.
-func (t *Tunnel) networkLimitedLocked(mail *group) bool {
+// it is fresh and the last canary round that ran answered. It does not depend
+// on which group is shown. Caller holds t.mu.
+func (t *Tunnel) networkLimitedLocked() bool {
 	limited, ok := t.freshVerdictLocked()
-	r := mail.lastResult
-	return ok && limited && t.mode == ModeAuto && r.CanaryChecked && r.CanaryOK
+	canary := !t.canaryAt.IsZero() && t.timeNow().Sub(t.canaryAt) < refFresh
+	return ok && limited && t.mode == ModeAuto && canary
 }

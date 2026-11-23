@@ -265,6 +265,9 @@ func ApplySubFile(cfg Config, sub Subscription, bundle links.Bundle) (Config, er
 			sub.References = nilIfEmpty(bundle.References)
 			sub.RefsCleared = len(bundle.References) == 0
 			cfg.References = nilIfEmpty(bundle.References)
+			if len(bundle.References) > 0 {
+				clearRefsMarkers(cfg.Subscriptions, index)
+			}
 		}
 	}
 	cfg.Subscriptions[index] = sub
@@ -309,6 +312,7 @@ func SubscribeLink(cfg Config, text string, replaceSigner bool) (ImportResult, e
 				sub.BundleSources = slices.Clone(old.BundleSources)
 				sub.Canaries = slices.Clone(old.Canaries)
 				sub.References = slices.Clone(old.References)
+				sub.RefsCleared = old.RefsCleared
 				sub.Sources = mergeSubscriptionSources(sub.BundleSources, sub.InviteSources)
 			}
 			if slices.Equal(sub.Sources, old.Sources) && bytes.Equal(sub.ReadKey, old.ReadKey) {
@@ -426,4 +430,14 @@ func nilIfEmpty(list []string) []string {
 		return nil
 	}
 	return slices.Clone(list)
+}
+
+// clearRefsMarkers drops every clear marker except the one at keep: a clear
+// matters only until a trusted source supplies a non-empty list.
+func clearRefsMarkers(subs []Subscription, keep int) {
+	for i := range subs {
+		if i != keep {
+			subs[i].RefsCleared = false
+		}
+	}
 }

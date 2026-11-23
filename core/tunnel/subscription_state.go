@@ -84,6 +84,7 @@ func RestoreSubscriptionState(cfg Config, path string) (Config, error) {
 	cfg.Subscriptions = slices.Clone(cfg.Subscriptions)
 	cfg.RouteEdits = maps.Clone(cfg.RouteEdits)
 	cfg.Routes = slices.Clone(cfg.Routes)
+	cleared, held := false, false
 	for j, sub := range cfg.Subscriptions {
 		for _, saved := range stored.Subscriptions {
 			if saved.ID != sub.ID || !bytes.Equal(saved.Signer, sub.Signer) || saved.Revision < sub.Revision {
@@ -167,13 +168,19 @@ func RestoreSubscriptionState(cfg Config, path string) (Config, error) {
 				cfg.References = slices.Clone(stored.References)
 			}
 			if trusted && saved.RefsCleared && len(saved.References) == 0 {
-				cfg.References = nil // a clear outlives the link's own list
+				cleared = true
+			}
+			if len(saved.References) > 0 {
+				held = true
 			}
 			if keys, e := authorKeys(); e == nil && len(keys) > 0 && bytes.Equal(saved.Signer, keys[0]) && len(stored.UpdateSources) > 0 {
 				cfg.UpdateSources = slices.Clone(stored.UpdateSources)
 			}
 			break
 		}
+	}
+	if cleared && !held {
+		cfg.References = nil // a clear outlives the link's own list
 	}
 	cfg.RouteEdits = MinimalEdits(cfg.Routes, cfg.RouteEdits)
 	return cfg.Normalize()

@@ -116,6 +116,10 @@ func ImportLink(existing Config, text string, replaceIDs bool) (ImportResult, er
 	}
 	if decoded.Signature == "trusted_author" && decoded.Bundle.References != nil {
 		result.Config.References = nilIfEmpty(decoded.Bundle.References)
+		if len(decoded.Bundle.References) > 0 {
+			result.Config.Subscriptions = slices.Clone(result.Config.Subscriptions)
+			clearRefsMarkers(result.Config.Subscriptions, -1)
+		}
 	}
 	if decoded.Signature == "trusted_author" && len(decoded.Bundle.Updates) > 0 {
 		result.Config.UpdateSources = decoded.Bundle.Updates
