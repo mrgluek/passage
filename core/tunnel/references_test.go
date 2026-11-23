@@ -517,12 +517,17 @@ func TestStatusNetworkLimited(t *testing.T) {
 	if lr, _ := got["last_result"].(map[string]any); lr["network_limited"] != true || lr["reference_checked"] != true {
 		t.Fatalf("last_result: %v", lr)
 	}
-	// Time passes beyond freshness: the flag clears.
+	// The old verdict stays visible for the grace period while a new pass runs.
 	now = now.Add(refFresh + time.Second)
+	if !tt.Status(0).NetworkLimited {
+		t.Fatal("flag dropped while the verdict is re-checked")
+	}
+	// Time passes beyond the grace period: the flag clears.
+	now = now.Add(refGrace)
 	if tt.Status(0).NetworkLimited {
 		t.Fatal("stale verdict still shown")
 	}
-	now = now.Add(-refFresh)
+	now = now.Add(-refFresh - refGrace)
 	if !tt.Status(0).NetworkLimited {
 		t.Fatal("fresh verdict hidden")
 	}
@@ -653,5 +658,58 @@ func TestClearedReferencesBeatLinkAfterRestart(t *testing.T) {
 	got, err = RestoreSubscriptionState(Config{Subscriptions: []Subscription{sub2}, References: slices.Clone(testReferences)}, path2)
 	if err != nil || !slices.Equal(got.References, testReferences) {
 		t.Fatalf("link list lost without a clear: %v %v", got.References, err)
+	}
+}
+
+func TestSameRevisionIsAppliedAgainAfterUpgrade(t *testing.T) {
+	sub, _, bundle := subFixture(t)
+	trustSubscription(t, sub)
+	// A copy stored by an older release: same revision, no schema, no references.
+	old := bundle
+	old.References = nil
+	cfg, err := ApplySubFile(Config{Subscriptions: []Subscription{sub}}, sub, old)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg.Subscriptions[0].Schema = 0
+	bundle.References = []string{"example.org:443", "example.net:443"}
+	cfg, err = ApplySubFile(cfg, cfg.Subscriptions[0], bundle)
+	if err != nil || !slices.Equal(cfg.References, bundle.References) || cfg.Subscriptions[0].Schema != subscriptionSchema {
+		t.Fatal("the same revision was not applied again", err)
+	}
+	// Once applied by this release the same revision is unchanged again.
+	if _, err = ApplySubFile(cfg, cfg.Subscriptions[0], bundle); !errors.Is(err, links.ErrNotNewer) {
+		t.Fatal("same revision applied twice by the current release", err)
+	}
+	// A lower revision is still refused.
+	cfg.Subscriptions[0].Schema = 0
+	bundle.Revision--
+	if _, err = ApplySubFile(cfg, cfg.Subscriptions[0], bundle); !errors.Is(err, links.ErrRollback) {
+		t.Fatal("rollback accepted", err)
+	}
+}
+
+func TestLimitedVerdictHeldWhileRechecked(t *testing.T) {
+	tt, g, _ := refTunnel(t, testReferences, testCanaries[0])
+	now := time.Now()
+	tt.now = func() time.Time { return now }
+	tt.probe()
+	waitPass(t, tt)
+	if r := tt.probe()[g]; !r.ReferenceChecked || !r.NetworkLimited {
+		t.Fatalf("fresh limited verdict: %+v", r)
+	}
+	// Stale: a new pass starts, the probe still carries the old verdict.
+	now = now.Add(refFresh + time.Second)
+	r := tt.probe()[g]
+	if !r.ReferenceChecked || !r.NetworkLimited {
+		t.Fatalf("verdict dropped while re-checked: %+v", r)
+	}
+	waitPass(t, tt)
+	// Past the grace period without a new result the verdict is unknown again.
+	tt.mu.Lock()
+	tt.refAt = now.Add(-refFresh - refGrace - time.Second)
+	tt.mu.Unlock()
+	if r := tt.probe()[g]; r.ReferenceChecked || r.NetworkLimited {
+		t.Fatalf("verdict kept beyond the grace period: %+v", r)
 	}
 }

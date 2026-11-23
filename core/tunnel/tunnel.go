@@ -172,6 +172,8 @@ const (
 	canaryStagger = 2 * time.Second
 	// refFresh is how long a reference verdict is reused.
 	refFresh = 10 * time.Minute
+	// refGrace is how long the old verdict stays in use while a new pass runs.
+	refGrace = 2 * time.Minute
 	// maxReferences bounds the dials of one reference pass.
 	maxReferences = 8
 )
@@ -1862,8 +1864,18 @@ func (t *Tunnel) freshVerdictLocked() (limited, ok bool) {
 	return t.refLimited, true
 }
 
-// referenceVerdict returns the fresh cached verdict. Without one it starts
-// at most one background pass and reports "unknown", so the probe never waits.
+// usableVerdictLocked is the cached verdict while it is fresh, and for refGrace
+// longer while the pass that replaces it runs. Caller holds t.mu.
+func (t *Tunnel) usableVerdictLocked() (limited, ok bool) {
+	if !t.refSet || t.timeNow().Sub(t.refAt) >= refFresh+refGrace {
+		return false, false
+	}
+	return t.refLimited, true
+}
+
+// referenceVerdict returns the cached verdict. A stale one starts at most one
+// background pass and is kept meanwhile; without one it reports "unknown".
+// The probe never waits.
 func (t *Tunnel) referenceVerdict() (checked, limited bool) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
@@ -1882,7 +1894,8 @@ func (t *Tunnel) referenceVerdict() (checked, limited bool) {
 		t.wg.Add(1)
 		go t.referencePass(ctx, slices.Clone(refs), gen)
 	}
-	return false, false
+	limited, checked = t.usableVerdictLocked()
+	return checked, limited
 }
 
 // referencePass tries the references one at a time and caches the verdict,
@@ -2814,10 +2827,10 @@ func (g *group) historyUnit() string {
 }
 
 // networkLimitedLocked is the cached verdict, shown only in auto mode while
-// it is fresh and the last canary round that ran answered. It does not depend
+// it is usable and the last canary round that ran answered. It does not depend
 // on which group is shown. Caller holds t.mu.
 func (t *Tunnel) networkLimitedLocked() bool {
-	limited, ok := t.freshVerdictLocked()
-	canary := !t.canaryAt.IsZero() && t.timeNow().Sub(t.canaryAt) < refFresh
+	limited, ok := t.usableVerdictLocked()
+	canary := !t.canaryAt.IsZero() && t.timeNow().Sub(t.canaryAt) < refFresh+refGrace
 	return ok && limited && t.mode == ModeAuto && canary
 }

@@ -307,38 +307,80 @@ func (c *Client) Download(ctx context.Context, offer *Offer, dest string, progre
 		progress(done, size)
 	}
 
-	// (source, route) pairs in turn; a pair stays while it brings data.
-	turn, idle := 0, 0
-	var last error
-	for done < size {
-		if err := ctx.Err(); err != nil {
-			return err
+	// fetch fills the file from the sources, (source, route) pairs in turn; a
+	// pair stays while it brings data. used collects the sources that did.
+	fetch := func(sources []string, used map[string]bool) error {
+		turn, idle := 0, 0
+		var last error
+		for done < size {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
+			dials := c.dials()
+			pairs := len(sources) * len(dials)
+			if idle >= maxIdleRounds*pairs {
+				return fmt.Errorf("download failed: %w", last)
+			}
+			source := sources[turn%pairs%len(sources)]
+			dial := dials[(turn%pairs)/len(sources)]
+			n, err := fetchChunk(ctx, dial, source+"/"+offer.File.Name, f, done, size)
+			done += n
+			if progress != nil && n > 0 {
+				progress(done, size)
+			}
+			if n > 0 {
+				idle = 0
+				used[source] = true
+			}
+			if err != nil {
+				last = err
+				if n == 0 {
+					idle++
+					turn++
+				}
+			}
 		}
-		dials := c.dials()
-		pairs := len(offer.Sources) * len(dials)
-		if idle >= maxIdleRounds*pairs {
-			return fmt.Errorf("download failed: %w", last)
+		return nil
+	}
+	restart := func() error {
+		done = 0
+		if progress != nil {
+			progress(0, size)
 		}
-		source := offer.Sources[turn%pairs%len(offer.Sources)]
-		dial := dials[(turn%pairs)/len(offer.Sources)]
-		n, err := fetchChunk(ctx, dial, source+"/"+offer.File.Name, f, done, size)
-		done += n
-		if progress != nil && n > 0 {
-			progress(done, size)
+		return f.Truncate(0)
+	}
+
+	used := make(map[string]bool)
+	if err := fetch(offer.Sources, used); err != nil {
+		return err
+	}
+	err = verify(f, offer.File)
+	if err != nil {
+		// A source may serve wrong bytes under a valid manifest. Bytes from
+		// several sources are mixed, so each remaining source is tried alone.
+		bad := map[string]bool{}
+		if len(used) == 1 {
+			for source := range used {
+				bad[source] = true
+			}
 		}
-		if n > 0 {
-			idle = 0
-		}
-		if err != nil {
-			last = err
-			if n == 0 {
-				idle++
-				turn++
+		for _, source := range offer.Sources {
+			if bad[source] || ctx.Err() != nil {
+				continue
+			}
+			if rerr := restart(); rerr != nil {
+				return rerr
+			}
+			if ferr := fetch([]string{source}, map[string]bool{}); ferr != nil {
+				err = ferr
+				continue
+			}
+			if err = verify(f, offer.File); err == nil {
+				break
 			}
 		}
 	}
-
-	if err := verify(f, offer.File); err != nil {
+	if err != nil {
 		f.Close()
 		os.Remove(part)
 		return err

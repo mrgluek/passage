@@ -50,11 +50,11 @@ func TestLimitedFlagIgnoresWhichGroupIsMail(t *testing.T) {
 		t.Fatal("a probe-blind group cleared the flag")
 	}
 	// Stale verdicts and manual mode still clear it.
-	*now = now.Add(refFresh + time.Second)
+	*now = now.Add(refFresh + refGrace + time.Second)
 	if tt.Status(0).NetworkLimited {
 		t.Fatal("stale verdict still shown")
 	}
-	*now = now.Add(-refFresh)
+	*now = now.Add(-refFresh - refGrace)
 	if !tt.Status(0).NetworkLimited {
 		t.Fatal("fresh verdict hidden")
 	}

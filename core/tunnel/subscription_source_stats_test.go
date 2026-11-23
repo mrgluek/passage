@@ -87,7 +87,7 @@ func TestSubscriptionSourceFetchStats(t *testing.T) {
 		t.Fatal("expected signature rejection", cfg.Subscriptions[0].LastError)
 	}
 	got := cfg.Subscriptions[0].SourceStats[sourceStatsKey(server.URL)]
-	if got.Tries != 7 || got.Answered != 5 || got.OK != 3 || got.Fail.Net != 1 || got.Fail.Timeout != 1 || got.Fail.HTTP != 1 || got.Fail.Bad != 1 || got.Via.Direct != 3 || got.Via.Tunnel != 0 || got.LastOK == 0 || got.LastMS < 3 {
+	if got.Tries != 9 || got.Answered != 7 || got.OK != 5 || got.Fail.Net != 1 || got.Fail.Timeout != 1 || got.Fail.HTTP != 1 || got.Fail.Bad != 1 || got.Via.Direct != 3 || got.Via.Tunnel != 2 || got.LastOK == 0 || got.LastMS < 3 {
 		t.Fatalf("sequence: %+v", got)
 	}
 	if len(sub.SourceStats) != 0 {

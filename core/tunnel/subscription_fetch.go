@@ -253,11 +253,16 @@ func (r *SubscriptionRefresher) refreshSubscription(ctx context.Context, out *Su
 				sub.LastError = subscriptionError(err)
 				return
 			} else {
+				// The same revision applied again after an upgrade only records the
+				// new schema when nothing visible changed, so the proxy is not restarted.
+				unchanged := sub.Revision == opened.Bundle.Revision && sameApplied(out.Config, candidate, index)
 				out.Config = candidate
 				sourceStats := sub.SourceStats
 				sub = candidate.Subscriptions[index]
 				sub.SourceStats = sourceStats
-				out.Changed = true
+				if !unchanged {
+					out.Changed = true
+				}
 			}
 		}
 		if code != "" && code != "unchanged" {
@@ -274,8 +279,8 @@ func (r *SubscriptionRefresher) refreshSubscription(ctx context.Context, out *Su
 				result.code = code
 				held = &result
 			}
-			// An answer exists: the tunnel is not needed, the other direct sources still run.
-			nextTunnel = nil
+			// A stale answer from one source says nothing about the others: the
+			// tunnel tier and the deferred direct pass still run.
 			return
 		}
 		accept(result, code)
@@ -319,7 +324,7 @@ func (r *SubscriptionRefresher) refreshSubscription(ctx context.Context, out *Su
 	}
 	loop()
 	deferred = slices.DeleteFunc(deferred, func(pair subscriptionPair) bool { return !available(pair) })
-	if !succeeded && held == nil && len(deferred) > 0 && ctx.Err() == nil {
+	if !succeeded && len(deferred) > 0 && ctx.Err() == nil {
 		directPairs, deferred = deferred, nil
 		second, cancelSecond := context.WithTimeout(race, directTimeout)
 		defer cancelSecond()
@@ -387,7 +392,8 @@ func fetchSubscriptionWithStats(ctx context.Context, sub Subscription, source st
 		stats.failure = "http"
 		return nil, "", "http"
 	}
-	if sub.ETag != "" && sub.ETagSource == source {
+	conditional := sub.ETag != "" && sub.ETagSource == source && sub.Schema >= subscriptionSchema
+	if conditional {
 		req.Header.Set("If-None-Match", sub.ETag)
 	}
 	stats.started = true
@@ -407,7 +413,7 @@ func fetchSubscriptionWithStats(ctx context.Context, sub Subscription, source st
 		etag = ""
 	}
 	if resp.StatusCode == http.StatusNotModified {
-		if sub.ETag == "" || sub.ETagSource != source || sub.Revision == 0 {
+		if !conditional || sub.Revision == 0 {
 			stats.failure = "http"
 			return nil, "", "http"
 		}

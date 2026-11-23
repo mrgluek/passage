@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"maps"
+	"reflect"
 	"slices"
 	"strings"
 	"time"
@@ -33,15 +34,19 @@ type Subscription struct {
 	References    []string                           `json:"references,omitempty"`
 	// RefsCleared records an explicit empty list from the trusted author, so a
 	// list from a static link does not come back after a restart.
-	RefsCleared bool     `json:"references_cleared,omitempty"`
-	ReadKey     []byte   `json:"read_key"`
-	Revision    uint64   `json:"revision"`
-	ETag        string   `json:"etag,omitempty"`
-	ETagSource  string   `json:"etag_source,omitempty"`
-	RouteIDs    []string `json:"route_ids,omitempty"`
-	LastOK      int64    `json:"last_ok"`
-	LastTry     int64    `json:"last_try"`
-	LastError   string   `json:"last_error,omitempty"`
+	RefsCleared bool   `json:"references_cleared,omitempty"`
+	ReadKey     []byte `json:"read_key"`
+	Revision    uint64 `json:"revision"`
+	// Schema is the state format that applied this copy. A lower value means an
+	// older app stored it, so the next refresh applies the same revision again
+	// and picks up fields that app did not know.
+	Schema     int      `json:"schema,omitempty"`
+	ETag       string   `json:"etag,omitempty"`
+	ETagSource string   `json:"etag_source,omitempty"`
+	RouteIDs   []string `json:"route_ids,omitempty"`
+	LastOK     int64    `json:"last_ok"`
+	LastTry    int64    `json:"last_try"`
+	LastError  string   `json:"last_error,omitempty"`
 }
 
 // DisplayName returns the subscription name as a single line of up to 64 characters.
@@ -150,7 +155,11 @@ func ApplySubFile(cfg Config, sub Subscription, bundle links.Bundle) (Config, er
 		return cfg, errors.New("signature")
 	}
 	if err := links.CheckRevision(cfg.Subscriptions[index].Revision, bundle.Revision); err != nil {
-		return cfg, err
+		// The same signed revision is applied once more after an upgrade.
+		// A closing file is never taken that way.
+		if !errors.Is(err, links.ErrNotNewer) || cfg.Subscriptions[index].Schema >= subscriptionSchema || bundle.Closed {
+			return cfg, err
+		}
 	}
 	if cfg.Subscriptions[index].Closed {
 		return cfg, errors.New("closed")
@@ -239,6 +248,7 @@ func ApplySubFile(cfg Config, sub Subscription, bundle links.Bundle) (Config, er
 		sub.RouteIDs = append(sub.RouteIDs, r.ID)
 	}
 	sub.Revision = bundle.Revision
+	sub.Schema = subscriptionSchema
 	// The signed file carries the current name, so the owner can rename a
 	// subscription after it was installed.
 	if bundle.Name != "" && utf8.ValidString(bundle.Name) {
@@ -277,6 +287,10 @@ func ApplySubFile(cfg Config, sub Subscription, bundle links.Bundle) (Config, er
 	return cfg.Normalize()
 }
 
+// subscriptionSchema grows when a release starts reading a new field of the
+// signed file, so copies stored by older releases are applied again.
+const subscriptionSchema = 1
+
 // SubscribeLink is the explicit activation step after an invite preview.
 func SubscribeLink(cfg Config, text string, replaceSigner bool) (ImportResult, error) {
 	trusted, err := authorKeys()
@@ -305,7 +319,7 @@ func SubscribeLink(cfg Config, text string, replaceSigner bool) (ImportResult, e
 			// A confirmed signer change retains ownership, but resets revision trust.
 			sub.RouteIDs = slices.Clone(old.RouteIDs)
 		} else {
-			sub.Revision, sub.RouteIDs = old.Revision, slices.Clone(old.RouteIDs)
+			sub.Revision, sub.RouteIDs, sub.Schema = old.Revision, slices.Clone(old.RouteIDs), old.Schema
 			sub.LastOK, sub.LastTry, sub.LastError = old.LastOK, old.LastTry, old.LastError
 			sub.SourceStats = old.SourceStats
 			if decoded.Signature == "trusted_author" {
@@ -440,4 +454,19 @@ func clearRefsMarkers(subs []Subscription, keep int) {
 			subs[i].RefsCleared = false
 		}
 	}
+}
+
+// sameApplied reports whether applying the same revision again changed
+// anything the router or the window can see.
+func sameApplied(a, b Config, index int) bool {
+	if index < 0 || index >= len(a.Subscriptions) || index >= len(b.Subscriptions) {
+		return false
+	}
+	x, y := a.Subscriptions[index], b.Subscriptions[index]
+	return slices.Equal(x.Sources, y.Sources) && slices.Equal(x.RouteIDs, y.RouteIDs) &&
+		slices.Equal(x.Canaries, y.Canaries) && slices.Equal(x.References, y.References) &&
+		x.RefsCleared == y.RefsCleared && x.Name == y.Name &&
+		slices.Equal(a.Canaries, b.Canaries) && slices.Equal(a.References, b.References) &&
+		slices.Equal(a.UpdateSources, b.UpdateSources) &&
+		reflect.DeepEqual(a.Routes, b.Routes) && reflect.DeepEqual(a.RouteEdits, b.RouteEdits)
 }

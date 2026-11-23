@@ -262,6 +262,25 @@ func TestDownloadRejectsWrongContent(t *testing.T) {
 	}
 }
 
+func TestDownloadMovesPastWrongBytes(t *testing.T) {
+	r := newRelease(t, "1.2.0", content(chunkSize+500))
+	bad := r
+	bad.content = content(chunkSize + 500)
+	bad.content[10]++
+	r.offer.Sources = []string{serve(t, bad, nil), serve(t, r, nil)}
+	dest := filepath.Join(t.TempDir(), "app.apk")
+	if err := (&Client{Key: r.key}).Download(context.Background(), r.offer, dest, nil); err != nil {
+		t.Fatal(err)
+	}
+	got, _ := os.ReadFile(dest)
+	if !bytes.Equal(got, r.content) {
+		t.Fatal("saved the wrong bytes")
+	}
+	if _, err := os.Stat(dest + ".part"); !os.IsNotExist(err) {
+		t.Fatal("partial file left behind")
+	}
+}
+
 func TestDownloadMovesToNextSource(t *testing.T) {
 	r := newRelease(t, "1.2.0", content(1000))
 	r.offer.Sources = []string{"http://127.0.0.1:1", serve(t, r, nil)}

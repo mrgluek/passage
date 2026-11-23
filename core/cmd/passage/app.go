@@ -201,13 +201,8 @@ func (a *App) mode() string {
 	return tunnel.ModeAuto
 }
 
-// startLocked (re)starts the router with the current network's resolvers.
-func (a *App) startLocked(why string) {
-	if a.tun != nil {
-		a.tun.Close()
-		a.log.copyStalls(a.tun.Status(500).Events)
-		a.tun = nil
-	}
+// routerConfigLocked builds the router's configuration from the link and the settings.
+func (a *App) routerConfigLocked() (tunnel.Config, networkState) {
 	cfg := a.linkCfg
 	s := a.settings
 	cfg.Listen = s.listen()
@@ -216,6 +211,8 @@ func (a *App) startLocked(why string) {
 		s = a.settings
 	}
 	cfg.Forwards = whatsappForwards(s)
+	// linkCfg may carry the running router's credentials after a refresh.
+	cfg.User, cfg.Pass = "", ""
 	if s.Auth {
 		cfg.User, cfg.Pass = s.User, s.Pass
 	}
@@ -228,6 +225,17 @@ func (a *App) startLocked(why string) {
 	cfg.PrivateDir = filepath.Join(data, "iroh")
 	cfg.StateFile = filepath.Join(data, "router-state.json")
 	os.MkdirAll(data, 0700)
+	return cfg, state
+}
+
+// startLocked (re)starts the router with the current network's resolvers.
+func (a *App) startLocked(why string) {
+	if a.tun != nil {
+		a.tun.Close()
+		a.log.copyStalls(a.tun.Status(500).Events)
+		a.tun = nil
+	}
+	cfg, state := a.routerConfigLocked()
 	a.network = networkChange{current: state.key()}
 	a.event("router start: %s mode=%s", why, cfg.Mode)
 	cfg, err := cfg.Normalize()
