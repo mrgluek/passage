@@ -236,6 +236,7 @@
     <string name="home_connecting_title">Подключение…</string>
     <string name="home_connecting_reason">Это может занять до минуты.</string>
     <string name="home_limited_reason">Используется запасной маршрут. Может работать медленнее.</string>
+    <string name="network_limited">Сеть ограничена</string>
     <string name="home_no_internet_title">Нет интернета</string>
     <string name="home_no_internet_reason">Проверьте Wi‑Fi или мобильные данные. Passage повторит сам.</string>
     <string name="home_server_down_title">Сервер не отвечает</string>

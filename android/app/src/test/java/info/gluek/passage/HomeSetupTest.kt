@@ -9,6 +9,27 @@ class HomeSetupTest {
             assertEquals(1, HomeSetup.step(false, running, seen))
         }
     }
+    @Test fun networkLimitedPrefixesOnlyTheSecondLine() {
+        val p = "Network limited"
+        assertEquals("Mail: direct", HomeSetup.withNetworkLimited(false, p, "Mail: direct"))
+        assertEquals("", HomeSetup.withNetworkLimited(false, p, ""))
+        assertEquals("Network limited · Mail: direct", HomeSetup.withNetworkLimited(true, p, "Mail: direct"))
+        assertEquals("Network limited", HomeSetup.withNetworkLimited(true, p, ""))
+        // The title comes from plain(), which takes no network-limited input.
+        assertEquals(HomeSetup.Plain.WORKING, HomeSetup.plain(true, false, true, "working", ""))
+        assertEquals(R.string.home_working_title, HomeSetup.Plain.WORKING.title)
+    }
+    @Test fun networkLimitedNeverOnSetupOffOrErrorStates() {
+        for (plain in HomeSetup.Plain.values()) {
+            val bare = plain == HomeSetup.Plain.NOT_SET_UP || plain == HomeSetup.Plain.OFF || plain == HomeSetup.Plain.START_FAILED
+            assertEquals(plain.name, !bare, HomeSetup.showLimited(true, plain))
+            assertFalse(plain.name, HomeSetup.showLimited(false, plain))
+        }
+        // Running and limited, but no link or a start error: no prefix.
+        assertFalse(HomeSetup.showLimited(true, HomeSetup.plain(true, false, false, "working", "")))
+        assertFalse(HomeSetup.showLimited(true, HomeSetup.plain(true, true, true, "working", "")))
+        assertTrue(HomeSetup.showLimited(true, HomeSetup.plain(true, false, true, "working", "")))
+    }
     @Test fun setupFollowsServiceAndTraffic() {
         assertEquals(2, HomeSetup.step(true, false, false))
         assertEquals(2, HomeSetup.step(true, false, true))

@@ -543,7 +543,7 @@ class MainActivity : ThemedActivity() {
         val active = PassageService.active
         val hasLink = settings.hasLink
         val error = PassageService.lastError != null
-        if (!active) { previousTraffic = null; trafficUntil = 0L; healthState = ""; healthReason = "" }
+        if (!active) { previousTraffic = null; trafficUntil = 0L; healthState = ""; healthReason = ""; networkLimited = false }
         applyPlain()
         primary.visibility = if (!hasLink || !active || error) View.VISIBLE else View.GONE
         primary.setText(if (!hasLink) R.string.home_add_link else if (error) R.string.home_try_again else R.string.home_turn_on)
@@ -576,11 +576,13 @@ class MainActivity : ThemedActivity() {
         if (active) worker.execute {
             var health = "" to ""
             var channels = ""
+            var limited = false
             var forwards: org.json.JSONArray? = null
             val counters = try {
                 val status = Native.status()
                 forwards = status.optJSONArray("forwards")
                 channels = StatusText.channels(this, status, homeChannels)
+                limited = status.optBoolean("network_limited")
                 status.optJSONObject("health")?.let { health = it.optString("state") to it.optString("reason") }
                 val stats = status.optJSONObject("stats")
                 val routes = stats?.keys()?.asSequence()?.mapNotNull { stats.optJSONObject(it) }?.toList().orEmpty()
@@ -591,6 +593,7 @@ class MainActivity : ThemedActivity() {
                 healthState = health.first
                 healthReason = health.second
                 channelLine = channels
+                networkLimited = limited
                 whatsappForwards = forwards
                 renderWhatsAppStatus()
                 if (counters != null) {
@@ -628,6 +631,7 @@ class MainActivity : ThemedActivity() {
 
     private val homeChannels = StatusChannels.Display()
     private var channelLine = ""
+    @Volatile private var networkLimited = false
     @Volatile private var healthState = ""
     @Volatile private var healthReason = ""
 
@@ -637,7 +641,7 @@ class MainActivity : ThemedActivity() {
         val plain = HomeSetup.plain(active, error, settings.hasLink, healthState, healthReason)
         stateView.text = getString(plain.title)
         val reason = getString(plain.reason(settings.appSeen))
-        reasonView.text = if (active) plain.detail(reason, channelLine) else reason
+        reasonView.text = if (active) HomeSetup.withNetworkLimited(HomeSetup.showLimited(networkLimited, plain), getString(R.string.network_limited), plain.detail(reason, channelLine)) else reason
         renderDot(HomeSetup.dotFor(plain, SystemClock.elapsedRealtime() < trafficUntil))
     }
 

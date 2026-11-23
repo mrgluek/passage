@@ -59,6 +59,9 @@ func (t *Tunnel) Diagnose(ctx context.Context) Diagnosis {
 	for _, c := range t.cfg.Canaries {
 		targets = append(targets, target{c, "canary"})
 	}
+	for _, r := range t.cfg.References {
+		targets = append(targets, target{r, "reference"})
+	}
 	for _, dc := range diagTelegramDCs {
 		targets = append(targets, target{dc, "telegram"})
 	}

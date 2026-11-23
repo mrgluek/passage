@@ -136,7 +136,7 @@ func groupsTunnel(t *testing.T, direct dialFunc) (*Tunnel, *atomic.Bool) {
 	var mailOK atomic.Bool
 	mailOK.Store(true)
 	tt.probeTLS = func(_ context.Context, hostport, _ string) error {
-		if hostport == DefaultCanaries[0] || hostport == "relay.example.org:993" && mailOK.Load() {
+		if hostport == testCanaries[0] || hostport == "relay.example.org:993" && mailOK.Load() {
 			return nil
 		}
 		return errors.New("refused")

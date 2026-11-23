@@ -44,6 +44,17 @@ object HomeSetup {
         }
     }
 
+    /** The prefix belongs only to a running proxy with a link and no start error. */
+    fun showLimited(limited: Boolean, plain: Plain): Boolean =
+        limited && plain != Plain.NOT_SET_UP && plain != Plain.START_FAILED && plain != Plain.OFF
+
+    /** Starts the second line with the network-limited prefix; the prefix stands alone when the line is empty. */
+    fun withNetworkLimited(limited: Boolean, prefix: String, line: String): String = when {
+        !limited -> line
+        line.isEmpty() -> prefix
+        else -> "$prefix · $line"
+    }
+
     fun plain(running: Boolean, startFailed: Boolean, hasLink: Boolean, health: String, reason: String): Plain = when {
         startFailed -> Plain.START_FAILED
         !hasLink -> Plain.NOT_SET_UP

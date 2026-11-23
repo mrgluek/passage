@@ -170,6 +170,10 @@ const (
 	// canaryStagger is how long one canary gets before the next one starts
 	// alongside it (they run one at a time; see probeCanaries).
 	canaryStagger = 2 * time.Second
+	// refFresh is how long a reference verdict is reused.
+	refFresh = 10 * time.Minute
+	// maxReferences bounds the dials of one reference pass.
+	maxReferences = 8
 )
 
 type dialFunc func(ctx context.Context, network, addr string) (net.Conn, error)
@@ -222,8 +226,16 @@ type Tunnel struct {
 	conns       map[*tracked]struct{}
 	lastProbe   time.Time // the monitor's last round
 	lastCanary  string    // the canary that answered last; tried first next time
-	strategy    *strategy // the smart route's working strategy, if any
-	stats       [numRoutes]routeStats
+	lastRef     string    // the reference that answered last; tried first next time
+	// The cached reference verdict (see refreshReferences); refGen is bumped to drop it.
+	refSet, refLimited, refRunning bool
+	refAt                          time.Time
+	refLogged, refLoggedLimited    bool      // the last verdict written to the event log
+	canaryAt                       time.Time // last canary round that answered; zero after one that did not
+	refGen                         int
+	refCancel                      context.CancelFunc // stops the pass in flight
+	strategy                       *strategy          // the smart route's working strategy, if any
+	stats                          [numRoutes]routeStats
 	// started, health, healthGood and healthSince back Status.Health.
 	started     time.Time
 	health      Health
@@ -270,6 +282,10 @@ type probeResult struct {
 	CanaryOK     bool `json:"canary_ok"`
 	// Canaries are needed only when no target answered directly.
 	CanaryChecked bool `json:"canary_checked,omitempty"`
+	// ReferenceChecked: canaries answered and references were tried;
+	// NetworkLimited: none of them answered (no reference target answered).
+	ReferenceChecked bool `json:"reference_checked,omitempty"`
+	NetworkLimited   bool `json:"network_limited,omitempty"`
 	// SmartChecked: the probe hosts were tried on the smart route (they
 	// failed directly while the network was reachable); SmartOK: a strategy works.
 	SmartChecked bool `json:"smart_checked,omitempty"`
@@ -755,6 +771,7 @@ func (t *Tunnel) SetMode(mode string) error {
 	}
 	t.mu.Lock()
 	t.mode = mode
+	t.dropVerdictLocked()
 	if previous != kind {
 		t.routeGen.Add(1)
 		for c := range t.conns {
@@ -814,6 +831,7 @@ func (t *Tunnel) Recheck() {
 // platforms report spurious changes, and a real network switch restarts the
 // tunnel anyway.
 func (t *Tunnel) NetworkChanged() {
+	t.dropVerdict()
 	t.kickProbe()
 }
 
@@ -1657,21 +1675,40 @@ func (t *Tunnel) probe() map[*group]probeResult {
 	}
 	wg.Wait()
 	failed := func(r probeResult) bool { return r.Relays > 0 && !r.directOK() }
-	anyFailed, networkOK := false, false
+	anyFailed, networkOK, anyProbed := false, false, false
 	for _, r := range res {
+		anyProbed = anyProbed || r.Relays > 0
 		anyFailed = anyFailed || failed(r)
 		networkOK = networkOK || r.RelayOK > 0
 	}
 	canaryChecked, canaryOK := false, false
-	if anyFailed && !networkOK {
+	refChecked, limited := false, false
+	t.mu.Lock()
+	haveCanaries := len(t.cfg.Canaries) > 0
+	haveRefs := len(t.cfg.References) > 0
+	t.mu.Unlock()
+	if anyFailed && !networkOK && haveCanaries {
 		canaryChecked = true
 		canaryOK = t.probeCanaries()
 		networkOK = canaryOK
+		t.mu.Lock()
+		t.canaryAt = time.Time{}
+		if canaryOK {
+			t.canaryAt = t.timeNow()
+		}
+		t.mu.Unlock()
 	}
+	if canaryOK && haveRefs {
+		// Never waits: a stale verdict starts a background pass.
+		refChecked, limited = t.referenceVerdict()
+	} else if anyProbed {
+		t.dropVerdict() // canaries flipped, or the network is open
+	} // nothing probed: the cached verdict stands
 	for g, r := range res {
 		r.NetworkOK = networkOK
 		if failed(r) {
 			r.CanaryChecked, r.CanaryOK = canaryChecked, canaryOK
+			r.ReferenceChecked, r.NetworkLimited = refChecked, limited
 		}
 		res[g] = r
 	}
@@ -1730,25 +1767,33 @@ func (t *Tunnel) probeGroup(g *group) probeResult {
 	return res
 }
 
-// probeCanaries reports whether any canary completes a TLS handshake. They
-// go one at a time, the one that answered last first: the next starts when
-// the previous fails or has had canaryStagger without an answer, and the
-// first answer cancels the rest.
+// probeCanaries reports whether any canary completes a TLS handshake.
 func (t *Tunnel) probeCanaries() bool {
 	t.mu.Lock()
-	order := append([]string(nil), t.cfg.Canaries...)
-	last := t.lastCanary
+	list := slices.Clone(t.cfg.Canaries)
 	t.mu.Unlock()
-	if i := slices.Index(order, last); i > 0 {
-		order = append([]string{last}, slices.Delete(order, i, i+1)...)
+	return t.probeFirst(t.ctx, list, &t.lastCanary)
+}
+
+// probeFirst reports whether any of list completes a TLS handshake. They go
+// one at a time, the one that answered last (*last, guarded by t.mu) first:
+// the next starts when the previous fails or has had canaryStagger without
+// an answer, and the first answer cancels the rest.
+func (t *Tunnel) probeFirst(parent context.Context, list []string, last *string) bool {
+	t.mu.Lock()
+	order := slices.Clone(list)
+	prev := *last
+	t.mu.Unlock()
+	if i := slices.Index(order, prev); i > 0 {
+		order = append([]string{prev}, slices.Delete(order, i, i+1)...)
 	}
 	if len(order) == 0 {
 		return false
 	}
-	ctx, cancel := context.WithCancel(t.ctx)
+	ctx, cancel := context.WithCancel(parent)
 	defer cancel()
 	type answer struct {
-		canary string
+		target string
 		ok     bool
 	}
 	answers := make(chan answer, len(order)) // buffered: late answers never block
@@ -1772,7 +1817,7 @@ func (t *Tunnel) probeCanaries() bool {
 			running--
 			if a.ok {
 				t.mu.Lock()
-				t.lastCanary = a.canary
+				*last = a.target
 				t.mu.Unlock()
 				return true
 			}
@@ -1780,7 +1825,7 @@ func (t *Tunnel) probeCanaries() bool {
 		case <-ctx.Done():
 			return false
 		}
-		// A failure or a stagger tick: bring in the next canary, if any.
+		// A failure or a stagger tick: bring in the next one, if any.
 		if next < len(order) {
 			start(order[next])
 			next++
@@ -1788,6 +1833,81 @@ func (t *Tunnel) probeCanaries() bool {
 		}
 	}
 	return false
+}
+
+// dropVerdict forgets the cached reference verdict and any pass in flight.
+func (t *Tunnel) dropVerdict() {
+	t.mu.Lock()
+	t.dropVerdictLocked()
+	t.mu.Unlock()
+}
+
+// dropVerdictLocked also cancels the pass in flight and frees the guard, so
+// a new pass can start; the old one ends without a result. Caller holds t.mu.
+func (t *Tunnel) dropVerdictLocked() {
+	t.refGen++
+	t.refSet = false
+	if t.refCancel != nil {
+		t.refCancel()
+		t.refCancel = nil
+	}
+	t.refRunning = false
+}
+
+// freshVerdictLocked returns the cached verdict while it is fresh. Caller holds t.mu.
+func (t *Tunnel) freshVerdictLocked() (limited, ok bool) {
+	if !t.refSet || t.timeNow().Sub(t.refAt) >= refFresh {
+		return false, false
+	}
+	return t.refLimited, true
+}
+
+// referenceVerdict returns the fresh cached verdict. Without one it starts
+// at most one background pass and reports "unknown", so the probe never waits.
+func (t *Tunnel) referenceVerdict() (checked, limited bool) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if limited, ok := t.freshVerdictLocked(); ok {
+		return true, limited
+	}
+	if !t.refRunning && t.ctx.Err() == nil && t.mode == ModeAuto {
+		t.refRunning = true
+		refs := t.cfg.References
+		if len(refs) > maxReferences {
+			refs = refs[:maxReferences]
+		}
+		gen := t.refGen
+		ctx, cancel := context.WithCancel(t.ctx)
+		t.refCancel = cancel
+		t.wg.Add(1)
+		go t.referencePass(ctx, slices.Clone(refs), gen)
+	}
+	return false, false
+}
+
+// referencePass tries the references one at a time and caches the verdict,
+// unless it was dropped meanwhile or the router is stopping (unknown).
+func (t *Tunnel) referencePass(ctx context.Context, refs []string, gen int) {
+	defer t.wg.Done()
+	ok := t.probeFirst(ctx, refs, &t.lastRef)
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if gen != t.refGen { // dropped: a newer pass may own the guard
+		return
+	}
+	t.refRunning = false
+	if t.refCancel != nil {
+		t.refCancel()
+		t.refCancel = nil
+	}
+	if t.ctx.Err() != nil {
+		return
+	}
+	t.refSet, t.refLimited, t.refAt = true, !ok, t.timeNow()
+	if !t.refLogged || t.refLoggedLimited != t.refLimited {
+		t.refLogged, t.refLoggedLimited = true, t.refLimited
+		t.log.add("reference verdict: limited=%v", t.refLimited)
+	}
 }
 
 // confirmViaTunnel checks before switching, and when nothing answers directly.
@@ -1881,6 +2001,9 @@ func (t *Tunnel) applyProbe(g *group, res probeResult) {
 		via := fmt.Sprintf(", network ok=%v", res.NetworkOK)
 		if res.CanaryChecked {
 			via += fmt.Sprintf(", canary ok=%v", res.CanaryOK)
+			if res.ReferenceChecked {
+				via += fmt.Sprintf(", limited=%v", res.NetworkLimited)
+			}
 		}
 		if res.SmartChecked {
 			via += fmt.Sprintf(", smart ok=%v", res.SmartOK)
@@ -2202,29 +2325,32 @@ func dialResolver(ctx context.Context, network, addr string) (net.Conn, error) {
 
 // Status is the diagnostics snapshot shown in the app and sent in reports.
 type Status struct {
-	Forwards      []ForwardStatus       `json:"forwards,omitempty"`
-	Subscriptions []SubscriptionStatus  `json:"subscriptions,omitempty"`
-	ConfigChanged bool                  `json:"config_changed,omitempty"`
-	RouteCount    int                   `json:"route_count"`
-	Zone          string                `json:"zone"`
-	TunnelIPv6    bool                  `json:"tunnel_ipv6"`
-	Mode          string                `json:"mode"`
-	Route         string                `json:"route"`
-	Via           string                `json:"via,omitempty"`      // route type under "tunnel": iroh, soar
-	Strategy      string                `json:"strategy,omitempty"` // the smart route's, when it works
-	Routes        []string              `json:"routes"`             // set-up routes, in fallback order
-	RouteSince    time.Time             `json:"route_since"`
-	State         string                `json:"state"`
-	Resolvers     int                   `json:"resolvers"`
-	Network       []string              `json:"network_resolvers"`
-	Operator      string                `json:"operator"`
-	Relays        []string              `json:"relays"`
-	LastProbe     time.Time             `json:"last_probe"`
-	LastResult    probeResult           `json:"last_result"`
-	Active        map[string]int        `json:"active"`
-	Stats         map[string]routeStats `json:"stats"`
-	Soar          string                `json:"soar"`
-	Memory        MemoryStatus          `json:"memory"`
+	Forwards      []ForwardStatus      `json:"forwards,omitempty"`
+	Subscriptions []SubscriptionStatus `json:"subscriptions,omitempty"`
+	ConfigChanged bool                 `json:"config_changed,omitempty"`
+	// NetworkLimited: canaries answer, no reference does; from the cached
+	// verdict, in auto mode only.
+	NetworkLimited bool                  `json:"network_limited"`
+	RouteCount     int                   `json:"route_count"`
+	Zone           string                `json:"zone"`
+	TunnelIPv6     bool                  `json:"tunnel_ipv6"`
+	Mode           string                `json:"mode"`
+	Route          string                `json:"route"`
+	Via            string                `json:"via,omitempty"`      // route type under "tunnel": iroh, soar
+	Strategy       string                `json:"strategy,omitempty"` // the smart route's, when it works
+	Routes         []string              `json:"routes"`             // set-up routes, in fallback order
+	RouteSince     time.Time             `json:"route_since"`
+	State          string                `json:"state"`
+	Resolvers      int                   `json:"resolvers"`
+	Network        []string              `json:"network_resolvers"`
+	Operator       string                `json:"operator"`
+	Relays         []string              `json:"relays"`
+	LastProbe      time.Time             `json:"last_probe"`
+	LastResult     probeResult           `json:"last_result"`
+	Active         map[string]int        `json:"active"`
+	Stats          map[string]routeStats `json:"stats"`
+	Soar           string                `json:"soar"`
+	Memory         MemoryStatus          `json:"memory"`
 	// Tunnels has one row per configured tunnel route, in priority order.
 	Tunnels []RouteState `json:"tunnels"`
 	// Session is whether the soar session with the server is up; Paths is
@@ -2317,6 +2443,7 @@ func (t *Tunnel) statusLocked(n int) Status {
 		Operator:       t.cfg.Operator,
 		LastProbe:      mail.lastProbe.UTC(),
 		LastResult:     mail.lastResult,
+		NetworkLimited: t.networkLimitedLocked(),
 		Routes:         t.routes(),
 		Strategy:       t.strategyNameLocked(),
 		Active:         map[string]int{},
@@ -2684,4 +2811,13 @@ func (g *group) historyUnit() string {
 		return fmt.Sprintf("relay-%d", g.ordinal)
 	}
 	return g.kind.String()
+}
+
+// networkLimitedLocked is the cached verdict, shown only in auto mode while
+// it is fresh and the last canary round that ran answered. It does not depend
+// on which group is shown. Caller holds t.mu.
+func (t *Tunnel) networkLimitedLocked() bool {
+	limited, ok := t.freshVerdictLocked()
+	canary := !t.canaryAt.IsZero() && t.timeNow().Sub(t.canaryAt) < refFresh
+	return ok && limited && t.mode == ModeAuto && canary
 }

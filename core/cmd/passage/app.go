@@ -382,14 +382,42 @@ func (a *App) trayState() trayState {
 	st.Tooltip = captionTitle(a.t, a.trayTitleKey())
 	if a.tun != nil {
 		s := a.tun.Status(0)
-		if detail := statusDetail(a.t, s.Health, a.channels.sample(a.t, s, time.Now())); detail != "" {
+		if detail := limitedLine(a.t, showLimited(s.NetworkLimited, a.settings.Running, a.lastErr, a.hasLink()), statusDetail(a.t, s.Health, a.channels.sample(a.t, s, time.Now()))); detail != "" {
 			st.Tooltip += "\n" + detail
 		}
 	}
+	st.Tooltip = fitTooltip(st.Tooltip, maxTooltip)
 	if a.updater.offer != nil && a.updater.offer.Version != a.settings.DismissedUpdate {
 		st.Update = a.updater.offer.Version
 	}
 	return st
+}
+
+// showLimited gates the limited-network prefix like the window does: only
+// while the proxy runs with a link and no error.
+func showLimited(limited, running bool, err string, hasLink bool) bool {
+	return limited && running && err == "" && hasLink
+}
+
+// maxTooltip is the Windows tray tooltip limit, in characters.
+const maxTooltip = 127
+
+// fitTooltip shortens s to max runes at a word boundary, never inside the
+// first line (the title), and marks the cut with an ellipsis.
+func fitTooltip(s string, max int) string {
+	r := []rune(s)
+	if len(r) <= max {
+		return s
+	}
+	title := len([]rune(strings.SplitN(s, "\n", 2)[0]))
+	cut := max - 1 // room for the ellipsis
+	for cut > title && !strings.ContainsRune(" ,;\n", r[cut]) {
+		cut--
+	}
+	if cut <= title {
+		return string(r[:min(title, max)])
+	}
+	return strings.TrimRight(string(r[:cut]), " ,;\n·") + "…"
 }
 
 func (a *App) trayTitleKey() string {
@@ -444,6 +472,7 @@ type view struct {
 	Title              string            `json:"title"`
 	Caption            string            `json:"caption"`
 	Channels           string            `json:"channels"`
+	Limited            bool              `json:"limited"`
 	Head               string            `json:"head"`
 	Line               string            `json:"line"`
 	Full               string            `json:"full"`
@@ -526,6 +555,7 @@ func (a *App) viewLocked() (view, bool) {
 		}
 		v.Line = oneLine(a.t, st)
 		v.Channels = statusDetail(a.t, st.Health, a.channels.sample(a.t, st, time.Now()))
+		v.Limited = st.NetworkLimited
 		v.Health = st.Health
 		v.Forwards = st.Forwards
 		v.WhatsAppStatus = formatWhatsAppStatus(a.t, st.Forwards)

@@ -23,6 +23,12 @@ func SaveSubscriptionState(path string, cfg Config) error {
 			break
 		}
 	}
+	for _, sub := range cfg.Subscriptions {
+		if len(sub.References) > 0 {
+			state.References = slices.Clone(cfg.References)
+			break
+		}
+	}
 	owned := map[string]bool{}
 	for _, sub := range cfg.Subscriptions {
 		for _, id := range sub.RouteIDs {
@@ -78,6 +84,7 @@ func RestoreSubscriptionState(cfg Config, path string) (Config, error) {
 	cfg.Subscriptions = slices.Clone(cfg.Subscriptions)
 	cfg.RouteEdits = maps.Clone(cfg.RouteEdits)
 	cfg.Routes = slices.Clone(cfg.Routes)
+	cleared, held := false, false
 	for j, sub := range cfg.Subscriptions {
 		for _, saved := range stored.Subscriptions {
 			if saved.ID != sub.ID || !bytes.Equal(saved.Signer, sub.Signer) || saved.Revision < sub.Revision {
@@ -141,7 +148,7 @@ func RestoreSubscriptionState(cfg Config, path string) (Config, error) {
 			saved.Name, saved.Sources, saved.ReadKey = sub.Name, sources, slices.Clone(sub.ReadKey)
 			saved.InviteSources = slices.Clone(sub.originalSources())
 			if !trusted {
-				saved.BundleSources, saved.Canaries = nil, nil
+				saved.BundleSources, saved.Canaries, saved.References, saved.RefsCleared = nil, nil, nil, false
 			}
 			saved.SourceStats = saved.retainedSourceStats()
 			cfg.Subscriptions[j] = saved
@@ -157,11 +164,23 @@ func RestoreSubscriptionState(cfg Config, path string) (Config, error) {
 			if trusted && len(saved.Canaries) > 0 && len(stored.Canaries) > 0 {
 				cfg.Canaries = slices.Clone(stored.Canaries)
 			}
+			if trusted && len(saved.References) > 0 && len(stored.References) > 0 {
+				cfg.References = slices.Clone(stored.References)
+			}
+			if trusted && saved.RefsCleared && len(saved.References) == 0 {
+				cleared = true
+			}
+			if len(saved.References) > 0 {
+				held = true
+			}
 			if keys, e := authorKeys(); e == nil && len(keys) > 0 && bytes.Equal(saved.Signer, keys[0]) && len(stored.UpdateSources) > 0 {
 				cfg.UpdateSources = slices.Clone(stored.UpdateSources)
 			}
 			break
 		}
+	}
+	if cleared && !held {
+		cfg.References = nil // a clear outlives the link's own list
 	}
 	cfg.RouteEdits = MinimalEdits(cfg.Routes, cfg.RouteEdits)
 	return cfg.Normalize()

@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.9.6
+
+- The home screen shows when the network is limited.
+
 ## 0.9.5
 
 - Android: after the phone restarts and is unlocked, Passage turns the proxy

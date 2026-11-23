@@ -66,6 +66,38 @@ class NotificationStatusTest {
         assertTrue(service.contains(".setPublicVersion("))
     }
 
+    @Test fun networkLimitedTouchesOnlyTheBodyLine() {
+        val status = JSONObject().put("running", true).put("network_limited", true)
+            .put("health", JSONObject().put("state", "working"))
+        assertEquals(
+            R.string.home_working_title to R.string.home_working_reason,
+            StatusText.notificationResources(status, appSeen = true, fallbackRunning = true),
+        )
+        val src = File("src/main/java/info/gluek/passage/StatusText.kt").readText()
+        assertTrue(src.contains("return c.getString(plain.title) to HomeSetup.withNetworkLimited("))
+        val service = File("src/main/java/info/gluek/passage/PassageService.kt").readText()
+        assertFalse(service.contains("network_limited"))
+        assertFalse(service.contains("R.string.network_limited"))
+    }
+
+    @Test fun networkLimitedNotShownWithoutALinkOrWhenStopped() {
+        val limited = JSONObject().put("running", true).put("network_limited", true)
+            .put("health", JSONObject().put("state", "working"))
+        assertTrue(StatusText.limitedShown(limited, true, true))
+        assertFalse(StatusText.limitedShown(limited, true, false)) // add your link
+        val none = JSONObject().put("running", true).put("network_limited", true).put("route_count", 0)
+            .put("subscriptions", org.json.JSONArray())
+        assertFalse(StatusText.limitedShown(none, true, null))
+        val stopped = JSONObject().put("running", false).put("network_limited", true)
+        assertFalse(StatusText.limitedShown(stopped, false, true))
+        assertFalse(StatusText.limitedShown(null, true, true))
+    }
+
+    @Test fun fullStatusShowsCanaryTextOnlyWhenChecked() {
+        val src = File("src/main/java/info/gluek/passage/StatusText.kt").readText()
+        assertTrue(src.contains("!r.optBoolean(\"canary_checked\") -> \"\""))
+    }
+
     @Test
     fun asksForALinkWhileThereAreNoRoutes() {
         val status = JSONObject().put("running", true).put("route_count", 0).put("subscriptions", org.json.JSONArray())

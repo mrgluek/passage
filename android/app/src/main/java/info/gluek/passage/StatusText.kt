@@ -17,7 +17,9 @@ object StatusText {
     fun notification(c: Context, s: JSONObject?, appSeen: Boolean, fallbackRunning: Boolean, display: StatusChannels.Display = StatusChannels.Display(), hasLink: Boolean? = null): Pair<String, String> {
         val plain = notificationPlain(s, fallbackRunning, hasLink)
         val channels = s?.takeIf { it.optBoolean("running") }?.let { channels(c, it, display) }.orEmpty()
-        return c.getString(plain.title) to plain.detail(c.getString(plain.reason(appSeen)), channels)
+        val limited = limitedShown(s, fallbackRunning, hasLink)
+        val detail = plain.detail(c.getString(plain.reason(appSeen)), channels)
+        return c.getString(plain.title) to HomeSetup.withNetworkLimited(limited, c.getString(R.string.network_limited), detail)
     }
 
     fun channels(c: Context, s: JSONObject, display: StatusChannels.Display): String {
@@ -38,6 +40,10 @@ object StatusText {
         val plain = notificationPlain(s, fallbackRunning, hasLink)
         return plain.title to plain.reason(appSeen)
     }
+
+    fun limitedShown(s: JSONObject?, fallbackRunning: Boolean, hasLink: Boolean?): Boolean =
+        s?.takeIf { it.optBoolean("running") }?.optBoolean("network_limited") == true &&
+            HomeSetup.showLimited(true, notificationPlain(s, fallbackRunning, hasLink))
 
     private fun notificationPlain(s: JSONObject?, fallbackRunning: Boolean, hasLink: Boolean?): HomeSetup.Plain {
         val health = s?.optJSONObject("health")

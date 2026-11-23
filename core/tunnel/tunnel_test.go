@@ -49,8 +49,8 @@ func TestParseLink(t *testing.T) {
 	if len(cfg.Resolvers) != 0 || cfg.Canaries != nil {
 		t.Errorf("a link without r/c must not freeze today's defaults: %+v", cfg)
 	}
-	if n, _ := cfg.Normalize(); len(n.Effective()) != len(DefaultResolvers) || len(n.Canaries) != len(DefaultCanaries) {
-		t.Errorf("defaults not applied at start: %+v", n)
+	if n, _ := cfg.Normalize(); len(n.Effective()) != len(DefaultResolvers) || len(n.Canaries) != 0 {
+		t.Errorf("defaults not applied at start (no canaries): %+v", n)
 	}
 
 	for _, scheme := range []string{"velta", "PASSAGE"} {
@@ -107,10 +107,13 @@ func TestDecide(t *testing.T) {
 	}
 }
 
+// testCanaries stand in for a subscription's canaries; there is no built-in list.
+var testCanaries = []string{"canary1.example.org:443", "canary2.example.org:443", "canary3.example.org:443"}
+
 // newTestTunnel builds a Tunnel without a soar client, with fake dialers.
 func newTestTunnel(t *testing.T, mode string, direct, tun dialFunc) *Tunnel {
 	t.Helper()
-	cfg, err := Config{Zone: "t.example.org", Key: testKey, Mode: mode, User: "u", Pass: "p"}.Normalize()
+	cfg, err := Config{Zone: "t.example.org", Key: testKey, Mode: mode, User: "u", Pass: "p", Canaries: testCanaries}.Normalize()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -297,8 +300,8 @@ func TestAnyCanaryMeansBlocked(t *testing.T) {
 	var n atomic.Int32
 	tt := newTestTunnel(t, ModeAuto, echoDialer("D:", &n), echoDialer("T:", &n))
 	mail := tt.testGroup("relay.example.org:443")
-	// Relays fail, only the last default canary answers.
-	last := DefaultCanaries[len(DefaultCanaries)-1]
+	// Relays fail, only the last canary answers.
+	last := testCanaries[len(testCanaries)-1]
 	tt.probeTLS = func(_ context.Context, hostport, _ string) error {
 		if hostport == last {
 			return nil
@@ -540,7 +543,7 @@ func relayDownTunnel(t *testing.T, viaTunnel error, session bool) (*Tunnel, *ato
 	mail.failStreak = blockedAfter - 1
 	tt.mu.Unlock()
 	tt.probeTLS = func(_ context.Context, hostport, _ string) error {
-		if hostport == DefaultCanaries[0] {
+		if hostport == testCanaries[0] {
 			return nil
 		}
 		return errors.New("refused")
@@ -698,7 +701,7 @@ func TestCanariesSkippedWhenARelayAnswers(t *testing.T) {
 func TestCanariesSkippedWithoutRelays(t *testing.T) {
 	var n atomic.Int32
 	tt := newTestTunnel(t, ModeAuto, echoDialer("D:", &n), echoDialer("T:", &n))
-	probe, seen := probeLog(DefaultCanaries...)
+	probe, seen := probeLog(testCanaries...)
 	tt.probeTLS = probe
 	for g, res := range tt.probe() {
 		if res.CanaryChecked {
@@ -716,28 +719,28 @@ func TestCanariesOneAtATimeLastGoodFirst(t *testing.T) {
 	mail := tt.testGroup("relay.example.org:443")
 
 	// Every canary answers: the first one is enough.
-	probe, seen := probeLog(DefaultCanaries...)
+	probe, seen := probeLog(testCanaries...)
 	tt.probeTLS = probe
 	if res := tt.probe()[mail]; !res.CanaryChecked || !res.CanaryOK {
 		t.Fatalf("canary must answer: %+v", res)
 	}
-	if got := seen(); !slices.Equal(got, []string{"relay.example.org:443", DefaultCanaries[0]}) {
+	if got := seen(); !slices.Equal(got, []string{"relay.example.org:443", testCanaries[0]}) {
 		t.Fatalf("want one canary handshake, probed %v", got)
 	}
 
 	// The first fails at once, the second answers and becomes the first next time.
-	probe, seen = probeLog(DefaultCanaries[1])
+	probe, seen = probeLog(testCanaries[1])
 	tt.probeTLS = probe
 	if res := tt.probe()[mail]; !res.CanaryOK {
 		t.Fatalf("second canary must count: %+v", res)
 	}
-	if got := seen(); !slices.Equal(got, []string{"relay.example.org:443", DefaultCanaries[0], DefaultCanaries[1]}) {
+	if got := seen(); !slices.Equal(got, []string{"relay.example.org:443", testCanaries[0], testCanaries[1]}) {
 		t.Fatalf("probed %v", got)
 	}
-	probe, seen = probeLog(DefaultCanaries[1])
+	probe, seen = probeLog(testCanaries[1])
 	tt.probeTLS = probe
 	tt.probe()
-	if got := seen(); !slices.Equal(got, []string{"relay.example.org:443", DefaultCanaries[1]}) {
+	if got := seen(); !slices.Equal(got, []string{"relay.example.org:443", testCanaries[1]}) {
 		t.Fatalf("last good canary must go first, probed %v", got)
 	}
 }
@@ -750,11 +753,11 @@ func TestSilentCanaryDoesNotHoldUpTheNext(t *testing.T) {
 	var cancelled atomic.Bool
 	tt.probeTLS = func(ctx context.Context, hostport, _ string) error {
 		switch hostport {
-		case DefaultCanaries[0]:
+		case testCanaries[0]:
 			<-ctx.Done()
 			cancelled.Store(true)
 			return ctx.Err()
-		case DefaultCanaries[1]:
+		case testCanaries[1]:
 			return nil
 		}
 		return errors.New("refused")

@@ -539,8 +539,10 @@ function renderHome(v) {
   else if (!hasLink) second = [t("h_turn_on"), () => call("start").then(refresh, fail)];
   $("sTitle").textContent = v.title;
   document.title = v.caption;
-  $("sReason").textContent = v.channels || reason;
-  setHidden("sReason", !(v.channels || reason));
+  const line = v.channels || reason;
+  const secondLine = v.limited && running && !v.error && hasLink ? t("net_limited") + (line ? " \u00b7 " + line : "") : line;
+  $("sReason").textContent = secondLine;
+  setHidden("sReason", !secondLine);
   $("sError").textContent = v.error || "";
   setHidden("sError", !v.error);
   const manual = !!v.mode && v.mode !== "auto";

@@ -30,14 +30,18 @@ type Subscription struct {
 	InviteSources []string                           `json:"invite_sources,omitempty"`
 	BundleSources []string                           `json:"bundle_sources,omitempty"`
 	Canaries      []string                           `json:"canaries,omitempty"`
-	ReadKey       []byte                             `json:"read_key"`
-	Revision      uint64                             `json:"revision"`
-	ETag          string                             `json:"etag,omitempty"`
-	ETagSource    string                             `json:"etag_source,omitempty"`
-	RouteIDs      []string                           `json:"route_ids,omitempty"`
-	LastOK        int64                              `json:"last_ok"`
-	LastTry       int64                              `json:"last_try"`
-	LastError     string                             `json:"last_error,omitempty"`
+	References    []string                           `json:"references,omitempty"`
+	// RefsCleared records an explicit empty list from the trusted author, so a
+	// list from a static link does not come back after a restart.
+	RefsCleared bool     `json:"references_cleared,omitempty"`
+	ReadKey     []byte   `json:"read_key"`
+	Revision    uint64   `json:"revision"`
+	ETag        string   `json:"etag,omitempty"`
+	ETagSource  string   `json:"etag_source,omitempty"`
+	RouteIDs    []string `json:"route_ids,omitempty"`
+	LastOK      int64    `json:"last_ok"`
+	LastTry     int64    `json:"last_try"`
+	LastError   string   `json:"last_error,omitempty"`
 }
 
 // DisplayName returns the subscription name as a single line of up to 64 characters.
@@ -102,6 +106,9 @@ func (s Subscription) validate() error {
 		return errors.New("invalid subscription sources")
 	}
 	if err := links.ValidateCanaries(s.Canaries); err != nil {
+		return err
+	}
+	if err := links.ValidateReferences(s.References); err != nil {
 		return err
 	}
 	sourcesForValidation := func(list []string) []string {
@@ -177,6 +184,8 @@ func ApplySubFile(cfg Config, sub Subscription, bundle links.Bundle) (Config, er
 	sub.InviteSources = slices.Clone(current.InviteSources)
 	sub.BundleSources = slices.Clone(current.BundleSources)
 	sub.Canaries = slices.Clone(current.Canaries)
+	sub.References = slices.Clone(current.References)
+	sub.RefsCleared = current.RefsCleared
 	sub.RouteIDs = slices.Clone(current.RouteIDs)
 	if len(cfg.Routes) == 0 && cfg.Zone != "" {
 		cfg.Routes = legacyRoutes(cfg)
@@ -252,6 +261,14 @@ func ApplySubFile(cfg Config, sub Subscription, bundle links.Bundle) (Config, er
 			sub.Canaries = slices.Clone(bundle.Canaries)
 			cfg.Canaries = slices.Clone(bundle.Canaries)
 		}
+		if bundle.References != nil { // an empty list clears the stored one
+			sub.References = nilIfEmpty(bundle.References)
+			sub.RefsCleared = len(bundle.References) == 0
+			cfg.References = nilIfEmpty(bundle.References)
+			if len(bundle.References) > 0 {
+				clearRefsMarkers(cfg.Subscriptions, index)
+			}
+		}
 	}
 	cfg.Subscriptions[index] = sub
 	if trustedAuthor && len(bundle.Updates) > 0 {
@@ -294,6 +311,8 @@ func SubscribeLink(cfg Config, text string, replaceSigner bool) (ImportResult, e
 			if decoded.Signature == "trusted_author" {
 				sub.BundleSources = slices.Clone(old.BundleSources)
 				sub.Canaries = slices.Clone(old.Canaries)
+				sub.References = slices.Clone(old.References)
+				sub.RefsCleared = old.RefsCleared
 				sub.Sources = mergeSubscriptionSources(sub.BundleSources, sub.InviteSources)
 			}
 			if slices.Equal(sub.Sources, old.Sources) && bytes.Equal(sub.ReadKey, old.ReadKey) {
@@ -403,4 +422,22 @@ func (s Subscription) originalSources() []string {
 		return s.InviteSources
 	}
 	return s.Sources
+}
+
+// nilIfEmpty copies a list; an empty one becomes nil.
+func nilIfEmpty(list []string) []string {
+	if len(list) == 0 {
+		return nil
+	}
+	return slices.Clone(list)
+}
+
+// clearRefsMarkers drops every clear marker except the one at keep: a clear
+// matters only until a trusted source supplies a non-empty list.
+func clearRefsMarkers(subs []Subscription, keep int) {
+	for i := range subs {
+		if i != keep {
+			subs[i].RefsCleared = false
+		}
+	}
 }
