@@ -881,6 +881,7 @@ func TestSmartCheckFindsAndKeepsAStrategy(t *testing.T) {
 	if tt.smartCheck([]string{host}) {
 		t.Fatal("with nothing working the smart route must go away")
 	}
+	tt.smartDown()
 	if s := tt.Status(0); s.Strategy != "" || strings.Join(s.Routes, ",") != "direct,tunnel" {
 		t.Fatalf("after failure: strategy %q routes %v", s.Strategy, s.Routes)
 	}

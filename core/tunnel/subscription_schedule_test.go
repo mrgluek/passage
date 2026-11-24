@@ -172,7 +172,7 @@ func TestSubscriptionFirstRefresh(t *testing.T) {
 
 func TestInitialSubscriptionRefreshSharedWithStartup(t *testing.T) {
 	sub, _, _ := subFixture(t)
-	sub.Revision, sub.ETag = 1, "one"
+	sub.Revision, sub.ETag, sub.Schema = 1, "one", subscriptionSchema
 	var requests atomic.Int32
 	entered, release := make(chan struct{}), make(chan struct{})
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

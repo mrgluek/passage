@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.9.7
+
+- A subscription saved by an older version is applied again after the update,
+  so new settings in it take effect.
+- One outdated source no longer stops the other sources from being asked.
+- An update source that serves a wrong file no longer blocks the update; the
+  next source is tried.
+- Desktop: turning authentication off applies without a restart.
+- The "network limited" line no longer disappears for a short time every ten
+  minutes.
+- One mail server that cannot be reached directly no longer turns off the
+  tuned direct route for the others.
+- Windows: a link opened by a second start goes only to the running Passage of
+  the same user.
+- The relay helper no longer keeps memory for connections that went silent. It needs `passage-iroh`
+  from this release; an older one refuses the new option.
+
 ## 0.9.6
 
 - The home screen shows when the network is limited.

@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"testing/synctest"
 	"time"
@@ -96,7 +97,7 @@ func TestSubscriptionDirectStagger(t *testing.T) {
 			sub := &cfg.Subscriptions[0]
 			if test.unchanged {
 				// Only the first source gets the saved tag; the others answer with a file.
-				sub.Revision, sub.ETag, sub.ETagSource = 1, "saved", sub.Sources[0]
+				sub.Revision, sub.ETag, sub.ETagSource, sub.Schema = 1, "saved", sub.Sources[0], subscriptionSchema
 			}
 			synctest.Test(t, func(t *testing.T) {
 				first := "one.example.org"
@@ -139,10 +140,11 @@ func TestSubscriptionDirectStagger(t *testing.T) {
 					})
 					return dial(ctx, network, address)
 				}
-				tunnel := func(context.Context, string, string) (net.Conn, error) {
-					t.Error("unexpected tunnel dial")
-					return nil, errors.New("unexpected tunnel")
-				}
+				// Sources that answered directly are not asked through the tunnel.
+				tunnel := subscriptionTestDial(func(context.Context, *http.Request) *http.Response {
+					t.Error("unexpected tunnel dial: every source answered directly")
+					return subscriptionTestResponse(http.StatusOK, string(raw))
+				})
 				out := ref.Refresh(context.Background(), cfg, []SubscriptionDial{tunnel})
 				got := out.Config.Subscriptions[0]
 				if test.unchanged && !test.newer {
@@ -168,6 +170,36 @@ func TestSubscriptionDirectStagger(t *testing.T) {
 			})
 		})
 	}
+}
+
+func TestSubscriptionStaleDirectDoesNotCancelTunnel(t *testing.T) {
+	cfg, raw, newer := subscriptionTestConfigNewer(t, "http://stale.example.org", "http://fresh.example.org")
+	sub := &cfg.Subscriptions[0]
+	sub.Revision, sub.Schema = 1, subscriptionSchema
+	synctest.Test(t, func(t *testing.T) {
+		ref := SubscriptionRefresher{directDial: subscriptionTestDial(func(_ context.Context, req *http.Request) *http.Response {
+			if req.Host == "stale.example.org" {
+				return subscriptionTestResponse(http.StatusOK, string(raw))
+			}
+			return subscriptionTestResponse(http.StatusNotFound, "")
+		})}
+		var tunnelCalls atomic.Int32
+		tunnel := subscriptionTestDial(func(_ context.Context, req *http.Request) *http.Response {
+			tunnelCalls.Add(1)
+			if req.Host == "stale.example.org" {
+				t.Error("a source that answered directly was dialled through the tunnel")
+			}
+			if req.Host == "fresh.example.org" {
+				return subscriptionTestResponse(http.StatusOK, string(newer))
+			}
+			return subscriptionTestResponse(http.StatusOK, string(raw))
+		})
+		out := ref.Refresh(context.Background(), cfg, []SubscriptionDial{tunnel})
+		got := out.Config.Subscriptions[0]
+		if !out.Changed || got.Revision != 2 || got.ETagSource != "http://fresh.example.org" || tunnelCalls.Load() == 0 {
+			t.Fatalf("newer file behind the tunnel was missed: changed %v revision %d error %q", out.Changed, got.Revision, got.LastError)
+		}
+	})
 }
 
 func TestSubscriptionTunnelDelay(t *testing.T) {

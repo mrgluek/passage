@@ -144,6 +144,8 @@ func (r *SubscriptionRefresher) refreshSubscription(ctx context.Context, out *Su
 			results <- subscriptionFetchResult{stats, pair, blob, etag, code}
 		}()
 	}
+	// A source that gave a valid signed file directly is not asked again through the tunnel.
+	answered := map[string]bool{}
 	var directTimer, tunnelTimer *time.Timer
 	var nextDirect, nextTunnel <-chan time.Time
 	startTunnel := func() {
@@ -151,7 +153,9 @@ func (r *SubscriptionRefresher) refreshSubscription(ctx context.Context, out *Su
 		var attempt context.Context
 		attempt, cancelTunnel = context.WithTimeout(race, subscriptionTunnelTimeout)
 		for _, pair := range tunnelPairs {
-			launch(attempt, pair, dialers[pair.dial])
+			if !answered[strings.TrimRight(pair.source, "/")] {
+				launch(attempt, pair, dialers[pair.dial])
+			}
 		}
 	}
 	cutoff := started.Add(subscriptionTunnelDelay)
@@ -253,11 +257,21 @@ func (r *SubscriptionRefresher) refreshSubscription(ctx context.Context, out *Su
 				sub.LastError = subscriptionError(err)
 				return
 			} else {
+				// The same revision applied again after an upgrade only records the
+				// new schema when nothing visible changed, so the proxy is not restarted.
+				sameRevision := sub.Revision == opened.Bundle.Revision
+				unchanged := sameRevision && sameApplied(out.Config, candidate, index)
 				out.Config = candidate
 				sourceStats := sub.SourceStats
 				sub = candidate.Subscriptions[index]
 				sub.SourceStats = sourceStats
-				out.Changed = true
+				if !unchanged {
+					out.Changed = true
+				}
+				if sameRevision {
+					// Not newer than what a source may still hold: keep asking the others.
+					code = "unchanged"
+				}
 			}
 		}
 		if code != "" && code != "unchanged" {
@@ -266,6 +280,7 @@ func (r *SubscriptionRefresher) refreshSubscription(ctx context.Context, out *Su
 		}
 		// Any valid answer, even one that is not used, counts as the source working.
 		sub.recordSourceOK(pair.source, stats.tunnel, stats.elapsed)
+		answered[source] = true
 		if !stats.tunnel {
 			delete(r.directFailed, directKey)
 		}
@@ -274,8 +289,8 @@ func (r *SubscriptionRefresher) refreshSubscription(ctx context.Context, out *Su
 				result.code = code
 				held = &result
 			}
-			// An answer exists: the tunnel is not needed, the other direct sources still run.
-			nextTunnel = nil
+			// A stale answer from one source says nothing about the others: the
+			// tunnel tier and the deferred direct pass still run.
 			return
 		}
 		accept(result, code)
@@ -318,8 +333,10 @@ func (r *SubscriptionRefresher) refreshSubscription(ctx context.Context, out *Su
 		}
 	}
 	loop()
-	deferred = slices.DeleteFunc(deferred, func(pair subscriptionPair) bool { return !available(pair) })
-	if !succeeded && held == nil && len(deferred) > 0 && ctx.Err() == nil {
+	deferred = slices.DeleteFunc(deferred, func(pair subscriptionPair) bool {
+		return !available(pair) || answered[strings.TrimRight(pair.source, "/")]
+	})
+	if !succeeded && len(deferred) > 0 && ctx.Err() == nil {
 		directPairs, deferred = deferred, nil
 		second, cancelSecond := context.WithTimeout(race, directTimeout)
 		defer cancelSecond()
@@ -387,7 +404,8 @@ func fetchSubscriptionWithStats(ctx context.Context, sub Subscription, source st
 		stats.failure = "http"
 		return nil, "", "http"
 	}
-	if sub.ETag != "" && sub.ETagSource == source {
+	conditional := sub.ETag != "" && sub.ETagSource == source && sub.Schema >= subscriptionSchema
+	if conditional {
 		req.Header.Set("If-None-Match", sub.ETag)
 	}
 	stats.started = true
@@ -407,7 +425,7 @@ func fetchSubscriptionWithStats(ctx context.Context, sub Subscription, source st
 		etag = ""
 	}
 	if resp.StatusCode == http.StatusNotModified {
-		if sub.ETag == "" || sub.ETagSource != source || sub.Revision == 0 {
+		if !conditional || sub.Revision == 0 {
 			stats.failure = "http"
 			return nil, "", "http"
 		}

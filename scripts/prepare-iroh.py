@@ -18,8 +18,8 @@ import tempfile
 import urllib.request
 
 ROOT = Path(__file__).resolve().parent.parent
-REV = "fa449072003cb707b40e8445425e3306fd2f5d58"
-DIGEST = "eaa2d49c0844b22d2ca582d44c8fe91e2155b8483eaa5a5f9bf4e9f7e3844d74"
+REV = "77a397ef5259ea41323ce9630848b8d2ffdf20f6"
+DIGEST = "ecbc0e0f0268289784bdcc2514980f448b9339b33faaa260d54e140a37ad3cee"
 TARGETS = {"arm64-v8a": ("aarch64-linux-android", "aarch64-linux-android"),
            "armeabi-v7a": ("armv7-linux-androideabi", "armv7a-linux-androideabi")}
 
@@ -75,7 +75,7 @@ def prepare(work):
 def android():
     outputs = {abi: ROOT / "android/app/src/main/nativeLibs" / abi / "libpassage_iroh.so" for abi in TARGETS}
     stamp = ROOT / "android/app/src/main/nativeLibs/.iroh-build"
-    expected = REV + " relay-only-v2 16384"
+    expected = REV + " relay-only-v3 16384"
     if stamp.exists() and stamp.read_text().strip() == expected and all(aligned(p) for p in outputs.values()):
         return
     ndk = Path(os.environ["ANDROID_HOME"]) / "ndk/27.2.12479018/toolchains/llvm/prebuilt" / ("darwin-x86_64" if platform.system() == "Darwin" else "linux-x86_64")

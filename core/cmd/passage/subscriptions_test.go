@@ -495,3 +495,17 @@ func TestFreshNetworkFailureIsNotShownAsAProblem(t *testing.T) {
 		}
 	}
 }
+
+func TestRouterConfigDropsCredentialsOfRunningRouter(t *testing.T) {
+	a := newSubscriptionTestApp(t, "en")
+	// A refresh while the router runs hands back its configuration with the credentials.
+	a.linkCfg.User, a.linkCfg.Pass = "old", "old-pass"
+	a.settings.Auth, a.settings.User, a.settings.Pass = false, "u", "p"
+	if cfg, _ := a.routerConfigLocked(); cfg.User != "" || cfg.Pass != "" {
+		t.Fatalf("authentication is off but the router gets %q", cfg.User)
+	}
+	a.settings.Auth = true
+	if cfg, _ := a.routerConfigLocked(); cfg.User != "u" || cfg.Pass != "p" {
+		t.Fatalf("settings credentials not used: %q", cfg.User)
+	}
+}

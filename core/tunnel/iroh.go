@@ -25,6 +25,11 @@ var errDestinationRefused = errors.New("destination connection refused")
 // not connect, as opposed to a destination it does not allow.
 var errDestinationUnreachable = fmt.Errorf("%w: unreachable", errDestinationRefused)
 
+// irohConnSilence (seconds) ends a forwarded connection that stayed silent, so
+// a peer that vanished does not keep its buffers. Long enough for a chat
+// connection waiting in IMAP IDLE, which is renewed within 29 minutes.
+const irohConnSilence = "2400"
+
 func startIroh(ctx context.Context, r links.Route, binaryPath string, privateDir string, dns []string) (dialFunc, func(), error) {
 	if !filepath.IsAbs(binaryPath) {
 		return nil, nil, errors.New("provide an absolute dumbpipe path")
@@ -50,7 +55,7 @@ func startIroh(ctx context.Context, r links.Route, binaryPath string, privateDir
 	}
 	childCtx, cancel := context.WithCancel(ctx)
 	// Loopback only: relay traffic needs no listening socket on the network.
-	args := append(listen, "--relay", p.Relay, "--no-direct", "--ipv4-addr", "127.0.0.1:0", "--ipv6-addr", "[::1]:0", p.Ticket)
+	args := append(listen, "--relay", p.Relay, "--no-direct", "--idle-timeout", irohConnSilence, "--ipv4-addr", "127.0.0.1:0", "--ipv6-addr", "[::1]:0", p.Ticket)
 	var env []string
 	for _, v := range os.Environ() {
 		if !strings.HasPrefix(v, "IROH_SECRET=") {
