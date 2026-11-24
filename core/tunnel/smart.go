@@ -472,7 +472,9 @@ func (t *Tunnel) findStrategy(list []strategy, hosts []string) *strategy {
 
 // smartCheck runs while the probe hosts fail directly: it keeps the current
 // strategy if it still works, otherwise looks for one. It reports whether
-// the smart route works and sets it up (or tears it down) to match.
+// the smart route works for these hosts and sets it up if so. A failure
+// leaves the strategy alone: the caller tears it down with smartDown once no
+// group in the pass has a working one.
 func (t *Tunnel) smartCheck(hosts []string) bool {
 	t.mu.Lock()
 	cur := t.strategy
@@ -486,12 +488,6 @@ func (t *Tunnel) smartCheck(hosts []string) bool {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	if found == nil {
-		rememberStrategy(t.cfg, "")
-		if t.strategy != nil {
-			t.log.add("smart route: %s stopped working, none found", t.strategy.name)
-		}
-		t.strategy = nil
-		t.ways[RouteSmart] = way{}
 		return false
 	}
 	if t.strategy == nil || t.strategy.name != found.name {
@@ -501,4 +497,16 @@ func (t *Tunnel) smartCheck(hosts []string) bool {
 	t.ways[RouteSmart] = way{found.dial, directDialTimeout}
 	rememberStrategy(t.cfg, found.name)
 	return true
+}
+
+// smartDown forgets the strategy when no failed group could use it.
+func (t *Tunnel) smartDown() {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	rememberStrategy(t.cfg, "")
+	if t.strategy != nil {
+		t.log.add("smart route: %s stopped working, none found", t.strategy.name)
+	}
+	t.strategy = nil
+	t.ways[RouteSmart] = way{}
 }

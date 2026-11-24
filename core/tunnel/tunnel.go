@@ -1717,6 +1717,12 @@ func (t *Tunnel) probe() map[*group]probeResult {
 	if !auto || len(t.strategies) == 0 {
 		return res
 	}
+	smartRan, smartWorks := false, false
+	defer func() {
+		if smartRan && !smartWorks {
+			t.smartDown()
+		}
+	}()
 	for _, g := range groups {
 		r := res[g]
 		if g.kind != kindRelay || !failed(r) || !r.NetworkOK {
@@ -1727,6 +1733,7 @@ func (t *Tunnel) probe() map[*group]probeResult {
 		t.mu.Unlock()
 		r.SmartChecked = true
 		r.SmartOK = t.smartCheck(r.hosts)
+		smartRan, smartWorks = true, smartWorks || r.SmartOK
 		if r.SmartOK {
 			t.mu.Lock()
 			r.Strategy = t.strategyNameLocked()
