@@ -174,3 +174,35 @@ func TestClosedFileWithSameRevisionIsRefusedAgainstOldSchema(t *testing.T) {
 		t.Fatalf("a closing file at the same revision was applied: %v", err)
 	}
 }
+
+func TestSeedAtNewerRevisionClearsETag(t *testing.T) {
+	sub, key, bundle := subFixture(t)
+	cfg, err := ApplySubFile(Config{Subscriptions: []Subscription{sub}}, sub, bundle)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg.Subscriptions[0].ETag, cfg.Subscriptions[0].ETagSource = `"one"`, sub.Sources[0]
+	bundle.Revision = 2
+	seed, err := links.SealSubFile(bundle, bundle.Sub, sub.ReadKey, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	r, err := SubscribeLink(cfg, subInvite(t, sub, key, seed), false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := r.Config.Subscriptions[0]; got.Revision != 2 || got.ETag != "" || got.ETagSource != "" {
+		t.Fatalf("revision %d etag %q source %q", got.Revision, got.ETag, got.ETagSource)
+	}
+	// A seed that is not newer keeps the tag.
+	cfg.Subscriptions[0].ETag, cfg.Subscriptions[0].ETagSource = `"one"`, sub.Sources[0]
+	bundle.Revision = 1
+	old, err := links.SealSubFile(bundle, bundle.Sub, sub.ReadKey, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	r, err = SubscribeLink(cfg, subInvite(t, sub, key, old), false)
+	if err != nil || r.Config.Subscriptions[0].ETag != `"one"` {
+		t.Fatalf("tag dropped without a newer revision: %v", err)
+	}
+}

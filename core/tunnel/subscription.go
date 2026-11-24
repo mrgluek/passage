@@ -343,12 +343,17 @@ func SubscribeLink(cfg Config, text string, replaceSigner bool) (ImportResult, e
 		if e != nil {
 			return out, e
 		}
+		before := sub.Revision
 		cfg, err = ApplySubFile(cfg, sub, opened.Bundle)
 		if errors.Is(err, links.ErrNotNewer) {
 			err = nil
 		}
 		if err != nil {
 			return out, err
+		}
+		// A seed that moved the revision makes the saved tag describe an older file.
+		if j := slices.IndexFunc(cfg.Subscriptions, func(s Subscription) bool { return s.ID == sub.ID }); j >= 0 && cfg.Subscriptions[j].Revision != before {
+			cfg.Subscriptions[j].ETag, cfg.Subscriptions[j].ETagSource = "", ""
 		}
 	}
 	out.Config, err = cfg.Normalize()
