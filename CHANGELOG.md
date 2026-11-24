@@ -10,6 +10,8 @@
 - Desktop: turning authentication off applies without a restart.
 - The "network limited" line no longer disappears for a short time every ten
   minutes.
+- One mail server that cannot be reached directly no longer turns off the
+  tuned direct route for the others.
 - Windows: a link opened by a second start goes only to the running Passage of
   the same user.
 - The relay helper no longer keeps memory for connections that went silent. It needs `passage-iroh`
