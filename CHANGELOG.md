@@ -2,7 +2,8 @@
 
 ## 0.9.7
 
-- The relay helper no longer keeps memory for connections that went silent.
+- The relay helper no longer keeps memory for connections that went silent. It needs `passage-iroh`
+  from this release; an older one refuses the new option.
 
 ## 0.9.6
 
