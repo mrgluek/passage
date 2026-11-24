@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"path/filepath"
 	"reflect"
 	"testing"
 
@@ -228,5 +229,43 @@ func TestSubscriptionManualRouteTakeover(t *testing.T) {
 				t.Fatal("unowned route removed")
 			}
 		})
+	}
+}
+
+func TestSameRevisionReapplyAfterRestartIsUnchanged(t *testing.T) {
+	sub, key, b := subFixture(t)
+	trustSubscription(t, sub)
+	b.Routes[0].Params["key"] = bytes.Repeat([]byte{3}, 32)
+	seal, err := links.SealSubFile(b, b.Sub, sub.ReadKey, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	open := func() links.Bundle {
+		o, err := links.OpenSubFile(seal, b.Sub, sub.ReadKey, sub.Signer)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return o.Bundle
+	}
+	cfg, err := ApplySubFile(Config{Subscriptions: []Subscription{sub}}, sub, open())
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(t.TempDir(), "subscriptions.json")
+	if err = SaveSubscriptionState(path, cfg); err != nil {
+		t.Fatal(err)
+	}
+	saved, err := RestoreSubscriptionState(Config{Subscriptions: []Subscription{sub}}, path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// State written by an older release: same revision, lower schema.
+	saved.Subscriptions[0].Schema = 0
+	again, err := ApplySubFile(saved, saved.Subscriptions[0], open())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !sameApplied(saved, again, 0) {
+		t.Fatal("a byte key reads back as a string and counts as a change")
 	}
 }
