@@ -134,10 +134,29 @@ func receiveLaunchLinks(ctx context.Context, receive func(string), logf func(str
 		return
 	}
 	f := os.NewFile(uintptr(h), "Passage import")
-	defer f.Close()
+	// Only this goroutine closes the handle, after the canceller has ended.
+	// The cancel is repeated: one sent before a blocking call starts is lost.
+	stop := make(chan struct{})
+	cancelled := make(chan struct{})
 	go func() {
-		<-ctx.Done()
-		windows.CancelIoEx(h, nil)
+		defer close(cancelled)
+		select {
+		case <-ctx.Done():
+		case <-stop:
+			return
+		}
+		for {
+			windows.CancelIoEx(h, nil)
+			select {
+			case <-stop:
+				return
+			case <-time.After(10 * time.Millisecond):
+			}
+		}
+	}()
+	defer func() {
+		close(stop)
+		<-cancelled
 		f.Close()
 	}()
 	for ctx.Err() == nil {
