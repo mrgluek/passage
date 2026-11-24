@@ -144,6 +144,8 @@ func (r *SubscriptionRefresher) refreshSubscription(ctx context.Context, out *Su
 			results <- subscriptionFetchResult{stats, pair, blob, etag, code}
 		}()
 	}
+	// A source that gave a valid signed file directly is not asked again through the tunnel.
+	answered := map[string]bool{}
 	var directTimer, tunnelTimer *time.Timer
 	var nextDirect, nextTunnel <-chan time.Time
 	startTunnel := func() {
@@ -151,7 +153,9 @@ func (r *SubscriptionRefresher) refreshSubscription(ctx context.Context, out *Su
 		var attempt context.Context
 		attempt, cancelTunnel = context.WithTimeout(race, subscriptionTunnelTimeout)
 		for _, pair := range tunnelPairs {
-			launch(attempt, pair, dialers[pair.dial])
+			if !answered[strings.TrimRight(pair.source, "/")] {
+				launch(attempt, pair, dialers[pair.dial])
+			}
 		}
 	}
 	cutoff := started.Add(subscriptionTunnelDelay)
@@ -187,7 +191,6 @@ func (r *SubscriptionRefresher) refreshSubscription(ctx context.Context, out *Su
 	// "Unchanged" is an answer, but another source may hold a newer file, so
 	// the first one is kept and accepted only if no source delivers one.
 	var held *subscriptionFetchResult
-	answered := map[string]bool{}
 	accept := func(result subscriptionFetchResult, code string) {
 		pair, stats := result.pair, result.stats
 		sub.LastError = code

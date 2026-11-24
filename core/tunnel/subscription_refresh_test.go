@@ -140,11 +140,9 @@ func TestSubscriptionDirectStagger(t *testing.T) {
 					})
 					return dial(ctx, network, address)
 				}
-				// A stale answer does not cancel the tunnel tier; a direct winner does.
+				// Sources that answered directly are not asked through the tunnel.
 				tunnel := subscriptionTestDial(func(context.Context, *http.Request) *http.Response {
-					if !test.unchanged || test.newer {
-						t.Error("unexpected tunnel dial")
-					}
+					t.Error("unexpected tunnel dial: every source answered directly")
 					return subscriptionTestResponse(http.StatusOK, string(raw))
 				})
 				out := ref.Refresh(context.Background(), cfg, []SubscriptionDial{tunnel})
@@ -188,6 +186,9 @@ func TestSubscriptionStaleDirectDoesNotCancelTunnel(t *testing.T) {
 		var tunnelCalls atomic.Int32
 		tunnel := subscriptionTestDial(func(_ context.Context, req *http.Request) *http.Response {
 			tunnelCalls.Add(1)
+			if req.Host == "stale.example.org" {
+				t.Error("a source that answered directly was dialled through the tunnel")
+			}
 			if req.Host == "fresh.example.org" {
 				return subscriptionTestResponse(http.StatusOK, string(newer))
 			}
