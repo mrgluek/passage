@@ -142,7 +142,8 @@ func receiveLaunchLinks(ctx context.Context, receive func(string), logf func(str
 	}()
 	for ctx.Err() == nil {
 		err = windows.ConnectNamedPipe(h, nil)
-		if err != nil && err != windows.ERROR_PIPE_CONNECTED {
+		// A client that wrote and closed before this call leaves its data readable.
+		if err != nil && err != windows.ERROR_PIPE_CONNECTED && err != windows.ERROR_NO_DATA {
 			if ctx.Err() == nil {
 				logf("import pipe stopped, links from a second start are lost: %v", err)
 			}

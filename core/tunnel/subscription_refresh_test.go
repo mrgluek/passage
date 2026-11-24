@@ -148,7 +148,7 @@ func TestSubscriptionDirectStagger(t *testing.T) {
 				out := ref.Refresh(context.Background(), cfg, []SubscriptionDial{tunnel})
 				got := out.Config.Subscriptions[0]
 				if test.unchanged && !test.newer {
-					if out.Changed || got.LastError != "unchanged" || time.Since(start) < 4*time.Second {
+					if out.Changed || got.LastError != "unchanged" || time.Since(start) != 4*time.Second {
 						t.Fatalf("unchanged did not wait for the other sources: %q at %v", got.LastError, time.Since(start))
 					}
 				} else if test.newer {
