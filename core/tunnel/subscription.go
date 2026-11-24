@@ -473,5 +473,6 @@ func sameApplied(a, b Config, index int) bool {
 		x.RefsCleared == y.RefsCleared && x.Name == y.Name &&
 		slices.Equal(a.Canaries, b.Canaries) && slices.Equal(a.References, b.References) &&
 		slices.Equal(a.UpdateSources, b.UpdateSources) &&
-		reflect.DeepEqual(a.Routes, b.Routes) && reflect.DeepEqual(a.RouteEdits, b.RouteEdits)
+		(len(a.Routes) == 0 && len(b.Routes) == 0 || reflect.DeepEqual(a.Routes, b.Routes)) &&
+		(len(a.RouteEdits) == 0 && len(b.RouteEdits) == 0 || reflect.DeepEqual(a.RouteEdits, b.RouteEdits))
 }

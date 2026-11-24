@@ -350,6 +350,7 @@ func (c *Client) Download(ctx context.Context, offer *Offer, dest string, progre
 		return f.Truncate(0)
 	}
 
+	resumed := done > 0
 	used := make(map[string]bool)
 	if err := fetch(offer.Sources, used); err != nil {
 		return err
@@ -359,7 +360,8 @@ func (c *Client) Download(ctx context.Context, offer *Offer, dest string, progre
 		// A source may serve wrong bytes under a valid manifest. Bytes from
 		// several sources are mixed, so each remaining source is tried alone.
 		bad := map[string]bool{}
-		if len(used) == 1 {
+		// A resumed file may hold bytes from a source that is not in used.
+		if len(used) == 1 && !resumed {
 			for source := range used {
 				bad[source] = true
 			}

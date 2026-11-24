@@ -3,12 +3,15 @@ package tunnel
 import (
 	"context"
 	"errors"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
 	"slices"
 	"sync"
 	"testing"
+	"testing/synctest"
+	"time"
 
 	links "github.com/mrgluek/passage-link/link"
 )
@@ -55,7 +58,7 @@ func TestOldCopyDownloadsOnceThenGetsNotModified(t *testing.T) {
 	var ref SubscriptionRefresher
 	first := ref.Refresh(context.Background(), cfg, nil)
 	got := first.Config.Subscriptions[0]
-	if got.Schema != subscriptionSchema || got.LastError != "" {
+	if got.Schema != subscriptionSchema || got.LastError != "unchanged" {
 		t.Fatalf("the old copy was not applied again: schema %d error %q", got.Schema, got.LastError)
 	}
 	if first.Changed {
@@ -204,5 +207,58 @@ func TestSeedAtNewerRevisionClearsETag(t *testing.T) {
 	r, err = SubscribeLink(cfg, subInvite(t, sub, key, old), false)
 	if err != nil || r.Config.Subscriptions[0].ETag != `"one"` {
 		t.Fatalf("tag dropped without a newer revision: %v", err)
+	}
+}
+
+func TestSameRevisionReapplyDoesNotCancelNewerSource(t *testing.T) {
+	cfg, raw, newer := subscriptionTestConfigNewer(t, "http://stale.example.org", "http://fresh.example.org")
+	cfg.Subscriptions[0].Revision, cfg.Subscriptions[0].Schema = 1, 0
+	synctest.Test(t, func(t *testing.T) {
+		ref := SubscriptionRefresher{directDial: subscriptionTestDial(func(_ context.Context, req *http.Request) *http.Response {
+			if req.Host == "stale.example.org" {
+				return subscriptionTestResponse(http.StatusOK, string(raw))
+			}
+			return subscriptionTestResponse(http.StatusOK, string(newer))
+		})}
+		out := ref.Refresh(context.Background(), cfg, nil)
+		if got := out.Config.Subscriptions[0]; got.Revision != 2 || got.Schema != subscriptionSchema {
+			t.Fatalf("a lagging source hid the newer file: revision %d schema %d", got.Revision, got.Schema)
+		}
+	})
+}
+
+func TestAnsweredSourceIsNotDialledDirectlyAgain(t *testing.T) {
+	cfg, raw := subscriptionTestConfig(t, "http://example.org")
+	synctest.Test(t, func(t *testing.T) {
+		directDials := 0
+		ok := subscriptionTestDial(func(context.Context, *http.Request) *http.Response {
+			return subscriptionTestResponse(http.StatusOK, string(raw))
+		})
+		ref := SubscriptionRefresher{directDial: func(ctx context.Context, _, _ string) (net.Conn, error) {
+			directDials++
+			<-ctx.Done()
+			return nil, ctx.Err()
+		}}
+		tunnel := func(ctx context.Context, network, address string) (net.Conn, error) { return ok(ctx, network, address) }
+		out := ref.Refresh(context.Background(), cfg, []SubscriptionDial{tunnel}) // marks the direct path
+		cfg = out.Config
+		before := time.Now()
+		out = ref.Refresh(context.Background(), cfg, []SubscriptionDial{tunnel}) // same revision: unchanged
+		synctest.Wait()
+		if directDials != 1 || time.Since(before) != 0 || out.Config.Subscriptions[0].LastError != "unchanged" {
+			t.Fatalf("direct dials %d, took %v, state %q", directDials, time.Since(before), out.Config.Subscriptions[0].LastError)
+		}
+	})
+}
+
+func TestSameAppliedIgnoresNilVersusEmpty(t *testing.T) {
+	a := Config{Subscriptions: []Subscription{{ID: "x"}}}
+	b := Config{Subscriptions: []Subscription{{ID: "x"}}, RouteEdits: map[string]RouteEdit{}, Routes: []links.Route{}}
+	if !sameApplied(a, b, 0) {
+		t.Fatal("nil and empty edits or routes count as a change")
+	}
+	b.RouteEdits = map[string]RouteEdit{"one": {Off: true}}
+	if sameApplied(a, b, 0) {
+		t.Fatal("a real edit is ignored")
 	}
 }

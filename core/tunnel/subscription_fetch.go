@@ -187,6 +187,7 @@ func (r *SubscriptionRefresher) refreshSubscription(ctx context.Context, out *Su
 	// "Unchanged" is an answer, but another source may hold a newer file, so
 	// the first one is kept and accepted only if no source delivers one.
 	var held *subscriptionFetchResult
+	answered := map[string]bool{}
 	accept := func(result subscriptionFetchResult, code string) {
 		pair, stats := result.pair, result.stats
 		sub.LastError = code
@@ -255,13 +256,18 @@ func (r *SubscriptionRefresher) refreshSubscription(ctx context.Context, out *Su
 			} else {
 				// The same revision applied again after an upgrade only records the
 				// new schema when nothing visible changed, so the proxy is not restarted.
-				unchanged := sub.Revision == opened.Bundle.Revision && sameApplied(out.Config, candidate, index)
+				sameRevision := sub.Revision == opened.Bundle.Revision
+				unchanged := sameRevision && sameApplied(out.Config, candidate, index)
 				out.Config = candidate
 				sourceStats := sub.SourceStats
 				sub = candidate.Subscriptions[index]
 				sub.SourceStats = sourceStats
 				if !unchanged {
 					out.Changed = true
+				}
+				if sameRevision {
+					// Not newer than what a source may still hold: keep asking the others.
+					code = "unchanged"
 				}
 			}
 		}
@@ -271,6 +277,7 @@ func (r *SubscriptionRefresher) refreshSubscription(ctx context.Context, out *Su
 		}
 		// Any valid answer, even one that is not used, counts as the source working.
 		sub.recordSourceOK(pair.source, stats.tunnel, stats.elapsed)
+		answered[source] = true
 		if !stats.tunnel {
 			delete(r.directFailed, directKey)
 		}
@@ -323,7 +330,9 @@ func (r *SubscriptionRefresher) refreshSubscription(ctx context.Context, out *Su
 		}
 	}
 	loop()
-	deferred = slices.DeleteFunc(deferred, func(pair subscriptionPair) bool { return !available(pair) })
+	deferred = slices.DeleteFunc(deferred, func(pair subscriptionPair) bool {
+		return !available(pair) || answered[strings.TrimRight(pair.source, "/")]
+	})
 	if !succeeded && len(deferred) > 0 && ctx.Err() == nil {
 		directPairs, deferred = deferred, nil
 		second, cancelSecond := context.WithTimeout(race, directTimeout)

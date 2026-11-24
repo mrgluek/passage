@@ -124,38 +124,40 @@ func createLinkPipe() (windows.Handle, error) {
 }
 
 func receiveLaunchLinks(ctx context.Context, receive func(string), logf func(string, ...any)) {
+	// One instance for the whole run: the name is never free for another
+	// account, and a client that is still closing cannot block a new instance.
+	h, err := createLinkPipe()
+	if err != nil {
+		if ctx.Err() == nil {
+			logf("import pipe not created, links from a second start are lost: %v", err)
+		}
+		return
+	}
+	f := os.NewFile(uintptr(h), "Passage import")
+	defer f.Close()
+	go func() {
+		<-ctx.Done()
+		windows.CancelIoEx(h, nil)
+		f.Close()
+	}()
 	for ctx.Err() == nil {
-		h, err := createLinkPipe()
-		if err != nil {
+		err = windows.ConnectNamedPipe(h, nil)
+		if err != nil && err != windows.ERROR_PIPE_CONNECTED {
 			if ctx.Err() == nil {
-				logf("import pipe not created, links from a second start are lost: %v", err)
+				logf("import pipe stopped, links from a second start are lost: %v", err)
 			}
 			return
 		}
-		f := os.NewFile(uintptr(h), "Passage import")
-		done := make(chan struct{})
-		go func() {
-			select {
-			case <-ctx.Done():
-				windows.CancelIoEx(h, nil)
-				f.Close()
-			case <-done:
-			}
-		}()
-		err = windows.ConnectNamedPipe(h, nil)
-		if err == nil || err == windows.ERROR_PIPE_CONNECTED {
-			var size [4]byte
-			if _, err = io.ReadFull(f, size[:]); err == nil {
-				n := binary.LittleEndian.Uint32(size[:])
-				if n <= maxLaunchLink {
-					data := make([]byte, n)
-					if _, err = io.ReadFull(f, data); err == nil {
-						receive(launchImport([]string{string(data)}))
-					}
+		var size [4]byte
+		if _, err = io.ReadFull(f, size[:]); err == nil {
+			n := binary.LittleEndian.Uint32(size[:])
+			if n <= maxLaunchLink {
+				data := make([]byte, n)
+				if _, err = io.ReadFull(f, data); err == nil {
+					receive(launchImport([]string{string(data)}))
 				}
 			}
 		}
-		close(done)
-		f.Close()
+		windows.DisconnectNamedPipe(h)
 	}
 }

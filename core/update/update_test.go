@@ -281,6 +281,26 @@ func TestDownloadMovesPastWrongBytes(t *testing.T) {
 	}
 }
 
+func TestDownloadResumedFileDoesNotBlameTheOnlySource(t *testing.T) {
+	r := newRelease(t, "1.2.0", content(chunkSize+500))
+	bad := r
+	bad.content = content(chunkSize + 500)
+	bad.content[10]++
+	dest := filepath.Join(t.TempDir(), "app.apk")
+	// An earlier run left a bad first chunk from a source that is gone.
+	if err := os.WriteFile(dest+".part", bad.content[:chunkSize], 0o600); err != nil {
+		t.Fatal(err)
+	}
+	r.offer.Sources = []string{serve(t, r, nil)}
+	if err := (&Client{Key: r.key}).Download(context.Background(), r.offer, dest, nil); err != nil {
+		t.Fatalf("the honest source was blamed for a bad prefix: %v", err)
+	}
+	got, _ := os.ReadFile(dest)
+	if !bytes.Equal(got, r.content) {
+		t.Fatal("saved the wrong bytes")
+	}
+}
+
 func TestDownloadMovesToNextSource(t *testing.T) {
 	r := newRelease(t, "1.2.0", content(1000))
 	r.offer.Sources = []string{"http://127.0.0.1:1", serve(t, r, nil)}

@@ -142,6 +142,9 @@ func TestSubscriptionDirectStagger(t *testing.T) {
 				}
 				// A stale answer does not cancel the tunnel tier; a direct winner does.
 				tunnel := subscriptionTestDial(func(context.Context, *http.Request) *http.Response {
+					if !test.unchanged || test.newer {
+						t.Error("unexpected tunnel dial")
+					}
 					return subscriptionTestResponse(http.StatusOK, string(raw))
 				})
 				out := ref.Refresh(context.Background(), cfg, []SubscriptionDial{tunnel})
