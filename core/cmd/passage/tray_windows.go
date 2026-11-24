@@ -58,7 +58,7 @@ func runDesktop(dir string, autostart bool) {
 	}
 	a.changed = d.update
 	ctx, cancel := context.WithCancel(context.Background())
-	go receiveLaunchLinks(ctx, d.importLink)
+	go receiveLaunchLinks(ctx, d.importLink, a.event)
 	done := make(chan struct{})
 	waited := make(chan struct{})
 	systray.Run(func() {
