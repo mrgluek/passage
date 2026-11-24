@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.9.7
+
+- The relay helper no longer keeps memory for connections that went silent.
+
 ## 0.9.6
 
 - The home screen shows when the network is limited.
