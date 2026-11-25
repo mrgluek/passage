@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.9.8
+
+- A route with a fixed server address tries the host's other addresses when
+  that address stops answering, and returns to it later.
+- Names that do not exist no longer appear as relays.
+- A failing iroh helper is restarted at most three times in 30 minutes.
+
 ## 0.9.7
 
 - A subscription saved by an older version is applied again after the update,
