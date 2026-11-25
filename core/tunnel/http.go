@@ -62,12 +62,13 @@ func NewHTTPClient(params links.HTTPParams) (*WSSClient, error) {
 	}
 	tr.ForceAttemptHTTP2 = true
 	if params.DialIP != "" {
+		var host string
+		if u, err := url.Parse(params.Endpoint); err == nil {
+			host = u.Hostname()
+		}
+		c.pin = newPinnedAddr(params.DialIP, host)
 		tr.DialContext = countingDial(func(ctx context.Context, network, address string) (net.Conn, error) {
-			_, port, err := net.SplitHostPort(address)
-			if err != nil {
-				return nil, err
-			}
-			return (&net.Dialer{}).DialContext(ctx, network, net.JoinHostPort(params.DialIP, port))
+			return c.pin.DialContext(ctx, network, address)
 		})
 	}
 	return c, nil
@@ -78,14 +79,14 @@ func httpRequest(ctx context.Context, client *http.Client, endpoint, token strin
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
 	if err != nil {
-		return nil, errors.New("HTTP request failed")
+		return nil, errHTTPFailed
 	}
 	req.Header.Set(httpSessionHeader, token)
 	req.Header.Set("Cache-Control", "no-store")
 	req.Header.Set("Accept-Encoding", "identity")
 	resp, err := client.Do(req)
 	if err != nil {
-		return nil, errors.New("HTTP request failed")
+		return nil, errHTTPFailed
 	}
 	if resp.StatusCode != http.StatusOK {
 		resp.Body.Close()
@@ -93,7 +94,25 @@ func httpRequest(ctx context.Context, client *http.Client, endpoint, token strin
 	}
 	return resp, nil
 }
+
+var errHTTPFailed = errors.New("HTTP request failed")
+
+// dialHTTPSession opens a session. A transport failure moves a pinned route to
+// its next address and tries again; a refusal does not.
 func (c *WSSClient) dialHTTPSession(ctx context.Context) (*wssSession, error) {
+	for {
+		var addr string
+		if c.pin != nil {
+			addr = c.pin.current()
+		}
+		s, err := c.openHTTPSession(ctx)
+		if err != errHTTPFailed || c.pin == nil || ctx.Err() != nil || !c.pin.next(ctx, addr) {
+			return s, err
+		}
+		c.httpClient.CloseIdleConnections()
+	}
+}
+func (c *WSSClient) openHTTPSession(ctx context.Context) (*wssSession, error) {
 	token, nonce := wssToken(c.params.Key, time.Now())
 	life, cancel := context.WithCancel(c.life)
 	stop := context.AfterFunc(ctx, cancel)

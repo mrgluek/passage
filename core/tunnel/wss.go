@@ -71,6 +71,7 @@ type WSSClient struct {
 	httpSilence time.Duration
 	params      links.WSSParams
 	httpClient  *http.Client
+	pin         *pinnedAddr
 	mu          sync.Mutex
 	closed      bool
 	sessions    []*wssSession
