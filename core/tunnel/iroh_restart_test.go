@@ -248,3 +248,27 @@ func TestNetworkTestDialsDoNotChangeTheHelperState(t *testing.T) {
 		t.Fatalf("restarts = %d, want 1: a successful network test dial cleared the real failures", restarts)
 	}
 }
+
+func TestIrohRestartBudget(t *testing.T) {
+	now := time.Unix(1000, 0)
+	restarts := 0
+	c := &irohClient{dir: t.TempDir(), now: func() time.Time { return now }, onRestart: func(time.Time) { restarts++ }}
+	defer c.Close()
+	c.start = func(life context.Context) (dialFunc, func(), error) {
+		done := make(chan struct{})
+		go func() { defer close(done); <-life.Done() }()
+		return func(context.Context, string, string) (net.Conn, error) {
+			return nil, io.ErrUnexpectedEOF
+		}, func() { <-done }, nil
+	}
+	// A failing helper, every 6 minutes for 2 hours.
+	for range 20 {
+		for range 3 {
+			c.DialContext(context.Background(), "tcp", "example.org:443")
+		}
+		now = now.Add(6 * time.Minute)
+	}
+	if restarts != 12 {
+		t.Fatalf("restarts=%d, want 12 (3 per 30 minutes over 2 hours; 20 without the budget)", restarts)
+	}
+}

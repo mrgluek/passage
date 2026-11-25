@@ -655,6 +655,13 @@ const (
 	irohDiagnosis
 )
 
+// A helper that keeps failing is restarted at most irohRestartBudget times in
+// irohRestartWindow.
+const (
+	irohRestartBudget = 3
+	irohRestartWindow = 30 * time.Minute
+)
+
 var errIrohSleeping = errors.New("iroh helper asleep")
 
 type irohClient struct {
@@ -672,7 +679,8 @@ type irohClient struct {
 	start       func(context.Context) (dialFunc, func(), error)
 	failures    int
 	lastRestart time.Time
-	active      int // pending dials and open streams in this generation
+	restarts    []time.Time // within irohRestartWindow
+	active      int         // pending dials and open streams in this generation
 	idleAt      time.Time
 	timer       *time.Timer
 	afterFunc   func(time.Duration, func()) *time.Timer
@@ -755,7 +763,8 @@ func (c *irohClient) dialContext(ctx context.Context, n, a string, mode irohDial
 			}
 		} else if mode != irohDiagnosis && !errors.Is(err, errDestinationRefused) && !errors.Is(err, context.Canceled) {
 			c.failures++
-			restart = c.failures >= 3 && (c.lastRestart.IsZero() || now.Sub(c.lastRestart) >= 5*time.Minute)
+			c.restarts = slices.DeleteFunc(c.restarts, func(at time.Time) bool { return now.Sub(at) >= irohRestartWindow })
+			restart = c.failures >= 3 && len(c.restarts) < irohRestartBudget && (c.lastRestart.IsZero() || now.Sub(c.lastRestart) >= 5*time.Minute)
 		}
 		if errors.Is(err, errIrohExited) || restart {
 			c.stopLocked()
@@ -764,6 +773,7 @@ func (c *irohClient) dialContext(ctx context.Context, n, a string, mode irohDial
 			c.failures = 0
 			if restart {
 				c.lastRestart = now
+				c.restarts = append(c.restarts, now)
 				if c.onRestart != nil {
 					c.onRestart(now)
 				}
