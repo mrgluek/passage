@@ -3,6 +3,7 @@ package tunnel
 import (
 	"context"
 	"errors"
+	"io"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -126,5 +127,36 @@ func TestPinnedReturnsAfterTimeout(t *testing.T) {
 	now = now.Add(pinnedReturn)
 	if p.current() != "192.0.2.1" {
 		t.Fatal("no return")
+	}
+}
+
+func TestPinnedFallbackWSS(t *testing.T) {
+	_, exit := wssFixture(t, 8, func(c net.Conn) { io.Copy(c, c) })
+	bad := httptest.NewTLSServer(http.HandlerFunc(resetHandler))
+	t.Cleanup(bad.Close)
+	u, _ := url.Parse(exit.URL)
+	client, err := NewWSSClient(links.WSSParams{Endpoint: "wss://example.com:" + u.Port() + "/passage", Key: wssTestKey, DialIP: "192.0.2.1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { client.Close() })
+	client.httpClient.Transport.(*http.Transport).TLSClientConfig = exit.Client().Transport.(*http.Transport).TLSClientConfig.Clone()
+	var lookups atomic.Int32
+	client.pin.lookup = func(context.Context, string) ([]string, error) {
+		lookups.Add(1)
+		return []string{"192.0.2.2"}, nil
+	}
+	targets := map[string]string{"192.0.2.1": bad.Listener.Addr().String(), "192.0.2.2": exit.Listener.Addr().String()}
+	client.pin.dial = func(ctx context.Context, network, address string) (net.Conn, error) {
+		host, _, _ := net.SplitHostPort(address)
+		return (&net.Dialer{}).DialContext(ctx, network, targets[host])
+	}
+	conn := dialTest(t, client, "mail.example.org:443")
+	defer conn.Close()
+	if err := wssRoundTrip(conn, []byte("wss second address")); err != nil {
+		t.Fatal(err)
+	}
+	if lookups.Load() != 1 || client.pin.current() != "192.0.2.2" {
+		t.Fatalf("lookups=%d current=%s", lookups.Load(), client.pin.current())
 	}
 }

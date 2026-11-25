@@ -17,6 +17,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptrace"
+	"net/url"
 	"os"
 	"slices"
 	"sync"
@@ -98,17 +99,17 @@ func NewWSSClient(params links.WSSParams) (*WSSClient, error) {
 		}
 		transport.TLSClientConfig.ServerName = params.SNI
 	}
+	var pin *pinnedAddr
 	if params.DialIP != "" {
-		transport.DialContext = func(ctx context.Context, network, address string) (net.Conn, error) {
-			_, port, err := net.SplitHostPort(address)
-			if err != nil {
-				return nil, err
-			}
-			return (&net.Dialer{}).DialContext(ctx, network, net.JoinHostPort(params.DialIP, port))
+		var host string
+		if u, err := url.Parse(params.Endpoint); err == nil {
+			host = u.Hostname()
 		}
+		pin = newPinnedAddr(params.DialIP, host)
+		transport.DialContext = pin.DialContext
 	}
 	transport.DialContext = countingDial(transport.DialContext)
-	return &WSSClient{params: params, httpClient: &http.Client{Transport: transport, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}, life: life, cancel: cancel}, nil
+	return &WSSClient{pin: pin, params: params, httpClient: &http.Client{Transport: transport, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}, life: life, cancel: cancel}, nil
 }
 
 func wssKey(secret, salt []byte, info string) []byte {
@@ -238,6 +239,24 @@ func (c *WSSClient) dialSession(ctx context.Context) (*wssSession, error) {
 	if c.httpMode {
 		return c.dialHTTPSession(ctx)
 	}
+	for {
+		var addr string
+		if c.pin != nil {
+			addr = c.pin.current()
+		}
+		s, err := c.dialWSSSession(ctx)
+		if err != errWSSFailed || c.pin == nil || ctx.Err() != nil || !c.pin.next(ctx, addr) {
+			return s, err
+		}
+		c.httpClient.CloseIdleConnections()
+	}
+}
+
+// errWSSFailed means no HTTP answer came back (reset, timeout): the address
+// is the likely cause. An answer, even a refusal, is not retried elsewhere.
+var errWSSFailed = errors.New("WSS handshake failed")
+
+func (c *WSSClient) dialWSSSession(ctx context.Context) (*wssSession, error) {
 	token, nonce := wssToken(c.params.Key, time.Now())
 	var wire *countingConn
 	trace := httptrace.WithClientTrace(ctx, &httptrace.ClientTrace{GotConn: func(info httptrace.GotConnInfo) {
@@ -253,7 +272,10 @@ func (c *WSSClient) dialSession(ctx context.Context) (*wssSession, error) {
 		if ctx.Err() != nil {
 			return nil, ctx.Err()
 		}
-		return nil, errors.New("WSS handshake failed")
+		if response != nil {
+			return nil, errors.New("WSS handshake failed")
+		}
+		return nil, errWSSFailed
 	}
 	if ws.Subprotocol() != token {
 		ws.CloseNow()
