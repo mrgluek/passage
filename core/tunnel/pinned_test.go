@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"slices"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -259,5 +260,17 @@ func TestLookupDoTFirst(t *testing.T) {
 	}
 	if sysCalls != 2 {
 		t.Fatalf("sys=%d", sysCalls)
+	}
+}
+
+func TestDoTServersFromResolverList(t *testing.T) {
+	list := []string{"192.0.2.53:53", "198.51.100.1:853", "77.88.8.8:853", "198.51.100.1:853", "203.0.113.7:853"}
+	got := dotServers(list)
+	want := []string{"198.51.100.1:853", "77.88.8.8:853", "203.0.113.7:853"}
+	if !slices.Equal(got, want) {
+		t.Fatalf("got %v, want %v", got, want)
+	}
+	if got := dotServers([]string{"192.0.2.53:53"}); !slices.Equal(got, builtinDoT) {
+		t.Fatalf("no DoT in the list: %v", got)
 	}
 }

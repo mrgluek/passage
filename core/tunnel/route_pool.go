@@ -126,6 +126,7 @@ func newRoutePool(cfg Config) (soarClient, error) {
 				p.Close()
 				return nil, err
 			}
+			c.setResolvers(cfg.Effective())
 			client = c
 			server = httpServer(params, c)
 		case "wss":
@@ -146,6 +147,7 @@ func newRoutePool(cfg Config) (soarClient, error) {
 				p.Close()
 				return nil, err
 			}
+			c.setResolvers(cfg.Effective())
 			client = c
 			server = wssServer(params, c)
 		case "iroh":

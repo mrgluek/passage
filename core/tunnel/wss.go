@@ -81,6 +81,13 @@ type WSSClient struct {
 	cancel      context.CancelFunc
 }
 
+// setResolvers gives a pinned route the resolver list for its fallback lookup.
+func (c *WSSClient) setResolvers(list []string) {
+	if c.pin != nil {
+		c.pin.setResolvers(list)
+	}
+}
+
 func NewWSSClient(params links.WSSParams) (*WSSClient, error) {
 	r := links.Route{ID: "web", Type: "wss", Wire: "wss-v2", Params: map[string]any{"endpoint": params.Endpoint, "key": params.Key, "dial_ip": params.DialIP, "sni": params.SNI}}
 	if _, err := links.ValidateRoute(r); err != nil {

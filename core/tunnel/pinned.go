@@ -32,6 +32,7 @@ type pinnedAddr struct {
 	resolved time.Time
 	idx      int
 	since    time.Time
+	dot      []string                         // DNS-over-TLS servers for the first lookup
 	live     map[string]map[*pinConn]struct{} // open connections by address
 }
 
@@ -53,15 +54,22 @@ func (c *pinConn) Close() error {
 }
 
 func newPinnedAddr(pinned, host string) *pinnedAddr {
-	return &pinnedAddr{
+	p := &pinnedAddr{
 		pinned: pinned,
 		host:   host,
-		lookup: lookupDoTFirst(dotLookup, net.DefaultResolver.LookupHost),
 		dial:   (&net.Dialer{}).DialContext,
 		now:    time.Now,
 		limit:  pinnedDialLimit,
 		cands:  []string{pinned},
 	}
+	p.dot = dotServers(nil)
+	p.lookup = lookupDoTFirst(func(ctx context.Context, host string) ([]string, error) {
+		p.mu.Lock()
+		servers := p.dot
+		p.mu.Unlock()
+		return dotLookup(ctx, host, servers)
+	}, net.DefaultResolver.LookupHost)
+	return p
 }
 
 func (p *pinnedAddr) current() string {
@@ -172,15 +180,42 @@ func pickAddrs(addrs []string, skip string, n int) []string {
 
 type lookupFunc = func(ctx context.Context, host string) ([]string, error)
 
-// dotServers answer the first lookup, so that the name does not go out in
-// clear text from the user's network.
-var dotServers = []string{"77.88.8.8:853", "77.88.8.1:853"}
+// builtinDoT answers when the resolver list has no DNS-over-TLS server.
+var builtinDoT = []string{"77.88.8.8:853", "77.88.8.1:853"}
+
+const maxDoTServers = 4
+
+// dotServers picks the DNS-over-TLS servers (port 853) from a resolver list,
+// in its order, so that the first lookup does not send the name in clear text
+// from the user's network.
+func dotServers(resolvers []string) []string {
+	var out []string
+	for _, r := range resolvers {
+		if isDoT(r) && !slices.Contains(out, r) {
+			out = append(out, r)
+			if len(out) == maxDoTServers {
+				break
+			}
+		}
+	}
+	if len(out) == 0 {
+		return builtinDoT
+	}
+	return out
+}
+
+// setResolvers takes the DNS-over-TLS servers from the route pool's list.
+func (p *pinnedAddr) setResolvers(resolvers []string) {
+	p.mu.Lock()
+	p.dot = dotServers(resolvers)
+	p.mu.Unlock()
+}
 
 // dotLookup resolves host through DNS-over-TLS with certificate checks.
-func dotLookup(ctx context.Context, host string) ([]string, error) {
+func dotLookup(ctx context.Context, host string, servers []string) ([]string, error) {
 	r := &net.Resolver{PreferGo: true, Dial: func(ctx context.Context, _, _ string) (net.Conn, error) {
 		var err error
-		for _, server := range dotServers {
+		for _, server := range servers {
 			var c net.Conn
 			if c, err = dialResolver(ctx, "tcp", server); err == nil {
 				return c, nil
