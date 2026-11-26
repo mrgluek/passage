@@ -274,3 +274,59 @@ func TestDoTServersFromResolverList(t *testing.T) {
 		t.Fatalf("no DoT in the list: %v", got)
 	}
 }
+
+func TestPinnedWithoutMoveKeepsLiveConnections(t *testing.T) {
+	p := newPinnedAddr("192.0.2.1", "example.com")
+	p.httpMode = true
+	p.lookup = func(context.Context, string) ([]string, error) { return nil, errors.New("no answer") }
+	a, b := net.Pipe()
+	defer b.Close()
+	p.dial = func(context.Context, string, string) (net.Conn, error) { return a, nil }
+	conn, err := p.DialContext(context.Background(), "tcp", "example.com:443")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p.next(context.Background(), "192.0.2.1") {
+		t.Fatal("moved without another address")
+	}
+	_ = conn
+	p.mu.Lock()
+	n := len(p.live["192.0.2.1"])
+	p.mu.Unlock()
+	if n != 1 {
+		t.Fatalf("live connection closed although the route did not move: %d tracked", n)
+	}
+}
+
+func TestPinnedDialFinishingAfterMoveIsDropped(t *testing.T) {
+	p := newPinnedAddr("192.0.2.1", "example.com")
+	p.httpMode = true
+	p.lookup = func(context.Context, string) ([]string, error) { return []string{"192.0.2.2"}, nil }
+	release := make(chan struct{})
+	p.dial = func(context.Context, string, string) (net.Conn, error) {
+		<-release
+		a, _ := net.Pipe()
+		return a, nil
+	}
+	errc := make(chan error, 1)
+	go func() { _, err := p.DialContext(context.Background(), "tcp", "example.com:443"); errc <- err }()
+	time.Sleep(30 * time.Millisecond)
+	if !p.next(context.Background(), "192.0.2.1") {
+		t.Fatal("no move")
+	}
+	close(release)
+	if err := <-errc; err == nil {
+		t.Fatal("a dial to the old address survived the move")
+	}
+}
+
+func TestLookupDoTNotFoundIsNotRetriedInClear(t *testing.T) {
+	notFound := func(context.Context, string) ([]string, error) {
+		return nil, &net.DNSError{Err: "no such host", IsNotFound: true}
+	}
+	called := false
+	sys := func(context.Context, string) ([]string, error) { called = true; return nil, nil }
+	if _, err := lookupDoTFirst(notFound, sys)(context.Background(), "example.com"); err == nil || called {
+		t.Fatalf("err=%v system called=%v", err, called)
+	}
+}

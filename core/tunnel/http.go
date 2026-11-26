@@ -67,6 +67,7 @@ func NewHTTPClient(params links.HTTPParams) (*WSSClient, error) {
 			host = u.Hostname()
 		}
 		c.pin = newPinnedAddr(params.DialIP, host)
+		c.pin.httpMode = true
 		tr.DialContext = countingDial(func(ctx context.Context, network, address string) (net.Conn, error) {
 			return c.pin.DialContext(ctx, network, address)
 		})

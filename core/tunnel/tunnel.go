@@ -565,7 +565,7 @@ func (t *Tunnel) relayLocked(host string) *group {
 	for len(t.relays) > maxRelayGroups {
 		var oldest *group
 		for _, r := range t.relays {
-			if r == g || r.pinned || t.hasConnsLocked(r) {
+			if r == g || r.pinned || r.settling > 0 || t.hasConnsLocked(r) {
 				continue
 			}
 			if oldest == nil || r.used.Before(oldest.used) {

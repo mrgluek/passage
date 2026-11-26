@@ -2,6 +2,7 @@ package tunnel
 
 import (
 	"context"
+	"errors"
 	"net"
 	"slices"
 	"sync"
@@ -32,6 +33,7 @@ type pinnedAddr struct {
 	resolved time.Time
 	idx      int
 	since    time.Time
+	httpMode bool                             // pooled HTTP connections must not outlive a switch
 	dot      []string                         // DNS-over-TLS servers for the first lookup
 	live     map[string]map[*pinConn]struct{} // open connections by address
 }
@@ -96,6 +98,11 @@ func (p *pinnedAddr) DialContext(ctx context.Context, network, address string) (
 	}
 	pc := &pinConn{Conn: conn, p: p, addr: addr}
 	p.mu.Lock()
+	if p.cands[p.idx] != addr { // the route moved on while this dial ran
+		p.mu.Unlock()
+		conn.Close()
+		return nil, errors.New("address no longer in use")
+	}
 	if p.live == nil {
 		p.live = map[string]map[*pinConn]struct{}{}
 	}
@@ -128,22 +135,27 @@ func (p *pinnedAddr) next(ctx context.Context, failed string) bool {
 			p.mu.Unlock()
 			return true
 		}
+		if err != nil {
+			p.resolved = p.now().Add(30*time.Second - pinnedLookupTTL) // try again in 30 s
+		}
 		if err == nil {
 			cands = append([]string{p.pinned}, pickAddrs(addrs, p.pinned, pinnedMaxExtra)...)
 			p.cands = cands
 			p.idx = max(slices.Index(cands, failed), 0)
 		}
 	}
-	stale := p.live[failed]
-	delete(p.live, failed)
 	if p.idx+1 >= len(cands) {
 		p.idx = 0
 		p.mu.Unlock()
-		closeAll(stale)
 		return false
 	}
 	p.idx++
 	p.since = p.now()
+	var stale map[*pinConn]struct{}
+	if p.httpMode {
+		stale = p.live[failed]
+		delete(p.live, failed)
+	}
 	p.mu.Unlock()
 	closeAll(stale)
 	return true
@@ -216,8 +228,12 @@ func dotLookup(ctx context.Context, host string, servers []string) ([]string, er
 	r := &net.Resolver{PreferGo: true, Dial: func(ctx context.Context, _, _ string) (net.Conn, error) {
 		var err error
 		for _, server := range servers {
+			// Each server gets its share, so a silent one does not use it all.
+			sctx, cancel := context.WithTimeout(ctx, pinnedDoTLimit/time.Duration(len(servers)))
 			var c net.Conn
-			if c, err = dialResolver(ctx, "tcp", server); err == nil {
+			c, err = dialResolver(sctx, "tcp", server)
+			cancel()
+			if err == nil {
 				return c, nil
 			}
 		}
@@ -235,6 +251,11 @@ func lookupDoTFirst(dot, system lookupFunc) lookupFunc {
 		cancel()
 		if err == nil && len(addrs) > 0 {
 			return addrs, nil
+		}
+		// An authenticated "no such name" is an answer: do not ask in clear text.
+		var dnsErr *net.DNSError
+		if errors.As(err, &dnsErr) && dnsErr.IsNotFound {
+			return nil, err
 		}
 		return system(ctx, host)
 	}
