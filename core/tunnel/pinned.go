@@ -13,6 +13,7 @@ const (
 	pinnedLookupTTL = 5 * time.Minute
 	pinnedMaxExtra  = 2
 	pinnedDialLimit = 8 * time.Second
+	pinnedDoTLimit  = 3 * time.Second
 )
 
 // pinnedAddr picks the address a route dials. The pinned address is used
@@ -55,7 +56,7 @@ func newPinnedAddr(pinned, host string) *pinnedAddr {
 	return &pinnedAddr{
 		pinned: pinned,
 		host:   host,
-		lookup: net.DefaultResolver.LookupHost,
+		lookup: lookupDoTFirst(dotLookup, net.DefaultResolver.LookupHost),
 		dial:   (&net.Dialer{}).DialContext,
 		now:    time.Now,
 		limit:  pinnedDialLimit,
@@ -167,4 +168,39 @@ func pickAddrs(addrs []string, skip string, n int) []string {
 		out = out[:n]
 	}
 	return out
+}
+
+type lookupFunc = func(ctx context.Context, host string) ([]string, error)
+
+// dotServers answer the first lookup, so that the name does not go out in
+// clear text from the user's network.
+var dotServers = []string{"77.88.8.8:853", "77.88.8.1:853"}
+
+// dotLookup resolves host through DNS-over-TLS with certificate checks.
+func dotLookup(ctx context.Context, host string) ([]string, error) {
+	r := &net.Resolver{PreferGo: true, Dial: func(ctx context.Context, _, _ string) (net.Conn, error) {
+		var err error
+		for _, server := range dotServers {
+			var c net.Conn
+			if c, err = dialResolver(ctx, "tcp", server); err == nil {
+				return c, nil
+			}
+		}
+		return nil, err
+	}}
+	return r.LookupHost(ctx, host)
+}
+
+// lookupDoTFirst asks dot for a bounded time, and the system resolver only
+// when dot gives no address.
+func lookupDoTFirst(dot, system lookupFunc) lookupFunc {
+	return func(ctx context.Context, host string) ([]string, error) {
+		dctx, cancel := context.WithTimeout(ctx, pinnedDoTLimit)
+		addrs, err := dot(dctx, host)
+		cancel()
+		if err == nil && len(addrs) > 0 {
+			return addrs, nil
+		}
+		return system(ctx, host)
+	}
 }

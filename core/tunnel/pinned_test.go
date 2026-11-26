@@ -239,3 +239,25 @@ func TestPinnedFallbackWithLiveHTTP2Connection(t *testing.T) {
 		t.Fatalf("lookups=%d", lookups.Load())
 	}
 }
+
+func TestLookupDoTFirst(t *testing.T) {
+	var dotCalls, sysCalls int
+	ok := func(context.Context, string) ([]string, error) { dotCalls++; return []string{"192.0.2.2"}, nil }
+	bad := func(context.Context, string) ([]string, error) { dotCalls++; return nil, errors.New("blocked") }
+	sys := func(context.Context, string) ([]string, error) { sysCalls++; return []string{"192.0.2.3"}, nil }
+	sysBad := func(context.Context, string) ([]string, error) { sysCalls++; return nil, errors.New("no answer") }
+	if a, err := lookupDoTFirst(ok, sys)(context.Background(), "example.com"); err != nil || a[0] != "192.0.2.2" || sysCalls != 0 {
+		t.Fatalf("dot answered: %v %v sys=%d", a, err, sysCalls)
+	}
+	if a, err := lookupDoTFirst(bad, sys)(context.Background(), "example.com"); err != nil || a[0] != "192.0.2.3" || sysCalls != 1 {
+		t.Fatalf("fallback: %v %v sys=%d", a, err, sysCalls)
+	}
+	hang := func(ctx context.Context, _ string) ([]string, error) { <-ctx.Done(); return nil, ctx.Err() }
+	start := time.Now()
+	if _, err := lookupDoTFirst(hang, sysBad)(context.Background(), "example.com"); err == nil || time.Since(start) > pinnedDoTLimit+time.Second {
+		t.Fatalf("both fail: err=%v after %v", err, time.Since(start))
+	}
+	if sysCalls != 2 {
+		t.Fatalf("sys=%d", sysCalls)
+	}
+}

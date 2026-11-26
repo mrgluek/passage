@@ -3,7 +3,8 @@
 ## 0.9.8
 
 - A route with a fixed server address tries the host's other addresses when
-  that address stops answering, and returns to it later.
+  that address stops answering, and returns to it later. The addresses are
+  looked up over an encrypted connection first.
 - Names that do not exist no longer appear as relays.
 - A failing iroh helper is restarted at most three times in 30 minutes.
 
