@@ -198,3 +198,44 @@ func TestPinnedNoFallbackWhenSNIDiffers(t *testing.T) {
 		t.Fatalf("host %q would be looked up", c.pin.host)
 	}
 }
+
+// A live HTTP/2 connection to the stale node must not keep new sessions there.
+func TestPinnedFallbackWithLiveHTTP2Connection(t *testing.T) {
+	var n atomic.Int32
+	hold := make(chan struct{})
+	bad := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if n.Add(1) == 1 {
+			w.WriteHeader(200)
+			w.(http.Flusher).Flush()
+			<-hold
+			return
+		}
+		panic(http.ErrAbortHandler)
+	}))
+	bad.EnableHTTP2 = true
+	bad.StartTLS()
+	t.Cleanup(func() { close(hold); bad.Close() })
+	client, lookups, _ := pinnedFixture(t, resetHandler)
+	badAddr := bad.Listener.Addr().String()
+	orig := client.pin.dial
+	client.pin.dial = func(ctx context.Context, network, address string) (net.Conn, error) {
+		host, _, _ := net.SplitHostPort(address)
+		if host == "192.0.2.1" {
+			return (&net.Dialer{}).DialContext(ctx, network, badAddr)
+		}
+		return orig(ctx, network, address)
+	}
+	resp, err := httpRequest(context.Background(), client.httpClient, client.params.Endpoint, "x", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	conn := dialTest(t, client, "mail.example.org:443")
+	defer conn.Close()
+	if err := wssRoundTrip(conn, []byte("fallback with a live h2 connection")); err != nil {
+		t.Fatal(err)
+	}
+	if lookups.Load() != 1 {
+		t.Fatalf("lookups=%d", lookups.Load())
+	}
+}
