@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -62,3 +63,68 @@ func TestUnreachableNameKeepsRelayGroup(t *testing.T) {
 }
 
 type testCounter struct{ v atomic.Int32 }
+
+func TestNewRelayIsNotEvictedDuringFirstDial(t *testing.T) {
+	release := make(chan struct{})
+	slow := func(ctx context.Context, _, _ string) (net.Conn, error) {
+		select {
+		case <-release:
+		case <-ctx.Done():
+		}
+		return nil, errors.New("filtered")
+	}
+	tt := newTestTunnel(t, ModeAuto, slow, slow)
+	a, b := net.Pipe()
+	defer b.Close()
+	done := make(chan struct{})
+	go func() { defer close(done); tt.connect(a, "new.example.org:443", false) }()
+	time.Sleep(50 * time.Millisecond)
+	tt.mu.Lock()
+	for i := range maxRelayGroups + 1 {
+		g := tt.relayLocked("old" + string(rune('a'+i)) + ".example.org")
+		g.used = time.Now().Add(-time.Hour)
+	}
+	_, kept := tt.relays["new.example.org"]
+	tt.mu.Unlock()
+	close(release)
+	<-done
+	if !kept {
+		t.Fatal("a relay group was evicted during its first dial")
+	}
+}
+
+func TestConcurrentFirstDialsKeepGroup(t *testing.T) {
+	gate, firstGo := make(chan struct{}), make(chan struct{})
+	n := 0
+	var mu sync.Mutex
+	direct := func(ctx context.Context, _, _ string) (net.Conn, error) {
+		mu.Lock()
+		n++
+		first := n == 1
+		mu.Unlock()
+		if first {
+			<-firstGo
+			return nil, &net.OpError{Op: "dial", Err: &net.DNSError{Err: "no such host", IsNotFound: true}}
+		}
+		<-gate
+		return nil, errors.New("filtered")
+	}
+	tun := func(ctx context.Context, _, _ string) (net.Conn, error) { return nil, errors.New("filtered") }
+	tt := newTestTunnel(t, ModeAuto, direct, tun)
+	a1, b1 := net.Pipe()
+	a2, b2 := net.Pipe()
+	defer b1.Close()
+	defer b2.Close()
+	d1, d2 := make(chan struct{}), make(chan struct{})
+	go func() { defer close(d1); tt.connect(a1, "mail.example.org:443", false) }()
+	time.Sleep(30 * time.Millisecond)
+	go func() { defer close(d2); tt.connect(a2, "mail.example.org:443", false) }()
+	time.Sleep(30 * time.Millisecond)
+	close(firstGo)
+	<-d1
+	if relayCount(tt) != 1 {
+		t.Fatal("group dropped while another first dial was running")
+	}
+	close(gate)
+	<-d2
+}

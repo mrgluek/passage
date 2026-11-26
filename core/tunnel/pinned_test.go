@@ -160,3 +160,41 @@ func TestPinnedFallbackWSS(t *testing.T) {
 		t.Fatalf("lookups=%d current=%s", lookups.Load(), client.pin.current())
 	}
 }
+
+func TestPinnedDialAttemptHasOwnLimit(t *testing.T) {
+	p := newPinnedAddr("192.0.2.1", "example.com")
+	p.limit = 50 * time.Millisecond
+	p.dial = func(ctx context.Context, _, _ string) (net.Conn, error) { <-ctx.Done(); return nil, ctx.Err() }
+	parent, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if _, err := p.DialContext(parent, "tcp", "example.com:443"); err == nil || parent.Err() != nil {
+		t.Fatalf("err=%v parent=%v", err, parent.Err())
+	}
+}
+
+func TestPinnedLookupRefreshes(t *testing.T) {
+	p := newPinnedAddr("192.0.2.1", "example.com")
+	now := time.Unix(1000, 0)
+	p.now = func() time.Time { return now }
+	answer := "192.0.2.2"
+	p.lookup = func(context.Context, string) ([]string, error) { return []string{answer}, nil }
+	if !p.next(context.Background(), "192.0.2.1") || p.current() != "192.0.2.2" {
+		t.Fatal("first move")
+	}
+	answer = "192.0.2.9"
+	now = now.Add(pinnedLookupTTL)
+	if !p.next(context.Background(), "192.0.2.2") || p.current() != "192.0.2.9" {
+		t.Fatalf("stale list kept: %s", p.current())
+	}
+}
+
+func TestPinnedNoFallbackWhenSNIDiffers(t *testing.T) {
+	c, err := NewHTTPClient(links.HTTPParams{Endpoint: "https://example.com/passage", Key: wssTestKey, DialIP: "192.0.2.1", SNI: "front.example.net"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close()
+	if c.pin.host != "" {
+		t.Fatalf("host %q would be looked up", c.pin.host)
+	}
+}

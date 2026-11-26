@@ -102,7 +102,7 @@ func NewWSSClient(params links.WSSParams) (*WSSClient, error) {
 	var pin *pinnedAddr
 	if params.DialIP != "" {
 		var host string
-		if u, err := url.Parse(params.Endpoint); err == nil {
+		if u, err := url.Parse(params.Endpoint); err == nil && (params.SNI == "" || params.SNI == u.Hostname()) {
 			host = u.Hostname()
 		}
 		pin = newPinnedAddr(params.DialIP, host)

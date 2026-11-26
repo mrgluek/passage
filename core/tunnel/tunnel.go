@@ -108,6 +108,7 @@ type group struct {
 	dnsLogged        time.Time
 	noSuchNameAt     time.Time // newest direct lookup that found no such name
 	carried          bool      // a connection to this group has opened
+	settling         int       // first dials in progress
 }
 
 // viaLocked is the route type behind the tunnel while the group uses it.
@@ -981,6 +982,10 @@ func (t *Tunnel) connect(c net.Conn, addr string, socks bool, forward ...int) {
 	}
 	g := t.groupForLocked(addr)
 	settle := g.kind == kindRelay && !g.carried
+	if settle {
+		g.used = t.timeNow()
+		g.settling++
+	}
 	t.mu.Unlock()
 	if !settle {
 		t.learn(g, addr)
@@ -1159,9 +1164,10 @@ func (t *Tunnel) learn(g *group, addr string) {
 // otherwise the group learns its host as usual.
 func (t *Tunnel) settleRelay(g *group, addr string, err error, started time.Time) {
 	t.mu.Lock()
+	g.settling--
 	if err == nil {
 		g.carried = true
-	} else if !g.carried && !g.pinned && !g.noSuchNameAt.Before(started) && t.relays[g.name] == g && !t.hasConnsLocked(g) {
+	} else if !g.carried && !g.pinned && g.settling == 0 && !g.noSuchNameAt.Before(started) && t.relays[g.name] == g && !t.hasConnsLocked(g) {
 		delete(t.relays, g.name)
 		t.mu.Unlock()
 		return

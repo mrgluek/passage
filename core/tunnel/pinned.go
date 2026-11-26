@@ -3,6 +3,7 @@ package tunnel
 import (
 	"context"
 	"net"
+	"slices"
 	"sync"
 	"time"
 )
@@ -11,6 +12,7 @@ const (
 	pinnedReturn    = 30 * time.Minute
 	pinnedLookupTTL = 5 * time.Minute
 	pinnedMaxExtra  = 2
+	pinnedDialLimit = 8 * time.Second
 )
 
 // pinnedAddr picks the address a route dials. The pinned address is used
@@ -22,6 +24,7 @@ type pinnedAddr struct {
 	lookup func(ctx context.Context, host string) ([]string, error)
 	dial   func(ctx context.Context, network, address string) (net.Conn, error)
 	now    func() time.Time
+	limit  time.Duration // per dial attempt
 
 	mu       sync.Mutex
 	cands    []string // pinned first
@@ -37,6 +40,7 @@ func newPinnedAddr(pinned, host string) *pinnedAddr {
 		lookup: net.DefaultResolver.LookupHost,
 		dial:   (&net.Dialer{}).DialContext,
 		now:    time.Now,
+		limit:  pinnedDialLimit,
 		cands:  []string{pinned},
 	}
 }
@@ -55,6 +59,9 @@ func (p *pinnedAddr) DialContext(ctx context.Context, network, address string) (
 	if err != nil {
 		return nil, err
 	}
+	// A dropped SYN must fail here, while the session's own deadline is alive.
+	ctx, cancel := context.WithTimeout(ctx, p.limit)
+	defer cancel()
 	return p.dial(ctx, network, net.JoinHostPort(p.current(), port))
 }
 
@@ -63,20 +70,30 @@ func (p *pinnedAddr) DialContext(ctx context.Context, network, address string) (
 // starts again from the pinned one.
 func (p *pinnedAddr) next(ctx context.Context, failed string) bool {
 	p.mu.Lock()
-	defer p.mu.Unlock()
 	if p.cands[p.idx] != failed {
+		p.mu.Unlock()
 		return true // another session already moved on
 	}
-	if len(p.cands) == 1 && p.host != "" && net.ParseIP(p.host) == nil && p.now().Sub(p.resolved) >= pinnedLookupTTL {
+	cands := p.cands
+	if p.host != "" && net.ParseIP(p.host) == nil && p.now().Sub(p.resolved) >= pinnedLookupTTL {
 		p.resolved = p.now()
+		p.mu.Unlock()
 		lctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 		addrs, err := p.lookup(lctx, p.host)
 		cancel()
+		p.mu.Lock()
+		if p.cands[p.idx] != failed {
+			p.mu.Unlock()
+			return true
+		}
 		if err == nil {
-			p.cands = append(p.cands, pickAddrs(addrs, p.pinned, pinnedMaxExtra)...)
+			cands = append([]string{p.pinned}, pickAddrs(addrs, p.pinned, pinnedMaxExtra)...)
+			p.cands = cands
+			p.idx = max(slices.Index(cands, failed), 0)
 		}
 	}
-	if p.idx+1 >= len(p.cands) {
+	defer p.mu.Unlock()
+	if p.idx+1 >= len(cands) {
 		p.idx = 0
 		return false
 	}

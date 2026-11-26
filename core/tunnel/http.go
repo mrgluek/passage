@@ -63,7 +63,7 @@ func NewHTTPClient(params links.HTTPParams) (*WSSClient, error) {
 	tr.ForceAttemptHTTP2 = true
 	if params.DialIP != "" {
 		var host string
-		if u, err := url.Parse(params.Endpoint); err == nil {
+		if u, err := url.Parse(params.Endpoint); err == nil && (params.SNI == "" || params.SNI == u.Hostname()) {
 			host = u.Hostname()
 		}
 		c.pin = newPinnedAddr(params.DialIP, host)
