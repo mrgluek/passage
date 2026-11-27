@@ -61,7 +61,7 @@ func (d *siteDNS) lookup(ctx context.Context, host string, fallback bool) ([]str
 	}
 	var dnsErr *net.DNSError
 	if !fallback || errors.As(err, &dnsErr) && dnsErr.IsNotFound {
-		return nil, fmt.Errorf("%w: %v", errSiteDoT, err)
+		return nil, fmt.Errorf("%w: %w", errSiteDoT, err)
 	}
 	return d.system(ctx, host)
 }

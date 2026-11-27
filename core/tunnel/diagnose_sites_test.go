@@ -5,11 +5,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 )
 
 func TestNetworkTestChecksListedSitesUnderLabels(t *testing.T) {
@@ -21,17 +23,24 @@ func TestNetworkTestChecksListedSitesUnderLabels(t *testing.T) {
 	defer func() { diagTelegramDCs = saved }()
 	var mu sync.Mutex
 	probed := map[string]string{} // address -> SNI, direct column
-	tt.probeTLS = func(_ context.Context, addr, sni string) error {
+	var tunnelProbes atomic.Int32
+	tunnelDial := func(context.Context, string, string) (net.Conn, error) {
+		tunnelProbes.Add(1)
+		return nil, errors.New("down")
+	}
+	tt.ways[RouteTunnel] = way{tunnelDial, 0}
+	tt.siteDataProbe = func(ctx context.Context, dial dialFunc, addr, sni string) error {
+		if c, err := dial(ctx, "tcp", addr); err != nil {
+			return err
+		} else {
+			c.Close()
+		}
 		mu.Lock()
 		probed[addr] = sni
 		mu.Unlock()
 		return nil
 	}
-	var tunnelProbes atomic.Int32
-	tt.ways[RouteTunnel] = way{func(context.Context, string, string) (net.Conn, error) {
-		tunnelProbes.Add(1)
-		return nil, errors.New("down")
-	}, 0}
+	tt.ways[RouteDirect] = way{echoDialer("d:", new(atomic.Int32)), time.Second}
 	d := tt.Diagnose(context.Background())
 	var sites []DiagRow
 	for _, r := range d.Rows {
@@ -98,7 +107,7 @@ func TestNetworkTestCapsTheSiteRows(t *testing.T) {
 	saved := diagTelegramDCs
 	diagTelegramDCs = nil
 	defer func() { diagTelegramDCs = saved }()
-	tt.probeTLS = func(context.Context, string, string) error { return nil }
+	tt.siteDataProbe = func(context.Context, dialFunc, string, string) error { return nil }
 	d := tt.Diagnose(context.Background())
 	n := 0
 	for _, r := range d.Rows {
@@ -108,5 +117,83 @@ func TestNetworkTestCapsTheSiteRows(t *testing.T) {
 	}
 	if n != diagSiteRows || d.SitesNotTested != 3 {
 		t.Fatalf("%d rows, %d not tested", n, d.SitesNotTested)
+	}
+}
+
+func TestDataProbeTellsFlowFromStall(t *testing.T) {
+	big := strings.Repeat("x", siteDataLimit)
+	for name, tc := range map[string]struct {
+		r    io.Reader
+		want string
+	}{
+		"flows":       {strings.NewReader(big), ""},
+		"small reply": {strings.NewReader("HTTP/1.1 301 Moved\r\n\r\n"), ""},
+		"stall":       {io.MultiReader(strings.NewReader(strings.Repeat("x", 12<<10)), timeoutReader{}), "stall 12KB"},
+		"nothing":     {timeoutReader{}, "no data"},
+	} {
+		err := readData(tc.r)
+		got := ""
+		if err != nil {
+			got = shortError(err)
+		}
+		if got != tc.want {
+			t.Errorf("%s: %q", name, got)
+		}
+	}
+}
+
+type timeoutReader struct{}
+
+func (timeoutReader) Read([]byte) (int, error) { return 0, timeoutErr{} }
+
+type timeoutErr struct{}
+
+func (timeoutErr) Error() string   { return "i/o timeout" }
+func (timeoutErr) Timeout() bool   { return true }
+func (timeoutErr) Temporary() bool { return true }
+
+// A bare name without an address is tested as www.; without either, one
+// "no address" cell and the rest skipped.
+func TestNetworkTestTriesWWWThenSaysNoAddress(t *testing.T) {
+	tt := newBrowserTunnel(t, []SiteGroup{{Via: "smart", Hosts: []string{"bare.example.org", "gone.example.org"}}}, nil, nil)
+	tt.cfg.Canaries, tt.cfg.References = nil, nil
+	saved := diagTelegramDCs
+	diagTelegramDCs = nil
+	defer func() { diagTelegramDCs = saved }()
+	notFound := &net.DNSError{Err: "no such host", IsNotFound: true}
+	tt.siteDNS = fakeSiteDNS(func(_ context.Context, h string) ([]string, error) {
+		if h == "www.bare.example.org" {
+			return []string{"192.0.2.7"}, nil
+		}
+		return nil, notFound
+	}, func(context.Context, string) ([]string, error) { return nil, notFound })
+	tt.strategies = []strategy{{"tlsfrag", echoDialer("s:", new(atomic.Int32))}}
+	tt.ways[RouteDirect] = way{echoDialer("d:", new(atomic.Int32)), time.Second}
+	var mu sync.Mutex
+	var snis []string
+	tt.siteDataProbe = func(_ context.Context, _ dialFunc, addr, sni string) error {
+		mu.Lock()
+		snis = append(snis, sni+"@"+addr)
+		mu.Unlock()
+		return nil
+	}
+	d := tt.Diagnose(context.Background())
+	byHost := map[string]DiagRow{}
+	for _, r := range d.Rows {
+		byHost[r.Host] = r
+	}
+	www, gone := byHost["www.bare.example.org"], byHost["gone.example.org"]
+	if !www.Results[0].OK || !www.Results[1].OK {
+		t.Fatalf("www row %+v", www)
+	}
+	if gone.Results[0].Error != "no address" || !gone.Results[1].Skip {
+		t.Fatalf("gone row %+v", gone)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	for _, s := range snis {
+		if s != "www.bare.example.org@192.0.2.7:443" {
+			t.Fatalf("probed %v", snis)
+		}
 	}
 }
