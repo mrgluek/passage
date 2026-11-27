@@ -15,9 +15,29 @@ type browserView struct {
 	Show   bool   `json:"show"`
 	PAC    string `json:"pac"`
 	Sites  int    `json:"sites"`
-	System bool   `json:"system"`           // this platform has the system switch
-	On     bool   `json:"on"`               // the system address is ours now
-	Notice string `json:"notice,omitempty"` // why the switch was refused
+	System bool   `json:"system"` // this platform has the system switch
+	On     bool   `json:"on"`     // the system address is ours now
+	// Confirmed: the user set the address by hand.
+	Confirmed bool   `json:"confirmed"`
+	Notice    string `json:"notice,omitempty"` // why the switch was refused
+}
+
+// connectDone says whether the home screen's "connect an app" step is done:
+// a chat app has used the proxy, or, when the subscription lists sites, the
+// browser is set up (the system switch is on, or the user confirmed a manual
+// address). Once it is done the screen stops asking and only offers
+// "connect another app".
+func connectDone(appSeen, hasSites, systemOn, confirmed bool) bool {
+	return appSeen || hasSites && (systemOn || confirmed)
+}
+
+// confirmBrowser records that the user set the PAC address in the browser by hand.
+func (a *App) confirmBrowser(on bool) {
+	a.mu.Lock()
+	a.settings.BrowserConfirmed = on
+	a.saveSettings()
+	a.mu.Unlock()
+	a.changed()
 }
 
 func (a *App) siteCountLocked() int {
@@ -67,6 +87,7 @@ func (a *App) browserViewLocked() browserView {
 		v.PAC = a.pacURLLocked()
 	}
 	v.On = a.settings.SysBackup.Active
+	v.Confirmed = a.settings.BrowserConfirmed
 	if a.sysNotice != "" {
 		v.Notice = a.t.f(a.sysNotice)
 		if a.sysNotice == "browser_refuse_error" || a.sysNotice == "browser_refuse_policy" {

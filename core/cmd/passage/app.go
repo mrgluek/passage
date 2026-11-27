@@ -521,6 +521,8 @@ type view struct {
 	Forwards          []tunnel.ForwardStatus `json:"forwards"`
 	WhatsAppStatus    whatsappStatus         `json:"whatsapp_status"`
 	Browser           browserView            `json:"browser"`
+	// ConnectDone: the home screen's connect step is done (app or browser).
+	ConnectDone bool `json:"connect_done"`
 }
 
 // startHint asks to start the proxy when routes exist but it is not running.
@@ -607,6 +609,7 @@ func (a *App) viewLocked() (view, bool) {
 		v.SubscriptionNotice = a.subscriptionNotice
 	}
 	v.Browser = a.browserViewLocked()
+	v.ConnectDone = connectDone(v.AppSeen, v.Browser.Sites > 0, v.Browser.On || a.settings.SystemPAC, v.Browser.Confirmed)
 	v.Update = a.updateViewLocked()
 	v.Full = full
 	return v, s.Running && !s.AutostartDismissed
@@ -1037,6 +1040,8 @@ func (a *App) call(method string, arg json.RawMessage) (any, error) {
 		a.mu.Unlock()
 	case "setWhatsApp":
 		return nil, a.setWhatsApp(flag())
+	case "confirmBrowser":
+		a.confirmBrowser(flag())
 	case "setSystemPAC":
 		return nil, a.setSystemPAC(flag())
 	case "setAuth":

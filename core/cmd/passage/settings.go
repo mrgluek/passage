@@ -58,7 +58,9 @@ type Settings struct {
 	// SystemPAC is the wish to use Passage in the system proxy settings
 	// (Windows); SysBackup is kept while the system address is ours.
 	SystemPAC bool
-	SysBackup sysBackup
+	// BrowserConfirmed: the user said the browser is set up by hand.
+	BrowserConfirmed bool
+	SysBackup        sysBackup
 	// Edits are local changes to the link's routes, by route ID.
 	Edits map[string]tunnel.RouteEdit
 }
@@ -201,6 +203,8 @@ func loadSettings(path string) (Settings, bool, error) {
 			}
 		case "system_pac":
 			s.SystemPAC = v == "true" || v == "1"
+		case "browser_confirmed":
+			s.BrowserConfirmed = v == "true" || v == "1"
 		case "sys_backup_ours":
 			s.SysBackup.Ours = v
 		case "sys_backup_prev":
@@ -292,7 +296,8 @@ app_seen=%t
 lang=%s
 browser_port=%d
 system_pac=%t
-`, s.Port, s.User, s.Pass, s.Auth, s.WhatsApp, s.WhatsAppChatPort, s.WhatsAppMediaPort, s.Mode, s.My, s.Running, s.AutoUpdate, s.NextUpdate.Format(time.RFC3339), s.DismissedUpdate, s.AutostartDismissed, s.RoutesNotice, s.AppSeen, s.Lang, s.BrowserPort, s.SystemPAC)
+browser_confirmed=%t
+`, s.Port, s.User, s.Pass, s.Auth, s.WhatsApp, s.WhatsAppChatPort, s.WhatsAppMediaPort, s.Mode, s.My, s.Running, s.AutoUpdate, s.NextUpdate.Format(time.RFC3339), s.DismissedUpdate, s.AutostartDismissed, s.RoutesNotice, s.AppSeen, s.Lang, s.BrowserPort, s.SystemPAC, s.BrowserConfirmed)
 	if b := s.SysBackup; b.Active {
 		text += fmt.Sprintf("sys_backup_ours=%s\nsys_backup_prev=%s\nsys_backup_enable=%t\nsys_backup_server=%s\nsys_backup_detect=%t\n", oneLineValue(b.Ours), oneLineValue(b.PrevURL), b.ProxyEnable, oneLineValue(b.ProxyServer), b.AutoDetect)
 	}

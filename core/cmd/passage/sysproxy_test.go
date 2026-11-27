@@ -298,7 +298,7 @@ func TestBrowserSettingsKeysOldFileKeepsDefaults(t *testing.T) {
 func TestBrowserStringsInBothLanguages(t *testing.T) {
 	for _, lang := range []string{"en", "ru"} {
 		tr := tr(table(lang))
-		for _, k := range []string{"browser_title", "browser_text", "browser_pac", "browser_sites", "browser_manual", "browser_system", "browser_system_help", "browser_refuse_pac", "browser_refuse_manual", "browser_refuse_policy"} {
+		for _, k := range []string{"browser_title", "browser_text_system", "browser_text_manual", "browser_manual_system", "browser_manual_only", "tab_browser", "h_browser_turn_on", "h_browser_done", "h_step_app_sites", "h_waiting_sites", "browser_pac", "browser_sites", "browser_system", "browser_system_help", "browser_refuse_pac", "browser_refuse_manual", "browser_refuse_policy"} {
 			if tr.f(k) == "" || tr.f(k) == k {
 				t.Errorf("%s %s missing", lang, k)
 			}
@@ -350,5 +350,57 @@ func TestPolicyRefusalNamesTheValue(t *testing.T) {
 	a.setSystemPAC(true)
 	if n := a.view().Browser.Notice; !strings.Contains(n, "ProxyServer") {
 		t.Fatalf("notice %q", n)
+	}
+}
+
+// The home screen's connect step: a chat app, or the browser when the
+// subscription lists sites. Done means the screen stops asking.
+func TestConnectDoneRules(t *testing.T) {
+	for _, tc := range []struct {
+		name                                         string
+		appSeen, hasSites, systemOn, confirmed, want bool
+	}{
+		{"nothing yet", false, false, false, false, false},
+		{"chat app seen", true, false, false, false, true},
+		{"sites, nothing set up", false, true, false, false, false},
+		{"sites, system switch on", false, true, true, false, true},
+		{"sites, address confirmed by hand", false, true, false, true, true},
+		{"no sites: switch and confirmation do not count", false, false, true, true, false},
+		{"chat app and browser", true, true, true, true, true},
+	} {
+		if got := connectDone(tc.appSeen, tc.hasSites, tc.systemOn, tc.confirmed); got != tc.want {
+			t.Errorf("%s: %v, want %v", tc.name, got, tc.want)
+		}
+	}
+}
+
+func TestHomeViewStopsOfferingAfterTheBrowserIsSetUp(t *testing.T) {
+	f := &fakeProxy{}
+	a, dir := browserApp(t, f, true)
+	if a.view().ConnectDone {
+		t.Fatal("done before anything was set up")
+	}
+	a.confirmBrowser(true)
+	v := a.view()
+	if !v.ConnectDone || !v.Browser.Confirmed || v.AppSeen {
+		t.Fatalf("%+v", v)
+	}
+	if !reload(t, dir).BrowserConfirmed {
+		t.Fatal("confirmation not saved")
+	}
+	a.confirmBrowser(false)
+	if a.view().ConnectDone {
+		t.Fatal("still done after the confirmation was withdrawn")
+	}
+	if err := a.setSystemPAC(true); err != nil {
+		t.Fatal(err)
+	}
+	if !a.view().ConnectDone {
+		t.Fatal("the system switch does not finish the step")
+	}
+	// The sites go away from the subscription: the step is open again.
+	a.linkCfg.Sites = nil
+	if a.view().ConnectDone {
+		t.Fatal("browser counts without sites")
 	}
 }

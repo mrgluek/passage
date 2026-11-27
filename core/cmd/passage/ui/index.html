@@ -103,6 +103,9 @@ button.icon svg { width: 24px; height: 24px; fill: var(--accent); display: block
 .values .v { display: flex; padding: 5px 0; cursor: pointer; }
 .values .v span:first-child { width: 80px; color: var(--muted); font-size: 12px; }
 .values .v span:last-child { flex: 1; font: 13px Consolas, monospace; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.values.stack .v { flex-direction: column; align-items: stretch; gap: 2px; }
+.values.stack .v span:first-child { width: auto; }
+.values.stack .v span:last-child { white-space: normal; overflow-wrap: anywhere; }
 .values .v span.showpw { flex: none; margin-left: auto; padding-left: 8px; font: inherit; overflow: visible; color: var(--accent); cursor: pointer; }
 pre { font: 12px/1.4 Consolas, monospace; white-space: pre-wrap; word-break: break-all; margin: 4px 0;
   user-select: text; }
@@ -521,7 +524,7 @@ function stepRow(kind, done, current, text, number) {
   return d;
 }
 function renderHome(v) {
-  const hasLink = v.has_link, running = v.running, seen = v.app_seen;
+  const hasLink = v.has_link, running = v.running, seen = v.connect_done, sites = !!(v.browser && v.browser.sites > 0);
   if (lastTraffic !== null && v.traffic > lastTraffic) flowUntil = Date.now() + 4000;
   lastTraffic = v.traffic;
   const flowing = running && Date.now() < flowUntil;
@@ -537,7 +540,7 @@ function renderHome(v) {
   else if (hs === "starting") { title = t("h_title_connecting"); reason = t("h_reason_connecting"); }
   else if (hs === "problem") { title = t("h_title_" + hr); reason = t("h_reason_" + hr); }
   else if (hs === "working" || hs === "limited") { title = t("h_title_working"); reason = t(hs === "limited" ? "h_reason_limited" : "h_reason_ok"); }
-  else { title = t("h_title_on"); reason = t(seen ? "h_reason_ok" : "h_reason_wait"); }
+  else { title = t("h_title_on"); reason = t(seen ? "h_reason_ok" : sites ? "h_reason_wait_sites" : "h_reason_wait"); }
   if (!hasLink) main = [t("h_add_link"), () => { page("settings"); showLink(true).then(() => $("linkText").focus()); }];
   else if (!running) main = [t("h_turn_on"), () => call("start").then(refresh, fail)];
   if (running) second = [t("h_turn_off"), () => call("stop").then(refresh, fail)];
@@ -562,7 +565,7 @@ function renderHome(v) {
   if (second) { $("sSecond").textContent = second[0]; $("sSecond").onclick = second[1]; }
   const done = hasLink && running && seen;
   $("setupHead").textContent = t(done ? "h_steps_done" : "h_steps_pending");
-  const key = JSON.stringify([hasLink, running, seen, hs, hr, tab, tabsOpen, showPass, v.host, v.port, v.user, v.pass, v.auth, v.lang, v.proxy_link, v.velta_link, v.whatsapp, v.whatsapp_chat_port, v.whatsapp_media_port, v.whatsapp_error, v.whatsapp_status]);
+  const key = JSON.stringify([hasLink, running, seen, hs, hr, tab, tabsOpen, showPass, v.host, v.port, v.user, v.pass, v.auth, v.lang, v.proxy_link, v.velta_link, v.whatsapp, v.whatsapp_chat_port, v.whatsapp_media_port, v.whatsapp_error, v.whatsapp_status, sites, v.browser]);
   if (key === shownHome) return;
   shownHome = key;
   const steps = $("steps");
@@ -570,7 +573,7 @@ function renderHome(v) {
   steps.append(
     stepRow("link", hasLink, !hasLink, t(hasLink ? "h_step_link_done" : "h_step_link"), 1),
     stepRow("on", hasLink && running, hasLink && !running, t(hasLink && running ? "h_step_on_done" : "h_step_on"), 2));
-  const app = stepRow("app", seen, hasLink && running && !seen, t(seen ? "h_step_app_done" : "h_step_app"), 3);
+  const app = stepRow("app", seen, hasLink && running && !seen, t(seen ? (v.app_seen ? "h_step_app_done" : "h_step_connected") : sites ? "h_step_app_sites" : "h_step_app"), 3);
   if (seen) {
     app.classList.add("tap");
     const c = document.createElement("span");
@@ -583,7 +586,7 @@ function renderHome(v) {
   const open = !seen || tabsOpen;
   setHidden("appBlock", !open);
   setHidden("waiting", seen);
-  $("waiting").textContent = t("h_waiting");
+  $("waiting").textContent = t(sites ? "h_waiting_sites" : "h_waiting");
   setHidden("hideTabs", !(seen && tabsOpen));
   $("hideTabs").textContent = t("h_hide");
   $("hideTabs").onclick = () => { tabsOpen = false; shownHome = ""; renderHome(last); };
@@ -593,13 +596,15 @@ function renderHome(v) {
   if (open) renderTabs(v);
 }
 function renderTabs(v) {
-  const names = ["tab_delta", "tab_tg", "whatsapp", "tab_other"];
+  const sites = !!(v.browser && v.browser.sites > 0);
+  const names = sites ? ["tab_delta", "tab_tg", "whatsapp", "tab_browser", "tab_other"] : ["tab_delta", "tab_tg", "whatsapp", "tab_other"];
+  if (tab >= names.length) tab = 0;
   const strip = $("tabs");
   strip.textContent = "";
   names.forEach((k, i) => {
     const d = document.createElement("div");
     d.textContent = t(k);
-    if (i === tab) d.className = "on"; else d.onclick = () => { tab = i; showPass = false; if (i === 2) call("whatsappPorts").then(refresh, fail); shownHome = ""; renderHome(last); };
+    if (i === tab) d.className = "on"; else d.onclick = () => { tab = i; showPass = false; if (names[i] === "whatsapp") call("whatsappPorts").then(refresh, fail); shownHome = ""; renderHome(last); };
     strip.append(d);
   });
   const pane = $("tabpane");
@@ -612,13 +617,30 @@ function renderTabs(v) {
     p.append(t("h_download") + " ", a);
     return p;
   };
-  if (tab === 0) { pane.append(para(t("tab_delta_text")), button(t("h_copy_link"), () => copy(v.proxy_link, t("proxy_link_copied"))), download(DOWNLOADS.delta));
+  const current = names[tab];
+  if (current === "tab_delta") { pane.append(para(t("tab_delta_text")), button(t("h_copy_link"), () => copy(v.proxy_link, t("proxy_link_copied"))), download(DOWNLOADS.delta));
     pane.append(para(t("tab_velta_text")), button(t("h_open_velta"), () =>
     call("openVelta").then(opened => copy(v.velta_link, t(opened ? "velta_link_opened" : "velta_link_copied")), fail)), download(DOWNLOADS.velta));
-  } else if (tab === 1) pane.append(para(t("tab_tg_text")), button(t("h_open_tg"), () =>
+  } else if (current === "tab_tg") pane.append(para(t("tab_tg_text")), button(t("h_open_tg"), () =>
     call("openTg").then(opened => copy(v.tg_link, t(opened ? "tg_link_opened" : "tg_link_copied")), fail)));
-  else if (tab === 2) renderWhatsApp(pane, v, true);
+  else if (current === "whatsapp") renderWhatsApp(pane, v, true);
+  else if (current === "tab_browser") renderBrowserTab(pane, v, para, button);
   else renderOther(pane, v, para);
+}
+function renderBrowserTab(pane, v, para, button) {
+  const b = v.browser || {};
+  pane.append(para(t("tab_browser_text")));
+  if (b.system) {
+    // One click on Windows: the same switch as in Settings; a refusal shows below.
+    if (!b.on) pane.append(button(t("h_browser_turn_on"), () => call("setSystemPAC", true).then(refresh, fail)));
+    else pane.append(para(t("browser_system_help")));
+    if (b.notice) { const p = para(b.notice); p.className = "hint warn"; pane.append(p); }
+    pane.append(para(t("browser_manual_system")));
+  } else {
+    pane.append(para(t("browser_manual_only")));
+  }
+  pane.append(browserBlock(b));
+  if (!b.on) pane.append(button(t(b.confirmed ? "h_browser_undo" : "h_browser_done"), () => call("confirmBrowser", !b.confirmed).then(refresh, fail)));
 }
 function renderOther(pane, v, para) {
   const title = document.createElement("h3"); title.textContent = t("other_app_title");
@@ -681,6 +703,17 @@ function renderWhatsApp(pane, v, home) {
     if (status.hint) para(t("whatsapp_check"));
   }
 }
+function browserBlock(b) {
+  const box = document.createElement("div"); box.className = "values stack";
+  for (const [name, value] of [[t("browser_pac"), b.pac], [t("browser_sites"), String(b.sites)]]) {
+    const row = document.createElement("div"); row.className = "v";
+    const k = document.createElement("span"), x = document.createElement("span");
+    k.textContent = name; x.textContent = value; row.append(k, x);
+    if (name === t("browser_pac")) row.onclick = () => copy(value, t("value_copied", name));
+    box.append(row);
+  }
+  return box;
+}
 function renderBrowser(v) {
   const b = v.browser || {};
   $("browserCard").classList.toggle("hidden", !b.show);
@@ -693,24 +726,18 @@ function renderBrowser(v) {
   const para = (text, warning = false) => {
     const p = document.createElement("p"); p.className = warning ? "hint warn" : "hint"; p.textContent = text; pane.append(p);
   };
-  para(t("browser_text"));
-  const box = document.createElement("div"); box.className = "values";
-  for (const [name, value] of [[t("browser_pac"), b.pac], [t("browser_sites"), String(b.sites)]]) {
-    const row = document.createElement("div"); row.className = "v";
-    const k = document.createElement("span"), x = document.createElement("span");
-    k.textContent = name; x.textContent = value; row.append(k, x);
-    if (name === t("browser_pac")) row.onclick = () => copy(value, t("value_copied", name));
-    box.append(row);
+  para(t(b.system ? "browser_text_system" : "browser_text_manual"));
+  if (b.system) {
+    const label = document.createElement("label"); label.className = "check";
+    const toggle = document.createElement("input"); toggle.type = "checkbox"; toggle.setAttribute("role", "switch");
+    toggle.checked = b.on;
+    toggle.onchange = () => call("setSystemPAC", toggle.checked).then(refresh, e => { refresh(); fail(e); });
+    label.append(toggle, t("browser_system")); pane.append(label);
+    para(t("browser_system_help"));
+    if (b.notice) para(b.notice, true);
   }
-  pane.append(box);
-  if (!b.system) { para(t("browser_manual")); return; }
-  const label = document.createElement("label"); label.className = "check";
-  const toggle = document.createElement("input"); toggle.type = "checkbox"; toggle.setAttribute("role", "switch");
-  toggle.checked = b.on;
-  toggle.onchange = () => call("setSystemPAC", toggle.checked).then(refresh, e => { refresh(); fail(e); });
-  label.append(toggle, t("browser_system")); pane.append(label);
-  para(t("browser_system_help"));
-  if (b.notice) para(b.notice, true);
+  para(t(b.system ? "browser_manual_system" : "browser_manual_only"));
+  pane.append(browserBlock(b));
 }
 function renderSubscriptions(rows) {
   const box = $("subscriptions");
