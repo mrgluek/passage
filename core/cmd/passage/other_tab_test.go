@@ -7,7 +7,7 @@ import (
 
 func TestOtherTab(t *testing.T) {
 	for _, want := range []string{
-		`else renderOther(pane, v, para)`, `t("other_app_title")`, `t("other_apps_text")`, `t("other_servers")`,
+		`else renderOther(pane, v, para)`, `t("other_apps_text")`, `t("other_servers")`,
 		`row(t("proxy_host"), "127.0.0.1", "127.0.0.1")`, `t("proxy_pass")`, `if (!v.auth) pane.append(para(t("proxy_no_password")))`,
 	} {
 		if !strings.Contains(indexHTML, want) {
@@ -15,7 +15,7 @@ func TestOtherTab(t *testing.T) {
 		}
 	}
 	for lang, table := range texts {
-		for _, key := range []string{"tab_other", "other_app_title", "other_apps_text", "other_servers"} {
+		for _, key := range []string{"tab_other", "other_apps_text", "other_servers"} {
 			if table[key] == "" {
 				t.Errorf("%s: %s is missing", lang, key)
 			}

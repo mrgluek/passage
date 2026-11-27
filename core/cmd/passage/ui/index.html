@@ -46,6 +46,8 @@ button.textbtn { display: block; margin: 10px auto 0; border: none; padding: 8px
 .step.done { color: var(--muted); }
 .step.current { font-weight: 600; }
 .step.tap { cursor: pointer; }
+.step.more { cursor: pointer; }
+.step.more .chev { margin-left: 0; font-size: 20px; line-height: 1; }
 .step .chev { margin-left: auto; color: var(--accent); }
 .tick { width: 22px; height: 22px; flex: none; fill: #2e7d4f; }
 .tabs { display: flex; border: 1px solid var(--accent); border-radius: 20px; padding: 2px; margin: 10px 0 12px; }
@@ -629,21 +631,13 @@ function renderTabs(v) {
 }
 function renderBrowserTab(pane, v, para, button) {
   const b = v.browser || {};
-  pane.append(para(t("tab_browser_text")));
-  if (b.system) {
-    // One click on Windows: the same switch as in Settings; a refusal shows below.
-    if (!b.on) pane.append(button(t("h_browser_turn_on"), () => call("setSystemPAC", true).then(refresh, fail)));
-    else pane.append(para(t("browser_system_help")));
-    if (b.notice) { const p = para(b.notice); p.className = "hint warn"; pane.append(p); }
-    pane.append(para(t("browser_manual_system")));
-  } else {
-    pane.append(para(t("browser_manual_only")));
-  }
-  pane.append(browserBlock(b));
+  const setup = document.createElement("div");
+  browserSetup(setup, b);
+  pane.append(setup);
   if (!b.on) pane.append(button(t(b.confirmed ? "h_browser_undo" : "h_browser_done"), () => call("confirmBrowser", !b.confirmed).then(refresh, fail)));
-  const more = document.createElement("div"); more.className = "step tap";
+  const more = document.createElement("div"); more.className = "step tap more";
   const label = document.createElement("span"); label.textContent = t("other_app_toggle");
-  const chev = document.createElement("span"); chev.className = "chev"; chev.textContent = otherOpen ? "⌃" : "⌄";
+  const chev = document.createElement("span"); chev.className = "chev"; chev.textContent = otherOpen ? "\u25B4" : "\u25BE";
   more.append(label, chev);
   more.onclick = () => { otherOpen = !otherOpen; shownHome = ""; renderHome(last); };
   pane.append(more);
@@ -654,7 +648,6 @@ function renderBrowserTab(pane, v, para, button) {
   }
 }
 function renderOther(pane, v, para) {
-  const title = document.createElement("h3"); title.textContent = t("other_app_title");
   const box = document.createElement("div"); box.className = "values";
   const row = (name, value, copyable, extra) => {
     const r = document.createElement("div"); r.className = "v";
@@ -672,7 +665,7 @@ function renderOther(pane, v, para) {
     toggle.onclick = e => { e.stopPropagation(); showPass = !showPass; shownHome = ""; renderHome(last); };
     row(t("proxy_pass"), showPass ? v.pass : "••••••••", v.pass, toggle);
   }
-  pane.append(title, para(t("other_apps_text")), box);
+  pane.append(para(t("other_apps_text")), box);
   if (!v.auth) pane.append(para(t("proxy_no_password")));
   pane.append(para(t("other_servers")));
 }
@@ -725,15 +718,10 @@ function browserBlock(b) {
   }
   return box;
 }
-function renderBrowser(v) {
-  const b = v.browser || {};
-  $("browserCard").classList.toggle("hidden", !b.show);
-  if (!b.show) return;
-  const pane = $("browserSettings");
-  const key = JSON.stringify([b, v.lang]);
-  if (pane.dataset.key === key && pane.firstChild) return;
-  pane.dataset.key = key;
-  pane.textContent = "";
+// browserSetup is the Browsers content shared by Settings and the home tab:
+// intro, the system proxy checkbox (Windows), its explanation and any refusal,
+// then the manual address block.
+function browserSetup(pane, b) {
   const para = (text, warning = false) => {
     const p = document.createElement("p"); p.className = warning ? "hint warn" : "hint"; p.textContent = text; pane.append(p);
   };
@@ -749,6 +737,17 @@ function renderBrowser(v) {
   }
   para(t(b.system ? "browser_manual_system" : "browser_manual_only"));
   pane.append(browserBlock(b));
+}
+function renderBrowser(v) {
+  const b = v.browser || {};
+  $("browserCard").classList.toggle("hidden", !b.show);
+  if (!b.show) return;
+  const pane = $("browserSettings");
+  const key = JSON.stringify([b, v.lang]);
+  if (pane.dataset.key === key && pane.firstChild) return;
+  pane.dataset.key = key;
+  pane.textContent = "";
+  browserSetup(pane, b);
 }
 function renderSubscriptions(rows) {
   const box = $("subscriptions");

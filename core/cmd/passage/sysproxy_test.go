@@ -299,7 +299,7 @@ func TestBrowserSettingsKeysOldFileKeepsDefaults(t *testing.T) {
 func TestBrowserStringsInBothLanguages(t *testing.T) {
 	for _, lang := range []string{"en", "ru"} {
 		tr := tr(table(lang))
-		for _, k := range []string{"browser_title", "browser_text_system", "browser_text_manual", "browser_manual_system", "browser_manual_only", "tab_browser", "h_browser_turn_on", "h_browser_done", "h_step_connected", "browser_pac", "browser_sites", "browser_system", "browser_system_help", "browser_refuse_pac", "browser_refuse_manual", "browser_refuse_policy"} {
+		for _, k := range []string{"browser_title", "browser_text_system", "browser_text_manual", "browser_manual_system", "browser_manual_only", "tab_browser", "h_browser_done", "h_step_connected", "browser_pac", "browser_sites", "browser_system", "browser_system_help", "browser_refuse_pac", "browser_refuse_manual", "browser_refuse_policy"} {
 			if tr.f(k) == "" || tr.f(k) == k {
 				t.Errorf("%s %s missing", lang, k)
 			}
@@ -437,5 +437,31 @@ func TestHomeTabsRule(t *testing.T) {
 				t.Errorf("%s %s still names messengers: %s", lang, k, tr.f(k))
 			}
 		}
+	}
+}
+
+// Settings and the home tab draw the Browsers content with one function, so
+// the checkbox, its text and refusals cannot drift apart.
+func TestBrowserContentIsShared(t *testing.T) {
+	if strings.Count(indexHTML, "browserSetup(") != 3 { // definition, settings, tab
+		t.Fatalf("browserSetup used %d times", strings.Count(indexHTML, "browserSetup(")-1)
+	}
+	for _, gone := range []string{`call("setSystemPAC", true)`, "h_browser_turn_on"} {
+		if strings.Contains(indexHTML, gone) {
+			t.Errorf("a second system switch control is back: %s", gone)
+		}
+	}
+	// The checkbox in the tab follows the same view field after a switch.
+	a, _ := browserApp(t, &fakeProxy{}, true)
+	if a.view().Browser.On {
+		t.Fatal("on before the switch")
+	}
+	a.setSystemPAC(true)
+	if !a.view().Browser.On {
+		t.Fatal("not checked after turning on")
+	}
+	a.setSystemPAC(false)
+	if a.view().Browser.On {
+		t.Fatal("still checked after turning off")
 	}
 }
