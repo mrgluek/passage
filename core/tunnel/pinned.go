@@ -9,6 +9,10 @@ import (
 	"time"
 )
 
+// pinnedAttemptLimit bounds one attempt to open a session: a node that takes
+// the connection and then stalls must not use the whole deadline.
+var pinnedAttemptLimit = 10 * time.Second
+
 const (
 	pinnedReturn    = 30 * time.Minute
 	pinnedLookupTTL = 5 * time.Minute

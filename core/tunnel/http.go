@@ -98,16 +98,24 @@ func httpRequest(ctx context.Context, client *http.Client, endpoint, token strin
 
 var errHTTPFailed = errors.New("HTTP request failed")
 
+// errHTTPEnded: the request was answered but the stream ended before the exit's
+// first message, which a node that no longer serves the resource also does.
+var errHTTPEnded = errors.New("HTTP session refused")
+
 // dialHTTPSession opens a session. A transport failure moves a pinned route to
 // its next address and tries again; a refusal does not.
 func (c *WSSClient) dialHTTPSession(ctx context.Context) (*wssSession, error) {
 	for {
 		var addr string
+		attempt, cancel := ctx, context.CancelFunc(func() {})
 		if c.pin != nil {
 			addr = c.pin.current()
+			attempt, cancel = context.WithTimeout(ctx, pinnedAttemptLimit)
 		}
-		s, err := c.openHTTPSession(ctx)
-		if err != errHTTPFailed || c.pin == nil || ctx.Err() != nil || !c.pin.next(ctx, addr) {
+		s, err := c.openHTTPSession(attempt)
+		timedOut := attempt.Err() != nil
+		cancel()
+		if err == nil || err != errHTTPFailed && err != errHTTPEnded && !timedOut || c.pin == nil || ctx.Err() != nil || !c.pin.next(ctx, addr) {
 			return s, err
 		}
 		c.httpClient.CloseIdleConnections()
@@ -204,7 +212,7 @@ func (c *WSSClient) openHTTPSession(ctx context.Context) (*wssSession, error) {
 		return s, nil
 	case <-s.done:
 		cancel()
-		return nil, errors.New("HTTP session refused")
+		return nil, errHTTPEnded
 	case <-ctx.Done():
 		s.fail(ctx.Err())
 		cancel()

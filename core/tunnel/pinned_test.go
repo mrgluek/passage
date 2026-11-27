@@ -331,3 +331,18 @@ func TestLookupDoTNotFoundIsNotRetriedInClear(t *testing.T) {
 		t.Fatalf("err=%v system called=%v", err, called)
 	}
 }
+
+func TestPinnedFallbackWhenNodeStalls(t *testing.T) {
+	old := pinnedAttemptLimit
+	pinnedAttemptLimit = 500 * time.Millisecond
+	defer func() { pinnedAttemptLimit = old }()
+	client, lookups, _ := pinnedFixture(t, func(w http.ResponseWriter, r *http.Request) { <-r.Context().Done() })
+	conn := dialTest(t, client, "mail.example.org:443")
+	defer conn.Close()
+	if err := wssRoundTrip(conn, []byte("stalled node")); err != nil {
+		t.Fatal(err)
+	}
+	if lookups.Load() != 1 {
+		t.Fatalf("lookups=%d", lookups.Load())
+	}
+}

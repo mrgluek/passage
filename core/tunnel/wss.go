@@ -248,11 +248,15 @@ func (c *WSSClient) dialSession(ctx context.Context) (*wssSession, error) {
 	}
 	for {
 		var addr string
+		attempt, cancel := ctx, context.CancelFunc(func() {})
 		if c.pin != nil {
 			addr = c.pin.current()
+			attempt, cancel = context.WithTimeout(ctx, pinnedAttemptLimit)
 		}
-		s, err := c.dialWSSSession(ctx)
-		if err != errWSSFailed || c.pin == nil || ctx.Err() != nil || !c.pin.next(ctx, addr) {
+		s, err := c.dialWSSSession(attempt)
+		timedOut := attempt.Err() != nil
+		cancel()
+		if err == nil || err != errWSSFailed && !timedOut || c.pin == nil || ctx.Err() != nil || !c.pin.next(ctx, addr) {
 			return s, err
 		}
 		c.httpClient.CloseIdleConnections()
