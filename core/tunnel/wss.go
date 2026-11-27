@@ -262,7 +262,7 @@ func (c *WSSClient) dialSession(ctx context.Context) (*wssSession, error) {
 		if err != nil && timedOut && c.received() > heard {
 			return s, err // other sessions are still receiving: the address serves, the path is slow
 		}
-		if err == nil || err != errWSSFailed && !timedOut || c.pin == nil || ctx.Err() != nil || !c.pin.next(ctx, addr) {
+		if err == nil || !errors.Is(err, errWSSFailed) && !timedOut || c.pin == nil || ctx.Err() != nil || !c.pin.next(ctx, addr) {
 			return s, err
 		}
 		c.httpClient.CloseIdleConnections()
@@ -272,6 +272,10 @@ func (c *WSSClient) dialSession(ctx context.Context) (*wssSession, error) {
 // errWSSFailed means no HTTP answer came back (reset, timeout): the address
 // is the likely cause. An answer, even a refusal, is not retried elsewhere.
 var errWSSFailed = errors.New("WSS handshake failed")
+
+// errWSSUpgrade: the server answered the upgrade request with an HTTP status
+// instead of switching protocols.
+var errWSSUpgrade = errors.New("WSS upgrade refused")
 
 func (c *WSSClient) dialWSSSession(ctx context.Context) (*wssSession, error) {
 	token, nonce := wssToken(c.params.Key, time.Now())
@@ -290,9 +294,9 @@ func (c *WSSClient) dialWSSSession(ctx context.Context) (*wssSession, error) {
 			return nil, ctx.Err()
 		}
 		if response != nil {
-			return nil, errors.New("WSS handshake failed")
+			return nil, refusedWith(errWSSUpgrade, response.StatusCode)
 		}
-		return nil, errWSSFailed
+		return nil, failed(errWSSFailed, err)
 	}
 	if ws.Subprotocol() != token {
 		ws.CloseNow()

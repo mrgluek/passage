@@ -87,16 +87,19 @@ func httpRequest(ctx context.Context, client *http.Client, endpoint, token strin
 	req.Header.Set("Accept-Encoding", "identity")
 	resp, err := client.Do(req)
 	if err != nil {
-		return nil, errHTTPFailed
+		return nil, failed(errHTTPFailed, err)
 	}
 	if resp.StatusCode != http.StatusOK {
 		resp.Body.Close()
-		return nil, errors.New("HTTP request refused")
+		return nil, refusedWith(errHTTPRefused, resp.StatusCode)
 	}
 	return resp, nil
 }
 
 var errHTTPFailed = errors.New("HTTP request failed")
+
+// errHTTPRefused: the server answered with a status other than 200.
+var errHTTPRefused = errors.New("HTTP request refused")
 
 // errHTTPEnded: the request was answered but the stream ended before the exit's
 // first message, which a node that no longer serves the resource also does.
@@ -121,7 +124,7 @@ func (c *WSSClient) dialHTTPSession(ctx context.Context) (*wssSession, error) {
 		if err != nil && timedOut && c.received() > heard {
 			return s, err // other sessions are still receiving: the address serves, the path is slow
 		}
-		if err == nil || err != errHTTPFailed && err != errHTTPEnded && !timedOut || c.pin == nil || ctx.Err() != nil || !c.pin.next(ctx, addr) {
+		if err == nil || !errors.Is(err, errHTTPFailed) && !errors.Is(err, errHTTPEnded) && !timedOut || c.pin == nil || ctx.Err() != nil || !c.pin.next(ctx, addr) {
 			return s, err
 		}
 		c.httpClient.CloseIdleConnections()
