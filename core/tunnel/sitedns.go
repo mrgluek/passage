@@ -138,7 +138,7 @@ func (t *Tunnel) resolvedSiteDial(dial dialFunc, fallback bool) dialFunc {
 			return nil, err
 		}
 		var last error
-		for _, ip := range addrs {
+		for _, ip := range addrsIPv4First(addrs) {
 			c, err := dial(ctx, network, net.JoinHostPort(ip, port))
 			if err == nil {
 				return c, nil
@@ -150,4 +150,18 @@ func (t *Tunnel) resolvedSiteDial(dial dialFunc, fallback bool) dialFunc {
 		}
 		return nil, last
 	}
+}
+
+// addrsIPv4First keeps the order within each family, IPv4 first: many networks
+// have no working IPv6, and a hanging attempt would use the route's time.
+func addrsIPv4First(addrs []string) []string {
+	out := make([]string, 0, len(addrs))
+	for _, v6 := range []bool{false, true} {
+		for _, a := range addrs {
+			if ip := net.ParseIP(a); ip != nil && (ip.To4() == nil) == v6 {
+				out = append(out, a)
+			}
+		}
+	}
+	return out
 }

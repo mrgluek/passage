@@ -147,3 +147,10 @@ func TestDoTFailureHasItsOwnLogStage(t *testing.T) {
 }
 
 func errSiteDoTFor(err error) error { return errors.Join(errSiteDoT, err) }
+
+func TestSiteAddressesIPv4First(t *testing.T) {
+	got := addrsIPv4First([]string{"2001:db8::1", "192.0.2.1", "2001:db8::2", "192.0.2.2"})
+	if len(got) != 4 || got[0] != "192.0.2.1" || got[1] != "192.0.2.2" || got[2] != "2001:db8::1" {
+		t.Fatal(got)
+	}
+}
