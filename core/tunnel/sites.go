@@ -141,13 +141,16 @@ func newSiteSet(groups []SiteGroup) *siteSet {
 	return s
 }
 
-// forgetWinners drops every remembered route, after a network change.
-func (s *siteSet) forgetWinners() {
+// resetMemory drops every remembered winner and bad route, after a network
+// change: what failed on the old network may work on the new one.
+func (s *siteSet) resetMemory() {
 	if s == nil {
 		return
 	}
 	for _, e := range s.entries {
-		e.forget()
+		e.mu.Lock()
+		e.win, e.bad = siteWin{}, [numRoutes]time.Time{}
+		e.mu.Unlock()
 	}
 }
 

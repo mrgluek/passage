@@ -121,9 +121,13 @@ func TestNetworkChangeForgetsSiteWinners(t *testing.T) {
 	tt := newBrowserTunnel(t, testSites, failDialer(new(atomic.Int32)), echoDialer("t:", new(atomic.Int32)))
 	e := tt.sites.match("example.net")
 	e.remember(RouteTunnel, "two", time.Now())
+	e.markBad(RouteDirect, time.Now().Add(siteBadFor))
 	tt.NetworkChanged()
 	if _, ok := e.winner(time.Now()); ok {
 		t.Fatal("a network change kept the remembered route")
+	}
+	if e.badUntil(RouteDirect).After(time.Now()) {
+		t.Fatal("a network change kept a route marked bad on the old network")
 	}
 }
 

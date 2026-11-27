@@ -858,7 +858,7 @@ func (t *Tunnel) Recheck() {
 // platforms report spurious changes, and a real network switch restarts the
 // tunnel anyway.
 func (t *Tunnel) NetworkChanged() {
-	t.sites.forgetWinners()
+	t.sites.resetMemory()
 	t.dropVerdict()
 	t.kickProbe()
 }
