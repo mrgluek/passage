@@ -58,7 +58,11 @@ func runDesktop(dir string, autostart bool) {
 	}
 	a.changed = d.update
 	ctx, cancel := context.WithCancel(context.Background())
-	go receiveLaunchLinks(ctx, d.importLink, a.event)
+	linksDone := make(chan struct{})
+	go func() {
+		defer close(linksDone)
+		receiveLaunchLinks(ctx, d.importLink, a.event)
+	}()
 	done := make(chan struct{})
 	waited := make(chan struct{})
 	systray.Run(func() {
@@ -92,6 +96,7 @@ func runDesktop(dir string, autostart bool) {
 	if u := pendingUpdate.Load(); u != nil {
 		d.closeWindow()
 		<-waited
+		<-linksDone
 		if event != 0 {
 			windows.CloseHandle(event)
 		}

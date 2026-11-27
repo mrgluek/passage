@@ -367,7 +367,11 @@ func (c *Client) Download(ctx context.Context, offer *Offer, dest string, progre
 			}
 		}
 		for _, source := range offer.Sources {
-			if bad[source] || ctx.Err() != nil {
+			if ctx.Err() != nil {
+				err = ctx.Err()
+				break
+			}
+			if bad[source] {
 				continue
 			}
 			if rerr := restart(); rerr != nil {
@@ -383,8 +387,10 @@ func (c *Client) Download(ctx context.Context, offer *Offer, dest string, progre
 		}
 	}
 	if err != nil {
-		f.Close()
-		os.Remove(part)
+		if errors.Is(err, errMismatch) {
+			f.Close()
+			os.Remove(part)
+		}
 		return err
 	}
 	if err := f.Close(); err != nil {
@@ -392,6 +398,8 @@ func (c *Client) Download(ctx context.Context, offer *Offer, dest string, progre
 	}
 	return os.Rename(part, dest)
 }
+
+var errMismatch = errors.New("downloaded file does not match the manifest")
 
 func verify(f *os.File, want File) error {
 	if _, err := f.Seek(0, io.SeekStart); err != nil {
@@ -402,7 +410,7 @@ func verify(f *os.File, want File) error {
 		return err
 	}
 	if hex.EncodeToString(h.Sum(nil)) != strings.ToLower(want.SHA256) {
-		return errors.New("downloaded file does not match the manifest")
+		return errMismatch
 	}
 	return nil
 }

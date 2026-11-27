@@ -5,9 +5,9 @@ import (
 	"crypto/ed25519"
 	"encoding/base64"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"maps"
-	"reflect"
 	"slices"
 	"strings"
 	"time"
@@ -473,6 +473,17 @@ func sameApplied(a, b Config, index int) bool {
 		x.RefsCleared == y.RefsCleared && x.Name == y.Name &&
 		slices.Equal(a.Canaries, b.Canaries) && slices.Equal(a.References, b.References) &&
 		slices.Equal(a.UpdateSources, b.UpdateSources) &&
-		(len(a.Routes) == 0 && len(b.Routes) == 0 || reflect.DeepEqual(a.Routes, b.Routes)) &&
-		(len(a.RouteEdits) == 0 && len(b.RouteEdits) == 0 || reflect.DeepEqual(a.RouteEdits, b.RouteEdits))
+		(len(a.Routes) == 0 && len(b.Routes) == 0 || sameJSON(a.Routes, b.Routes)) &&
+		(len(a.RouteEdits) == 0 && len(b.RouteEdits) == 0 || sameJSON(a.RouteEdits, b.RouteEdits))
+}
+
+// sameJSON compares values as they are saved: a []byte key from a signed
+// file and the base64 string read back from saved state are the same.
+func sameJSON(a, b any) bool {
+	x, err := json.Marshal(a)
+	if err != nil {
+		return false
+	}
+	y, err := json.Marshal(b)
+	return err == nil && bytes.Equal(x, y)
 }

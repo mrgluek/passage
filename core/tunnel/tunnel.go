@@ -106,6 +106,9 @@ type group struct {
 	directFailures   [telegramDirectFailureMin]time.Time
 	slow             slowTrack
 	dnsLogged        time.Time
+	noSuchNameAt     time.Time // newest direct lookup that found no such name
+	carried          bool      // a connection to this group has opened
+	settling         int       // first dials in progress
 }
 
 // viaLocked is the route type behind the tunnel while the group uses it.
@@ -562,7 +565,7 @@ func (t *Tunnel) relayLocked(host string) *group {
 	for len(t.relays) > maxRelayGroups {
 		var oldest *group
 		for _, r := range t.relays {
-			if r == g || r.pinned || t.hasConnsLocked(r) {
+			if r == g || r.pinned || r.settling > 0 || t.hasConnsLocked(r) {
 				continue
 			}
 			if oldest == nil || r.used.Before(oldest.used) {
@@ -978,10 +981,21 @@ func (t *Tunnel) connect(c net.Conn, addr string, socks bool, forward ...int) {
 		t.pending--
 	}
 	g := t.groupForLocked(addr)
+	settle := g.kind == kindRelay && !g.carried
+	if settle {
+		g.used = t.timeNow()
+		g.settling++
+	}
 	t.mu.Unlock()
-	t.learn(g, addr)
+	if !settle {
+		t.learn(g, addr)
+	}
 
+	started := t.timeNow()
 	remote, route, err := t.dialWithHistory(g, addr, socks)
+	if settle {
+		t.settleRelay(g, addr, err, started)
+	}
 	if socks {
 		c.SetWriteDeadline(time.Now().Add(handshakeTimeout))
 	}
@@ -1143,6 +1157,23 @@ func (t *Tunnel) learn(g *group, addr string) {
 			delete(g.ports, oldest)
 		}
 	}
+}
+
+// settleRelay finishes a new relay group's first dial. A name that does not
+// exist and could not be reached any other way does not become a group;
+// otherwise the group learns its host as usual.
+func (t *Tunnel) settleRelay(g *group, addr string, err error, started time.Time) {
+	t.mu.Lock()
+	g.settling--
+	if err == nil {
+		g.carried = true
+	} else if !g.carried && !g.pinned && g.settling == 0 && !g.noSuchNameAt.Before(started) && t.relays[g.name] == g && !t.hasConnsLocked(g) {
+		delete(t.relays, g.name)
+		t.mu.Unlock()
+		return
+	}
+	t.mu.Unlock()
+	t.learn(g, addr)
 }
 
 var errNoIPv6Route = errors.New("no IPv6 route available")
@@ -1350,6 +1381,9 @@ func (t *Tunnel) noteLookupFailure(g *group, err error) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	now := t.timeNow()
+	if kind == "no such name" {
+		g.noSuchNameAt = now
+	}
 	if !g.dnsLogged.IsZero() && now.Sub(g.dnsLogged) < lookupLogEvery {
 		return
 	}

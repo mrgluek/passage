@@ -6,6 +6,7 @@ import (
 	"crypto/ed25519"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"net"
 	"net/http"
@@ -354,5 +355,58 @@ func TestParseRejectsInvalidKeyLength(t *testing.T) {
 		if _, err := Parse(r.body, make(ed25519.PublicKey, n)); err == nil {
 			t.Fatalf("accepted key length %d", n)
 		}
+	}
+}
+
+func TestDownloadWrongBytesEverywhereBoundsRequests(t *testing.T) {
+	r := newRelease(t, "1.2.0", content(1000))
+	bad := r
+	bad.content = content(1000)
+	bad.content[10]++
+	var n atomic.Int32
+	count := func(h http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+			n.Add(1)
+			h.ServeHTTP(w, req)
+		})
+	}
+	const sources = 4
+	for i := 0; i < sources; i++ {
+		r.offer.Sources = append(r.offer.Sources, serve(t, bad, count))
+	}
+	dest := filepath.Join(t.TempDir(), "app.apk")
+	err := (&Client{Key: r.key}).Download(context.Background(), r.offer, dest, nil)
+	if !errors.Is(err, errMismatch) {
+		t.Fatalf("err = %v", err)
+	}
+	if got := n.Load(); got > 2*sources {
+		t.Fatalf("%d requests for %d sources", got, sources)
+	}
+	if _, err := os.Stat(dest + ".part"); !os.IsNotExist(err) {
+		t.Fatal("bad partial file stayed")
+	}
+}
+
+func TestDownloadCancelDuringRetryReportsCancel(t *testing.T) {
+	r := newRelease(t, "1.2.0", content(1000))
+	bad := r
+	bad.content = content(1000)
+	bad.content[10]++
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	var n atomic.Int32
+	trip := func(h http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+			h.ServeHTTP(w, req)
+			if n.Add(1) == 1 {
+				cancel() // after the first source served its wrong bytes in full
+			}
+		})
+	}
+	r.offer.Sources = []string{serve(t, bad, trip), serve(t, bad, trip), serve(t, bad, trip)}
+	dest := filepath.Join(t.TempDir(), "app.apk")
+	err := (&Client{Key: r.key}).Download(ctx, r.offer, dest, nil)
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("err = %v", err)
 	}
 }

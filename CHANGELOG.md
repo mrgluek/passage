@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.9.8
+
+- An HTTP or WSS route with a fixed server address tries the host's other
+  addresses when that address stops answering, and returns to it later. The
+  addresses are looked up over an encrypted connection first.
+- In automatic mode, names that do not exist no longer appear as relays.
+- A failing iroh helper is restarted at most three times in 30 minutes.
+- Applying an unchanged subscription after an update no longer restarts the
+  proxy.
+- Windows: `passage://` links keep opening in the running app after an
+  in-app update.
+- An update download interrupted while another source is tried keeps its
+  partial file, and a cancel is reported as a cancel.
+
 ## 0.9.7
 
 - A subscription saved by an older version is applied again after the update,
