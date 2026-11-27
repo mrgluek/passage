@@ -76,10 +76,14 @@ type App struct {
 	subscriptionResults    map[string]string
 	subscriptionNotice     string
 	subscriptionFetcher    subscriptionFetcher
+	sysProxy               systemProxy // nil: no system switch on this platform
+	sysNotice, sysError    string
+	portFree               func(int) bool
 }
 
 func newApp(dir, version, iroh, lang string, os platform) *App {
-	a := &App{dir: dir, version: version, iroh: iroh, lang: lang, systemLang: lang, t: table(lang), os: os, changed: func() {}}
+	a := &App{dir: dir, version: version, iroh: iroh, lang: lang, systemLang: lang, t: table(lang), os: os, changed: func() {},
+		sysProxy: newSystemProxy(), portFree: localPortBindable}
 	a.log = openLog(a.path(logName), version)
 	a.event("app start")
 	s, existed, err := loadSettings(a.path(iniName))
@@ -218,6 +222,7 @@ func (a *App) routerConfigLocked() (tunnel.Config, networkState) {
 	}
 	cfg.Mode = a.mode()
 	cfg.My = s.My
+	a.browserConfigLocked(&cfg)
 	state, _ := readNetwork()
 	cfg.SystemResolvers = state.dns
 	cfg.IrohBinary = a.iroh
@@ -293,6 +298,7 @@ func (a *App) tick() {
 
 func (a *App) run(ctx context.Context) {
 	a.mu.Lock()
+	a.recoverSystemPACLocked()
 	if a.settings.Running {
 		a.runningSince = time.Now()
 		a.startLocked("app start")
@@ -307,6 +313,7 @@ func (a *App) run(ctx context.Context) {
 			a.cancelUpdate()
 			a.event("app quit")
 			a.mu.Lock()
+			a.restoreSystemPACLocked("quit")
 			if a.tun != nil {
 				a.tun.Close()
 				a.log.copyStalls(a.tun.Status(500).Events)
@@ -513,6 +520,7 @@ type view struct {
 	WhatsAppError     string                 `json:"whatsapp_error"`
 	Forwards          []tunnel.ForwardStatus `json:"forwards"`
 	WhatsAppStatus    whatsappStatus         `json:"whatsapp_status"`
+	Browser           browserView            `json:"browser"`
 }
 
 // startHint asks to start the proxy when routes exist but it is not running.
@@ -598,6 +606,7 @@ func (a *App) viewLocked() (view, bool) {
 	if a.subscriptionNotice != "" {
 		v.SubscriptionNotice = a.subscriptionNotice
 	}
+	v.Browser = a.browserViewLocked()
 	v.Update = a.updateViewLocked()
 	v.Full = full
 	return v, s.Running && !s.AutostartDismissed
@@ -1028,6 +1037,8 @@ func (a *App) call(method string, arg json.RawMessage) (any, error) {
 		a.mu.Unlock()
 	case "setWhatsApp":
 		return nil, a.setWhatsApp(flag())
+	case "setSystemPAC":
+		return nil, a.setSystemPAC(flag())
 	case "setAuth":
 		a.setAuth(flag())
 	case "newAccess":

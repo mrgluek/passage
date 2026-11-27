@@ -52,6 +52,13 @@ type Settings struct {
 	AppSeen bool
 	// Lang is "en" or "ru" when chosen in the settings; empty follows the system.
 	Lang string
+	// BrowserPort is the loopback port of the browser listener; it stays the
+	// same so the auto-config address does not change.
+	BrowserPort int
+	// SystemPAC is the wish to use Passage in the system proxy settings
+	// (Windows); SysBackup is kept while the system address is ours.
+	SystemPAC bool
+	SysBackup sysBackup
 	// Edits are local changes to the link's routes, by route ID.
 	Edits map[string]tunnel.RouteEdit
 }
@@ -67,7 +74,7 @@ func defaultSettings() Settings {
 func (s *Settings) newAccess() {
 	n, _ := rand.Int(rand.Reader, big.NewInt(maxPort-minPort))
 	s.Port = minPort + int(n.Int64())
-	for s.Port == s.WhatsAppChatPort || s.Port == s.WhatsAppMediaPort {
+	for s.Port == s.WhatsAppChatPort || s.Port == s.WhatsAppMediaPort || s.Port == s.BrowserPort {
 		s.Port = minPort + (s.Port-minPort+1)%(maxPort-minPort)
 	}
 	s.User = randomHex(4)
@@ -188,6 +195,22 @@ func loadSettings(path string) (Settings, bool, error) {
 			if v == "en" || v == "ru" {
 				s.Lang = v
 			}
+		case "browser_port":
+			if n, err := strconv.Atoi(v); err == nil && n > 0 && n < 65536 {
+				s.BrowserPort = n
+			}
+		case "system_pac":
+			s.SystemPAC = v == "true" || v == "1"
+		case "sys_backup_ours":
+			s.SysBackup.Ours = v
+		case "sys_backup_prev":
+			s.SysBackup.PrevURL = v
+		case "sys_backup_enable":
+			s.SysBackup.ProxyEnable = v == "true" || v == "1"
+		case "sys_backup_server":
+			s.SysBackup.ProxyServer = v
+		case "sys_backup_detect":
+			s.SysBackup.AutoDetect = v == "true" || v == "1"
 		}
 	}
 	// Settings written before this key existed: a proxy that was running was in use.
@@ -201,6 +224,7 @@ func loadSettings(path string) (Settings, bool, error) {
 	if s.User == "" || s.Pass == "" {
 		s.User, s.Pass = fresh.User, fresh.Pass
 	}
+	s.SysBackup.Active = s.SysBackup.Ours != ""
 	if s.Mode == "" {
 		s.Mode = tunnel.ModeAuto
 	}
@@ -266,10 +290,18 @@ autostart_dismissed=%t
 routes_notice=%s
 app_seen=%t
 lang=%s
-`, s.Port, s.User, s.Pass, s.Auth, s.WhatsApp, s.WhatsAppChatPort, s.WhatsAppMediaPort, s.Mode, s.My, s.Running, s.AutoUpdate, s.NextUpdate.Format(time.RFC3339), s.DismissedUpdate, s.AutostartDismissed, s.RoutesNotice, s.AppSeen, s.Lang)
+browser_port=%d
+system_pac=%t
+`, s.Port, s.User, s.Pass, s.Auth, s.WhatsApp, s.WhatsAppChatPort, s.WhatsAppMediaPort, s.Mode, s.My, s.Running, s.AutoUpdate, s.NextUpdate.Format(time.RFC3339), s.DismissedUpdate, s.AutostartDismissed, s.RoutesNotice, s.AppSeen, s.Lang, s.BrowserPort, s.SystemPAC)
+	if b := s.SysBackup; b.Active {
+		text += fmt.Sprintf("sys_backup_ours=%s\nsys_backup_prev=%s\nsys_backup_enable=%t\nsys_backup_server=%s\nsys_backup_detect=%t\n", oneLineValue(b.Ours), oneLineValue(b.PrevURL), b.ProxyEnable, oneLineValue(b.ProxyServer), b.AutoDetect)
+	}
 	text += s.editLines()
 	return writeFile(path, []byte(text))
 }
+
+// oneLineValue keeps a registry value from breaking the ini format.
+func oneLineValue(v string) string { return strings.NewReplacer("\r", "", "\n", "").Replace(v) }
 
 // writeFile replaces path through a temporary file, so a crash never
 // leaves half a file.

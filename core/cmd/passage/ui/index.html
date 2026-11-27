@@ -253,6 +253,10 @@ a { color: var(--accent); cursor: pointer; text-decoration: underline; }
   <h2 data-t="whatsapp"></h2>
   <div id="whatsappSettings"></div>
   </section>
+  <section class="card hidden" id="browserCard">
+  <h2 data-t="browser_title"></h2>
+  <div id="browserSettings"></div>
+  </section>
   <section class="card hidden" id="updateSettings"><h2 data-t="updates"></h2><button id="updateCheck" data-t="update_check"></button><p id="updateStatus" aria-live="polite"></p><p id="updateDetail" class="hint hidden"></p><progress id="updateProgress" class="hidden"></progress><div><button id="updateDownload" data-t="update_download"></button><button id="updateCancel" data-t="cancel"></button><button id="updateInstall" data-t="update_install"></button></div><label class="check"><input type="checkbox" id="autoUpdate"><span data-t="update_auto"></span></label><p class="hint" data-t="update_help"></p></section>
   <section class="card"><h2 data-t="language_label"></h2><div class="segments" id="langSeg"></div></section>
   <section class="card">
@@ -448,6 +452,7 @@ function render(v) {
   }
   renderHome(v);
   renderWhatsApp($("whatsappSettings"), v, false);
+  renderBrowser(v);
   $("status").textContent = v.full;
 }
 
@@ -675,6 +680,37 @@ function renderWhatsApp(pane, v, home) {
     for (const warning of status.warnings || []) para(warning, true);
     if (status.hint) para(t("whatsapp_check"));
   }
+}
+function renderBrowser(v) {
+  const b = v.browser || {};
+  $("browserCard").classList.toggle("hidden", !b.show);
+  if (!b.show) return;
+  const pane = $("browserSettings");
+  const key = JSON.stringify([b, v.lang]);
+  if (pane.dataset.key === key && pane.firstChild) return;
+  pane.dataset.key = key;
+  pane.textContent = "";
+  const para = (text, warning = false) => {
+    const p = document.createElement("p"); p.className = warning ? "hint warn" : "hint"; p.textContent = text; pane.append(p);
+  };
+  para(t("browser_text"));
+  const box = document.createElement("div"); box.className = "values";
+  for (const [name, value] of [[t("browser_pac"), b.pac], [t("browser_sites"), String(b.sites)]]) {
+    const row = document.createElement("div"); row.className = "v";
+    const k = document.createElement("span"), x = document.createElement("span");
+    k.textContent = name; x.textContent = value; row.append(k, x);
+    if (name === t("browser_pac")) row.onclick = () => copy(value, t("value_copied", name));
+    box.append(row);
+  }
+  pane.append(box);
+  if (!b.system) { para(t("browser_manual")); return; }
+  const label = document.createElement("label"); label.className = "check";
+  const toggle = document.createElement("input"); toggle.type = "checkbox"; toggle.setAttribute("role", "switch");
+  toggle.checked = b.on;
+  toggle.onchange = () => call("setSystemPAC", toggle.checked).then(refresh, e => { refresh(); fail(e); });
+  label.append(toggle, t("browser_system")); pane.append(label);
+  para(t("browser_system_help"));
+  if (b.notice) para(b.notice, true);
 }
 function renderSubscriptions(rows) {
   const box = $("subscriptions");
