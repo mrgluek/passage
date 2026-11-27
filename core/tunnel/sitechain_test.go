@@ -4,6 +4,7 @@ import (
 	"context"
 	"io"
 	"net"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -172,5 +173,69 @@ func TestSitesUseStrategiesWithoutTheRoutersChoice(t *testing.T) {
 	c, rep := browserSocks(t, tt, "example.org", nil)
 	if rep != 0 || roundTrip(t, c) != "s:hi" {
 		t.Fatal(rep)
+	}
+}
+
+func stallWait(t *testing.T, d time.Duration) {
+	t.Helper()
+	old := siteStallWait
+	siteStallWait = d
+	t.Cleanup(func() { siteStallWait = old })
+}
+
+// answerOnce replies to the first request and then never again.
+func answerOnce(context.Context, string, string) (net.Conn, error) {
+	a, b := net.Pipe()
+	go func() {
+		buf := make([]byte, 4096)
+		b.Read(buf)
+		b.Write(make([]byte, 3000))
+		io.Copy(io.Discard, b)
+	}()
+	return a, nil
+}
+
+func stallLines(tt *Tunnel) (n int) {
+	for _, e := range tt.log.last(50) {
+		if strings.Contains(e.Msg, "stalled on") {
+			n++
+		}
+	}
+	return
+}
+
+func TestSiteStallAfterTheFirstReplyMarksTheWay(t *testing.T) {
+	stallWait(t, 50*time.Millisecond)
+	tt := newBrowserTunnel(t, testSites, answerOnce, echoDialer("t:", new(atomic.Int32)))
+	c, _ := browserSocks(t, tt, "example.org", nil)
+	defer c.Close()
+	c.Write([]byte("GET / first"))
+	io.ReadFull(c, make([]byte, 3000))
+	c.Write(make([]byte, 200)) // a second request that never gets an answer
+	waitFor(t, func() bool { return tt.sites.match("example.org").badUntil(RouteDirect).After(time.Now()) })
+	if stallLines(tt) != 1 {
+		t.Fatal("no stall line")
+	}
+	for _, e := range tt.log.last(50) {
+		if strings.Contains(e.Msg, "stalled on") && !strings.Contains(e.Msg, "site #1 (smart) stalled on direct after 2 KB") {
+			t.Fatal(e.Msg)
+		}
+	}
+	if _, err := c.Write([]byte("still open")); err != nil {
+		t.Fatal("the stalled connection was cut")
+	}
+}
+
+func TestQuietSiteConnectionIsNoStall(t *testing.T) {
+	stallWait(t, 30*time.Millisecond)
+	tt := newBrowserTunnel(t, testSites, answerOnce, echoDialer("t:", new(atomic.Int32)))
+	c, _ := browserSocks(t, tt, "example.org", nil)
+	defer c.Close()
+	c.Write([]byte("GET / first"))
+	io.ReadFull(c, make([]byte, 3000))
+	c.Write(make([]byte, 30)) // an acknowledgement, not a request
+	time.Sleep(200 * time.Millisecond)
+	if tt.sites.match("example.org").badUntil(RouteDirect).After(time.Now()) || stallLines(tt) != 0 {
+		t.Fatal("an idle connection counted as a stall")
 	}
 }

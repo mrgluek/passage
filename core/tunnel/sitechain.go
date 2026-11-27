@@ -6,7 +6,6 @@ import (
 	"io"
 	"net"
 	"sync"
-	"sync/atomic"
 	"time"
 )
 
@@ -16,6 +15,10 @@ import (
 var siteSwitchWait = 3 * time.Second // without a reply, try the next way
 
 const siteReplayMax = 16 << 10 // client bytes kept for a replay
+
+// siteStallWait: after the first reply, a site that sends nothing this long
+// while a request of the browser waits has stalled on this way.
+var siteStallWait = 10 * time.Second
 
 // siteWay is one way to a site: a route and, for smart, its strategy.
 type siteWay struct {
@@ -114,7 +117,17 @@ type siteRelay struct {
 	wroteOnce sync.Once
 	events    chan relayEvent
 	finished  chan struct{} // the answering remote's copy is done
+
+	// After the first reply, for the stall check.
+	lastUp, lastDown time.Time
+	downTotal        int64
+	upPending        int // client bytes since the site's last byte
 }
+
+// siteRequestMin: fewer client bytes since the site's last byte are taken
+// for protocol upkeep (HTTP/2 acknowledgements and window updates fit in one
+// small TLS record), not a request that waits for an answer.
+const siteRequestMin = 64
 
 type relayEvent struct {
 	gen      int
@@ -161,6 +174,10 @@ func (r *siteRelay) up() {
 				}
 			}
 			cur, way, hold := r.cur, r.way, r.switching
+			if r.answered {
+				r.lastUp = time.Now()
+				r.upPending += n
+			}
 			r.mu.Unlock()
 			if !hold {
 				if m, _ := cur.Write(b[:n]); m > 0 {
@@ -198,13 +215,24 @@ func (r *siteRelay) down(c net.Conn, gen int, w siteWay) {
 		return
 	}
 	r.answered, r.buf = true, nil
+	r.lastDown, r.downTotal = time.Now(), int64(n)
 	r.mu.Unlock()
 	r.events <- relayEvent{gen: gen, answered: true}
 	r.browser.Write(b[:n])
 	r.t.downBytes[w.route].Add(int64(n))
-	if err == nil {
-		var n atomic.Int64
-		io.Copy(countingWriter{r.browser, &n, &r.t.downBytes[w.route]}, c)
+	for err == nil {
+		n, err = c.Read(b)
+		if n > 0 {
+			r.mu.Lock()
+			r.lastDown = time.Now()
+			r.downTotal += int64(n)
+			r.upPending = 0
+			r.mu.Unlock()
+			if _, werr := r.browser.Write(b[:n]); werr != nil {
+				break
+			}
+			r.t.downBytes[w.route].Add(int64(n))
+		}
 	}
 	if cw, ok := r.browser.(interface{ CloseWrite() error }); ok {
 		cw.CloseWrite()
@@ -314,6 +342,7 @@ func (t *Tunnel) connectSite(c bufferedConn, entry *siteEntry, host, addr string
 				}
 				entry.remember(w.route, exit, t.timeNow(), w.strategy)
 				t.siteLastOK.Store(t.timeNow().UnixNano())
+				go r.watchStall(entry, w)
 				if !upEnded {
 					<-upDone
 				}
@@ -360,5 +389,31 @@ func (t *Tunnel) connectSite(c bufferedConn, entry *siteEntry, host, addr string
 			return
 		}
 		timer.Reset(siteSwitchWait)
+	}
+}
+
+// watchStall marks the way bad for the site once, when a request of the
+// browser has waited siteStallWait without a byte back. A quiet connection
+// with nothing asked (a WebSocket at rest, a kept-alive socket) is never a
+// stall, and the connection itself is left alone.
+func (r *siteRelay) watchStall(entry *siteEntry, w siteWay) {
+	tick := time.NewTicker(max(siteStallWait/4, 10*time.Millisecond))
+	defer tick.Stop()
+	for {
+		select {
+		case <-r.finished:
+			return
+		case <-tick.C:
+		}
+		r.mu.Lock()
+		waiting := r.lastUp.After(r.lastDown) && r.upPending >= siteRequestMin
+		stalled := waiting && time.Since(r.lastUp) >= siteStallWait
+		got := r.downTotal
+		r.mu.Unlock()
+		if stalled {
+			r.t.markWayBad(entry, w)
+			r.t.log.add("%s stalled on %s after %d KB", entry.label(), w, got/1024)
+			return
+		}
 	}
 }
