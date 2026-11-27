@@ -70,6 +70,36 @@ type siteEntry struct {
 	tunnel bool
 	mu     sync.Mutex
 	bad    [numRoutes]time.Time
+	win    siteWin // the route that carried the last connection
+}
+
+// siteWinFor is how long the route (and exit) that last carried a site is
+// tried first, before the others.
+const siteWinFor = 10 * time.Minute
+
+type siteWin struct {
+	route Route
+	exit  string // the tunnel route's ID, for the tunnel
+	until time.Time
+}
+
+// winner returns the remembered route while it is fresh.
+func (e *siteEntry) winner(now time.Time) (siteWin, bool) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return e.win, now.Before(e.win.until)
+}
+
+func (e *siteEntry) remember(r Route, exit string, now time.Time) {
+	e.mu.Lock()
+	e.win = siteWin{r, exit, now.Add(siteWinFor)}
+	e.mu.Unlock()
+}
+
+func (e *siteEntry) forget() {
+	e.mu.Lock()
+	e.win = siteWin{}
+	e.mu.Unlock()
 }
 
 func (e *siteEntry) badUntil(r Route) time.Time {
@@ -81,6 +111,9 @@ func (e *siteEntry) badUntil(r Route) time.Time {
 func (e *siteEntry) markBad(r Route, until time.Time) {
 	e.mu.Lock()
 	e.bad[r] = until
+	if e.win.route == r {
+		e.win = siteWin{}
+	}
 	e.mu.Unlock()
 }
 
@@ -105,6 +138,16 @@ func newSiteSet(groups []SiteGroup) *siteSet {
 	}
 	sort.Strings(s.hosts)
 	return s
+}
+
+// forgetWinners drops every remembered route, after a network change.
+func (s *siteSet) forgetWinners() {
+	if s == nil {
+		return
+	}
+	for _, e := range s.entries {
+		e.forget()
+	}
 }
 
 // match finds the entry covering host: the host itself or a parent domain,

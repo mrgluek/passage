@@ -195,6 +195,21 @@ func (p *routePool) maintenanceDialContext(ctx context.Context, network, address
 
 type quietDialKey struct{}
 
+// preferRouteKey names a route (by ID) to try first in this dial only. It
+// changes the order and nothing else.
+type preferRouteKey struct{}
+
+// routeIDOf names the pool route that carries c, or "".
+func routeIDOf(c net.Conn) string {
+	if v, ok := c.(viaConn); ok {
+		c = v.Conn
+	}
+	if pc, ok := c.(*poolConn); ok && pc.index < len(pc.pool.ids) {
+		return pc.pool.ids[pc.index]
+	}
+	return ""
+}
+
 // siteDialContext dials for a browser connection. A failure is returned to
 // the caller only: no cooldown, no route statistics, no subscription refresh.
 func (p *routePool) siteDialContext(ctx context.Context, network, address string) (net.Conn, error) {
@@ -215,6 +230,11 @@ func (p *routePool) dialContext(ctx context.Context, network, address string, ba
 		return nil, errDestinationRefused
 	}
 	order = asked
+	if id, _ := ctx.Value(preferRouteKey{}).(string); id != "" {
+		if n := slices.IndexFunc(order, func(i int) bool { return i < len(p.ids) && p.ids[i] == id }); n > 0 {
+			order = append([]int{order[n]}, slices.Delete(slices.Clone(order), n, n+1)...)
+		}
+	}
 	refusals := 0
 	race, stop := context.WithCancel(ctx)
 	defer stop()

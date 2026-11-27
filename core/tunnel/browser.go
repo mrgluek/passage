@@ -8,6 +8,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"slices"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -248,9 +249,9 @@ func (t *Tunnel) connectSite(c bufferedConn, entry *siteEntry, host, addr string
 // a via:tunnel site, as for the app's groups.
 const siteTunnelDelay = 2 * time.Second
 
-// dialSite tries the routes the site's kind allows: those that have not
-// failed lately first, the others last. A refused destination is not a failure
-// of the route.
+// dialSite tries the routes the site's kind allows: the one that carried the
+// site last first, then those that have not failed lately, the others last.
+// A refused destination is not a failure of the route.
 func (t *Tunnel) dialSite(entry *siteEntry, addr string) (net.Conn, Route, []Route, error) {
 	t.mu.Lock()
 	ways := t.ways
@@ -271,29 +272,50 @@ func (t *Tunnel) dialSite(entry *siteEntry, addr string) (net.Conn, Route, []Rou
 			good = append(good, r)
 		}
 	}
+	win, remembered := entry.winner(now)
+	if remembered && !slices.Contains(good, win.route) {
+		remembered = false
+	}
 	var last error
 	var tried []Route
+	done := func(c net.Conn, r Route) (net.Conn, Route, []Route, error) {
+		entry.remember(r, routeIDOf(c), t.timeNow())
+		return c, r, tried, nil
+	}
 	if entry.tunnel {
-		for _, routes := range [][]Route{good, late} {
+		for n, routes := range [][]Route{good, late} {
 			if len(routes) == 0 {
 				continue
 			}
-			c, r, err := t.raceSite(entry, routes, ways, addr, now, &tried)
+			// The remembered route alone gets the head start; else everything but the tunnel.
+			lead := func(r Route) bool { return r != RouteTunnel }
+			if n == 0 && remembered {
+				lead = func(r Route) bool { return r == win.route }
+			}
+			c, r, err := t.raceSite(entry, routes, lead, win, remembered, ways, addr, now, &tried)
 			if err == nil {
-				return c, r, tried, nil
+				return done(c, r)
 			}
 			last = err
 		}
 	} else {
-		for _, r := range append(good, late...) {
+		order := append(good, late...)
+		if remembered {
+			i := slices.Index(order, win.route)
+			order = append([]Route{win.route}, slices.Delete(order, i, i+1)...)
+		}
+		for _, r := range order {
 			tried = append(tried, r)
 			ctx, cancel := context.WithTimeout(t.ctx, ways[r].timeout)
-			c, err := t.siteDial(r, ways)(ctx, "tcp", addr)
+			c, err := t.siteDial(r, ways, "")(ctx, "tcp", addr)
 			cancel()
 			if err == nil {
-				return c, r, tried, nil
+				return done(c, r)
 			}
 			last = err
+			if remembered && r == win.route {
+				entry.forget()
+			}
 			t.siteDialFailed(entry, r, err, now)
 		}
 	}
@@ -303,10 +325,16 @@ func (t *Tunnel) dialSite(entry *siteEntry, addr string) (net.Conn, Route, []Rou
 	return nil, RouteDirect, tried, last
 }
 
-// siteDial is the dial function of a route for a site.
-func (t *Tunnel) siteDial(r Route, ways [numRoutes]way) dialFunc {
+// siteDial is the dial function of a route for a site. exit, a tunnel
+// route's ID, is tried first in the pool; the pool's state does not change.
+func (t *Tunnel) siteDial(r Route, ways [numRoutes]way, exit string) dialFunc {
 	if pool, ok := t.client.(*routePool); ok && r == RouteTunnel {
-		return pool.siteDialContext // a failure stays with the browser connection
+		if exit == "" {
+			return pool.siteDialContext // a failure stays with the browser connection
+		}
+		return func(ctx context.Context, network, addr string) (net.Conn, error) {
+			return pool.siteDialContext(context.WithValue(ctx, preferRouteKey{}, exit), network, addr)
+		}
 	}
 	return ways[r].dial
 }
@@ -325,45 +353,54 @@ func (t *Tunnel) siteTimer(d time.Duration) (<-chan time.Time, func()) {
 	return tm.C, func() { tm.Stop() }
 }
 
-// raceSite dials the routes at once, except the tunnel, which starts after
-// siteTunnelDelay or as soon as the others have failed. The first connection
+// raceSite dials the lead routes at once and the others after
+// siteTunnelDelay or as soon as the lead ones have failed. The first connection
 // wins. A losing dial still running is left to finish within its timeout,
 // so a route that is blocked is remembered as bad; if it connects, it is
 // closed at once.
-func (t *Tunnel) raceSite(entry *siteEntry, routes []Route, ways [numRoutes]way, addr string, now time.Time, tried *[]Route) (net.Conn, Route, error) {
+func (t *Tunnel) raceSite(entry *siteEntry, routes []Route, lead func(Route) bool, win siteWin, remembered bool, ways [numRoutes]way, addr string, now time.Time, tried *[]Route) (net.Conn, Route, error) {
 	type result struct {
 		r    Route
 		conn net.Conn
 		err  error
 	}
 	results := make(chan result, len(routes))
-	pending, others, failed := 0, 0, 0
+	pending, leads, failed := 0, 0, 0
 	start := func(r Route) {
 		*tried = append(*tried, r)
 		pending++
 		ctx, cancel := context.WithTimeout(t.ctx, ways[r].timeout)
-		dial := t.siteDial(r, ways)
+		exit := ""
+		if remembered && r == win.route {
+			exit = win.exit
+		}
+		dial := t.siteDial(r, ways, exit)
 		go func() {
 			c, err := dial(ctx, "tcp", addr)
 			cancel()
 			results <- result{r, c, err}
 		}()
 	}
-	waiting := false // the tunnel has not started yet
+	var rest []Route // routes still waiting for their start
 	for _, r := range routes {
-		if r == RouteTunnel {
-			waiting = true
-		} else {
+		if lead(r) {
 			start(r)
-			others++
+			leads++
+		} else {
+			rest = append(rest, r)
 		}
+	}
+	startRest := func() {
+		for _, r := range rest {
+			start(r)
+		}
+		rest = nil
 	}
 	var timer <-chan time.Time
 	stop := func() {}
-	if waiting && others == 0 {
-		start(RouteTunnel)
-		waiting = false
-	} else if waiting {
+	if leads == 0 {
+		startRest()
+	} else if len(rest) > 0 {
 		timer, stop = t.siteTimer(siteTunnelDelay)
 	}
 	defer stop()
@@ -372,10 +409,7 @@ func (t *Tunnel) raceSite(entry *siteEntry, routes []Route, ways [numRoutes]way,
 		select {
 		case <-timer:
 			timer = nil
-			if waiting {
-				start(RouteTunnel)
-				waiting = false
-			}
+			startRest()
 		case res := <-results:
 			pending--
 			if res.err == nil {
@@ -394,11 +428,13 @@ func (t *Tunnel) raceSite(entry *siteEntry, routes []Route, ways [numRoutes]way,
 				return res.conn, res.r, nil
 			}
 			last = res.err
+			if remembered && res.r == win.route {
+				entry.forget()
+			}
 			t.siteDialFailed(entry, res.r, res.err, now)
-			if res.r != RouteTunnel {
-				if failed++; failed == others && waiting {
-					start(RouteTunnel)
-					waiting = false
+			if lead(res.r) {
+				if failed++; failed == leads {
+					startRest()
 				}
 			}
 		}
