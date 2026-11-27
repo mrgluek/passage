@@ -34,9 +34,11 @@ type Subscription struct {
 	References    []string                           `json:"references,omitempty"`
 	// RefsCleared records an explicit empty list from the trusted author, so a
 	// list from a static link does not come back after a restart.
-	RefsCleared bool   `json:"references_cleared,omitempty"`
-	ReadKey     []byte `json:"read_key"`
-	Revision    uint64 `json:"revision"`
+	RefsCleared bool `json:"references_cleared,omitempty"`
+	// Sites come from the trusted author's file and are replaced on every apply.
+	Sites    []links.SiteGroup `json:"sites,omitempty"`
+	ReadKey  []byte            `json:"read_key"`
+	Revision uint64            `json:"revision"`
 	// Schema is the state format that applied this copy. A lower value means an
 	// older app stored it, so the next refresh applies the same revision again
 	// and picks up fields that app did not know.
@@ -195,6 +197,7 @@ func ApplySubFile(cfg Config, sub Subscription, bundle links.Bundle) (Config, er
 	sub.Canaries = slices.Clone(current.Canaries)
 	sub.References = slices.Clone(current.References)
 	sub.RefsCleared = current.RefsCleared
+	sub.Sites = slices.Clone(current.Sites)
 	sub.RouteIDs = slices.Clone(current.RouteIDs)
 	if len(cfg.Routes) == 0 && cfg.Zone != "" {
 		cfg.Routes = legacyRoutes(cfg)
@@ -271,6 +274,7 @@ func ApplySubFile(cfg Config, sub Subscription, bundle links.Bundle) (Config, er
 			sub.Canaries = slices.Clone(bundle.Canaries)
 			cfg.Canaries = slices.Clone(bundle.Canaries)
 		}
+		sub.Sites = cleanSites(bundle.Sites)
 		if bundle.References != nil { // an empty list clears the stored one
 			sub.References = nilIfEmpty(bundle.References)
 			sub.RefsCleared = len(bundle.References) == 0
@@ -289,7 +293,7 @@ func ApplySubFile(cfg Config, sub Subscription, bundle links.Bundle) (Config, er
 
 // subscriptionSchema grows when a release starts reading a new field of the
 // signed file, so copies stored by older releases are applied again.
-const subscriptionSchema = 1
+const subscriptionSchema = 2
 
 // SubscribeLink is the explicit activation step after an invite preview.
 func SubscribeLink(cfg Config, text string, replaceSigner bool) (ImportResult, error) {
@@ -470,7 +474,7 @@ func sameApplied(a, b Config, index int) bool {
 	x, y := a.Subscriptions[index], b.Subscriptions[index]
 	return slices.Equal(x.Sources, y.Sources) && slices.Equal(x.RouteIDs, y.RouteIDs) &&
 		slices.Equal(x.Canaries, y.Canaries) && slices.Equal(x.References, y.References) &&
-		x.RefsCleared == y.RefsCleared && x.Name == y.Name &&
+		x.RefsCleared == y.RefsCleared && x.Name == y.Name && sameSites(x.Sites, y.Sites) &&
 		slices.Equal(a.Canaries, b.Canaries) && slices.Equal(a.References, b.References) &&
 		slices.Equal(a.UpdateSources, b.UpdateSources) &&
 		(len(a.Routes) == 0 && len(b.Routes) == 0 || sameJSON(a.Routes, b.Routes)) &&

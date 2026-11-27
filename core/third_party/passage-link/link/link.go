@@ -63,21 +63,23 @@ type Route struct {
 	Params   map[string]any `json:"params" cbor:"params"`
 }
 type Bundle struct {
-	Sources     []string `json:"sources,omitempty" cbor:"sources,omitempty"`
-	Canaries    []string `json:"canaries,omitempty" cbor:"canaries,omitempty"`
-	References  []string `json:"references,omitzero" cbor:"references,omitzero"` // nil: key absent; empty: sent as [] (clears)
-	Closed      bool     `json:"closed,omitempty" cbor:"closed,omitempty"`
-	Revision    uint64   `json:"revision,omitempty" cbor:"revision,omitempty"`
-	Sub         []byte   `json:"sub,omitempty" cbor:"sub,omitempty"`
-	V           uint64   `json:"v" cbor:"v"`
-	Kind        string   `json:"kind" cbor:"kind"`
-	Mode        string   `json:"mode" cbor:"mode"`
-	Name        string   `json:"name,omitempty" cbor:"name,omitempty"`
-	IssuedAt    uint64   `json:"issued_at,omitempty" cbor:"issued_at,omitempty"`
-	ReviewAfter uint64   `json:"review_after,omitempty" cbor:"review_after,omitempty"`
-	Signer      []byte   `json:"signer,omitempty" cbor:"signer,omitempty"`
-	Routes      []Route  `json:"routes" cbor:"routes"`
-	Required    []string `json:"required,omitempty" cbor:"required,omitempty"`
+	Sources    []string `json:"sources,omitempty" cbor:"sources,omitempty"`
+	Canaries   []string `json:"canaries,omitempty" cbor:"canaries,omitempty"`
+	References []string `json:"references,omitzero" cbor:"references,omitzero"` // nil: key absent; empty: sent as [] (clears)
+	// Sites lists host groups for browsers; old apps ignore the key.
+	Sites       []SiteGroup `json:"sites,omitempty" cbor:"sites,omitempty"`
+	Closed      bool        `json:"closed,omitempty" cbor:"closed,omitempty"`
+	Revision    uint64      `json:"revision,omitempty" cbor:"revision,omitempty"`
+	Sub         []byte      `json:"sub,omitempty" cbor:"sub,omitempty"`
+	V           uint64      `json:"v" cbor:"v"`
+	Kind        string      `json:"kind" cbor:"kind"`
+	Mode        string      `json:"mode" cbor:"mode"`
+	Name        string      `json:"name,omitempty" cbor:"name,omitempty"`
+	IssuedAt    uint64      `json:"issued_at,omitempty" cbor:"issued_at,omitempty"`
+	ReviewAfter uint64      `json:"review_after,omitempty" cbor:"review_after,omitempty"`
+	Signer      []byte      `json:"signer,omitempty" cbor:"signer,omitempty"`
+	Routes      []Route     `json:"routes" cbor:"routes"`
+	Required    []string    `json:"required,omitempty" cbor:"required,omitempty"`
 	// Updates lists more addresses where app releases are published.
 	Updates []string `json:"updates,omitempty" cbor:"updates,omitempty"`
 }
@@ -476,7 +478,7 @@ func (b Bundle) Validate() ([]string, error) {
 	} else if b.Revision != 0 {
 		return nil, errors.New("revision requires subscription id")
 	}
-	if b.Closed && (b.Sub == nil || b.Mode != "replace" || len(b.Routes) != 0 || len(b.Updates) != 0 || len(b.Sources) != 0 || len(b.Canaries) != 0 || len(b.References) != 0) {
+	if b.Closed && (b.Sub == nil || b.Mode != "replace" || len(b.Routes) != 0 || len(b.Updates) != 0 || len(b.Sources) != 0 || len(b.Canaries) != 0 || len(b.References) != 0 || len(b.Sites) != 0) {
 		return nil, errors.New("invalid closed subscription")
 	}
 	if b.V != 2 || b.Kind != "routes" || b.Mode != "merge" && b.Mode != "replace" || len(b.Name) > 128 || !b.Closed && len(b.Routes) < 1 || len(b.Routes) > limit {
@@ -492,6 +494,9 @@ func (b Bundle) Validate() ([]string, error) {
 		return nil, err
 	}
 	if err := ValidateReferences(b.References); err != nil {
+		return nil, err
+	}
+	if err := ValidateSites(b.Sites); err != nil {
 		return nil, err
 	}
 	if err := ValidateUpdates(b.Updates); err != nil {

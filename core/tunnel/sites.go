@@ -1,0 +1,130 @@
+package tunnel
+
+import (
+	"slices"
+	"sort"
+	"strings"
+	"sync"
+	"time"
+
+	links "github.com/mrgluek/passage-link/link"
+)
+
+// SiteGroup lists hosts for browsers and the kind of route that may carry them.
+type SiteGroup = links.SiteGroup
+
+// siteBadFor is how long a route that failed or stalled for a site is tried last.
+const siteBadFor = 10 * time.Minute
+
+// cleanSites keeps the groups this release understands (smart, tunnel), drops
+// invalid hosts and gives every host one kind: a host in both kinds is a
+// tunnel host. The result has at most one group per kind, hosts sorted.
+func cleanSites(groups []SiteGroup) []SiteGroup {
+	kinds := map[string]string{}
+	for _, g := range groups {
+		if g.Via != links.SiteViaSmart && g.Via != links.SiteViaTunnel {
+			continue
+		}
+		for _, h := range g.Hosts {
+			h = strings.ToLower(strings.TrimSuffix(h, "."))
+			if links.ValidateSiteHost(h) != nil {
+				continue
+			}
+			if kinds[h] != links.SiteViaTunnel {
+				kinds[h] = g.Via
+			}
+		}
+	}
+	var out []SiteGroup
+	for _, via := range []string{links.SiteViaSmart, links.SiteViaTunnel} {
+		var hosts []string
+		for h, v := range kinds {
+			if v == via {
+				hosts = append(hosts, h)
+			}
+		}
+		if len(hosts) > 0 {
+			sort.Strings(hosts)
+			out = append(out, SiteGroup{Via: via, Hosts: hosts})
+		}
+	}
+	return out
+}
+
+func sameSites(a, b []SiteGroup) bool {
+	return slices.EqualFunc(a, b, func(x, y SiteGroup) bool { return x.Via == y.Via && slices.Equal(x.Hosts, y.Hosts) })
+}
+
+// SiteGroups merges the groups of Config.Sites and every subscription.
+func (c Config) SiteGroups() []SiteGroup {
+	all := slices.Clone(c.Sites)
+	for _, s := range c.Subscriptions {
+		all = append(all, s.Sites...)
+	}
+	return cleanSites(all)
+}
+
+// siteEntry is one listed host. The routes that failed for it are remembered
+// here only: site connections never touch the groups' route state.
+type siteEntry struct {
+	tunnel bool
+	mu     sync.Mutex
+	bad    [numRoutes]time.Time
+}
+
+func (e *siteEntry) badUntil(r Route) time.Time {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return e.bad[r]
+}
+
+func (e *siteEntry) markBad(r Route, until time.Time) {
+	e.mu.Lock()
+	e.bad[r] = until
+	e.mu.Unlock()
+}
+
+func (e *siteEntry) clear(r Route) {
+	e.mu.Lock()
+	e.bad[r] = time.Time{}
+	e.mu.Unlock()
+}
+
+type siteSet struct {
+	entries map[string]*siteEntry
+	hosts   []string // sorted, for the PAC
+}
+
+func newSiteSet(groups []SiteGroup) *siteSet {
+	s := &siteSet{entries: map[string]*siteEntry{}}
+	for _, g := range cleanSites(groups) {
+		for _, h := range g.Hosts {
+			s.entries[h] = &siteEntry{tunnel: g.Via == links.SiteViaTunnel}
+			s.hosts = append(s.hosts, h)
+		}
+	}
+	sort.Strings(s.hosts)
+	return s
+}
+
+// match finds the entry covering host: the host itself or a parent domain,
+// never a bare top-level name. One map lookup per label.
+func (s *siteSet) match(host string) *siteEntry {
+	if s == nil || len(s.entries) == 0 {
+		return nil
+	}
+	host = strings.ToLower(strings.TrimSuffix(host, "."))
+	if len(host) > 253 {
+		return nil
+	}
+	for {
+		if e := s.entries[host]; e != nil {
+			return e
+		}
+		i := strings.IndexByte(host, '.')
+		if i < 0 {
+			return nil
+		}
+		host = host[i+1:]
+	}
+}
