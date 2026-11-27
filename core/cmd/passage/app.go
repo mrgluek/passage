@@ -618,7 +618,7 @@ func (a *App) viewLocked() (view, bool) {
 	}
 	v.Browser = a.browserViewLocked()
 	v.Tabs = homeTabs(v.Browser.Sites > 0)
-	v.ConnectDone = connectDone(v.AppSeen, v.Browser.Sites > 0, v.Browser.On || a.settings.SystemPAC, v.Browser.Confirmed)
+	v.ConnectDone = connectDone(v.AppSeen, v.Browser.Sites > 0, v.Browser.On, v.Browser.Confirmed)
 	v.Update = a.updateViewLocked()
 	v.Full = full
 	return v, s.Running && !s.AutostartDismissed

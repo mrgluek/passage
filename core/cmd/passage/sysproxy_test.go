@@ -537,3 +537,14 @@ func TestRefusalTextsPointDownToTheAddress(t *testing.T) {
 		t.Errorf("gendered: %q", s)
 	}
 }
+
+// The step counts what the system has, not the wish: a wish carried over to
+// a system without the switch, or not applied yet, is not "connected".
+func TestConnectDoneUsesTheAppliedState(t *testing.T) {
+	a, _ := browserApp(t, winFake(proxyService{}), true)
+	a.sysProxy = nil
+	a.settings.SystemPAC = true
+	if a.view().ConnectDone {
+		t.Fatal("the wish alone finished the step")
+	}
+}
