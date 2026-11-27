@@ -224,10 +224,8 @@ func loadSettings(path string) (Settings, bool, error) {
 		case "sys_backup_detect":
 			winBackup().AutoDetect = v == "true" || v == "1"
 		case "sys_backup_service":
-			// The service's name, a tab, the address before.
-			name, prev, _ := strings.Cut(v, "\t")
-			if name != "" {
-				s.SysBackup.Services = append(s.SysBackup.Services, serviceBackup{Name: name, PrevURL: prev})
+			if sb, ok := parseServiceBackup(v); ok {
+				s.SysBackup.Services = append(s.SysBackup.Services, sb)
 			}
 		}
 	}
@@ -321,7 +319,7 @@ browser_confirmed=%t
 			if sb.Name == "" {
 				text += fmt.Sprintf("sys_backup_prev=%s\nsys_backup_enable=%t\nsys_backup_server=%s\nsys_backup_detect=%t\n", oneLineValue(sb.PrevURL), sb.ProxyEnable, oneLineValue(sb.ProxyServer), sb.AutoDetect)
 			} else {
-				text += fmt.Sprintf("sys_backup_service=%s\t%s\n", noTab(sb.Name), noTab(sb.PrevURL))
+				text += "sys_backup_service=" + strconv.Quote(sb.Name) + " " + strconv.Quote(sb.PrevURL) + "\n"
 			}
 		}
 	}
@@ -332,8 +330,22 @@ browser_confirmed=%t
 // oneLineValue keeps a registry value from breaking the ini format.
 func oneLineValue(v string) string { return strings.NewReplacer("\r", "", "\n", "").Replace(v) }
 
-// noTab is oneLineValue for a field of a tab-separated value.
-func noTab(v string) string { return strings.ReplaceAll(oneLineValue(v), "\t", " ") }
+// parseServiceBackup reads a sys_backup_service value: the service's name
+// and the address before, each a quoted string, so names keep their spaces
+// and tabs exactly. The older form, name and address split by a tab, is
+// still read.
+func parseServiceBackup(v string) (serviceBackup, bool) {
+	if q, err := strconv.QuotedPrefix(v); err == nil {
+		name, _ := strconv.Unquote(q)
+		prev, err := strconv.Unquote(strings.TrimSpace(v[len(q):]))
+		if err != nil {
+			prev = ""
+		}
+		return serviceBackup{Name: name, PrevURL: prev}, name != ""
+	}
+	name, prev, _ := strings.Cut(v, "\t")
+	return serviceBackup{Name: name, PrevURL: prev}, name != ""
+}
 
 // writeFile replaces path through a temporary file, so a crash never
 // leaves half a file.

@@ -145,12 +145,13 @@ func TestMacNewServiceIsAddedOnNetworkChange(t *testing.T) {
 func TestMacBackupRoundTripsThroughTheIni(t *testing.T) {
 	a, dir := browserApp(t, macFake(), true)
 	a.settings.SystemPAC = true
-	a.settings.SysBackup = sysBackup{Active: true, Ours: oursURL, Services: []serviceBackup{
+	want := []serviceBackup{
 		{Name: "Wi-Fi"}, {Name: "USB 10/100/1000 LAN = 2", PrevURL: oldPAC}, {Name: "tab\there"},
-	}}
+		{Name: " Renamed  "}, {Name: `Quote "x" \ y`, PrevURL: "http://example.org/a b.pac"},
+	}
+	a.settings.SysBackup = sysBackup{Active: true, Ours: oursURL, Services: slices.Clone(want)}
 	a.saveSettings()
 	got := reload(t, dir).SysBackup
-	want := []serviceBackup{{Name: "Wi-Fi"}, {Name: "USB 10/100/1000 LAN = 2", PrevURL: oldPAC}, {Name: "tab here"}}
 	if !got.Active || got.Ours != oursURL || !slices.Equal(got.Services, want) {
 		t.Fatalf("%+v", got)
 	}
@@ -287,5 +288,14 @@ func TestQuitRestoreIsBounded(t *testing.T) {
 	}
 	if !reload(t, dir).SysBackup.Active {
 		t.Fatal("backup lost after an unfinished restore")
+	}
+}
+
+func TestOldTabSeparatedServiceBackupStillLoads(t *testing.T) {
+	if sb, ok := parseServiceBackup("Wi-Fi\thttp://example.org/old.pac"); !ok || sb.Name != "Wi-Fi" || sb.PrevURL != oldPAC {
+		t.Fatal(sb, ok)
+	}
+	if sb, ok := parseServiceBackup("Wi-Fi"); !ok || sb.Name != "Wi-Fi" || sb.PrevURL != "" {
+		t.Fatal(sb, ok)
 	}
 }
