@@ -299,3 +299,23 @@ func TestOldTabSeparatedServiceBackupStillLoads(t *testing.T) {
 		t.Fatal(sb, ok)
 	}
 }
+
+// Killed after setting a service but before saving the backup: the next
+// start turns that service's address off.
+func TestStartTurnsOffLeftoversOutsideTheBackup(t *testing.T) {
+	f := macFake(proxyService{Name: "Wi-Fi"}, proxyService{Name: "Ethernet"})
+	a, dir := browserApp(t, f, true)
+	a.setSystemPAC(true)
+	a.mu.Lock()
+	ours := a.pacURLLocked()
+	a.mu.Unlock()
+	s := reload(t, dir)
+	s.SystemPAC, s.SysBackup = true, sysBackup{Active: true, Ours: ours, Services: []serviceBackup{{Name: "Wi-Fi"}}}
+	s.save(dir + "/" + iniName)
+	b := newApp(dir, "test", "", "en", &fakePlatform{})
+	b.sysProxy = f
+	b.sweepSystemPAC()
+	if !f.st.Services[0].ours(ours) || f.st.Services[1].AutoConfigOn {
+		t.Fatalf("%+v", f.st.Services)
+	}
+}

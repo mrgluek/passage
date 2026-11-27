@@ -285,6 +285,27 @@ func (a *App) recoverSystemPACLocked() (extend bool) {
 	return false
 }
 
+// sweepSystemPAC runs at start, outside a.mu: see sweepLeftovers.
+func (a *App) sweepSystemPAC() {
+	a.sysMu.Lock()
+	defer a.sysMu.Unlock()
+	a.mu.Lock()
+	sp, b, url := a.sysProxy, a.settings.SysBackup, ""
+	if a.settings.BrowserPort != 0 {
+		url = a.pacURLLocked()
+	}
+	a.mu.Unlock()
+	n, err := sweepLeftovers(sp, url, b)
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if n > 0 {
+		a.event("system proxy: turned off the address on %d network service(s) left by an interrupted change", n)
+	}
+	if err != nil {
+		a.event("system proxy: leftover check: %v", err)
+	}
+}
+
 // extendSystemPAC points network services that appeared since the switch
 // was turned on at the address too (macOS). It runs outside a.mu.
 func (a *App) extendSystemPAC(why string) {

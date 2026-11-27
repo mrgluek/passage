@@ -222,6 +222,34 @@ func restoreServices(sp systemProxy, b sysBackup) (restoreResult, error) {
 	return res, first
 }
 
+// sweepLeftovers turns off url on services that use it but are not in b: a
+// crash between setting a service and saving the backup leaves such a
+// service behind. What it had before is unknown, so it gets none.
+func sweepLeftovers(sp systemProxy, url string, b sysBackup) (int, error) {
+	if sp == nil || url == "" {
+		return 0, nil
+	}
+	st, err := sp.Read()
+	if err != nil {
+		return 0, err
+	}
+	n := 0
+	var first error
+	for _, s := range st.Services {
+		if !s.ours(url) || b.Active && b.Ours == url && b.has(s.Name) {
+			continue
+		}
+		if err := sp.SetAutoConfig(s.Name, "", false); err != nil {
+			if first == nil {
+				first = err
+			}
+			continue
+		}
+		n++
+	}
+	return n, first
+}
+
 // anyOurs: some service uses url now.
 func (st proxyState) anyOurs(url string) bool {
 	for _, s := range st.Services {

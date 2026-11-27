@@ -308,6 +308,7 @@ func (a *App) run(ctx context.Context) {
 		a.startLocked("app start")
 	}
 	a.mu.Unlock()
+	a.sweepSystemPAC()
 	if extend {
 		a.extendSystemPAC("start")
 	}
