@@ -189,14 +189,15 @@ func TestPinnedLookupRefreshes(t *testing.T) {
 	}
 }
 
-func TestPinnedNoFallbackWhenSNIDiffers(t *testing.T) {
+func TestPinnedFallbackLooksUpEndpointHostWithSNI(t *testing.T) {
+	// The route's SNI is a front name; the endpoint host is what the CDN resolves.
 	c, err := NewHTTPClient(links.HTTPParams{Endpoint: "https://example.com/passage", Key: wssTestKey, DialIP: "192.0.2.1", SNI: "front.example.net"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer c.Close()
-	if c.pin.host != "" {
-		t.Fatalf("host %q would be looked up", c.pin.host)
+	if c.pin.host != "example.com" {
+		t.Fatalf("host %q", c.pin.host)
 	}
 }
 
