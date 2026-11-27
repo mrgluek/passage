@@ -5,6 +5,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 )
 
 // macFake is a macOS system with several network services.
@@ -120,9 +121,7 @@ func TestMacNewServiceIsAddedOnNetworkChange(t *testing.T) {
 	f.st.Services = append(f.st.Services,
 		proxyService{Name: "USB Ethernet 2"},
 		proxyService{Name: "Phone", ProxyEnable: true, ProxyServer: "example.org:8080"})
-	a.mu.Lock()
-	a.extendSystemPACLocked("network change")
-	a.mu.Unlock()
+	a.extendSystemPAC("network change")
 	if !f.st.Services[1].ours(ours) || f.st.Services[2].AutoConfigURL != "" {
 		t.Fatalf("%+v", f.st.Services)
 	}
@@ -237,5 +236,56 @@ func TestMacDisabledForeignAddressIsAllowedAndPutBack(t *testing.T) {
 	f = macFake(proxyService{Name: "Wi-Fi", AutoConfigURL: other, AutoConfigOn: true}, proxyService{Name: "Ethernet"})
 	if _, err := enableSystemPAC(f, oursURL); !errors.Is(err, errSysForeignPAC) || len(f.writes) != 0 {
 		t.Fatalf("an address in use was not refused: %v %v", err, f.writes)
+	}
+}
+
+// A service that is gone does not block restoring the others, and it is
+// reported, not kept forever.
+func TestMacRestoreSkipsAServiceThatIsGone(t *testing.T) {
+	f := macFake(proxyService{Name: "Wi-Fi"}, proxyService{Name: "USB LAN"}, proxyService{Name: "Ethernet"})
+	b, _ := enableSystemPAC(f, oursURL)
+	f.st.Services = slices.Delete(f.st.Services, 1, 2) // the adapter's service was deleted
+	res, err := restoreServices(macReader{f}, b)
+	if err != nil || !res.changed || res.missing != 1 || f.st.anyOurs(oursURL) {
+		t.Fatalf("%+v %v %+v", res, err, f.st.Services)
+	}
+}
+
+func TestRestoreFailureOnUncheckIsShownAndKeepsTheState(t *testing.T) {
+	f := winFake(proxyService{})
+	a, dir := browserApp(t, f, true)
+	a.setSystemPAC(true)
+	f.setErr = errors.New("access denied")
+	if err := a.setSystemPAC(false); err != nil {
+		t.Fatal(err)
+	}
+	v := a.view().Browser
+	if !v.On || !strings.Contains(v.Notice, "access denied") {
+		t.Fatalf("failure hidden: %+v", v)
+	}
+	if s := reload(t, dir); s.SystemPAC || !s.SysBackup.Active {
+		t.Fatalf("settings: %+v", s)
+	}
+}
+
+// blockingProxy never finishes a write, as a hung networksetup would.
+type blockingProxy struct{ *fakeProxy }
+
+func (blockingProxy) SetAutoConfig(string, string, bool) error { select {} }
+
+func TestQuitRestoreIsBounded(t *testing.T) {
+	f := macFake(proxyService{Name: "Wi-Fi"})
+	a, dir := browserApp(t, f, true)
+	a.setSystemPAC(true)
+	a.mu.Lock()
+	a.sysProxy = blockingProxy{f}
+	a.mu.Unlock()
+	start := time.Now()
+	a.restoreOnQuit(100 * time.Millisecond)
+	if d := time.Since(start); d > time.Second {
+		t.Fatalf("quit waited %v", d)
+	}
+	if !reload(t, dir).SysBackup.Active {
+		t.Fatal("backup lost after an unfinished restore")
 	}
 }

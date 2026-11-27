@@ -25,7 +25,18 @@ type proxyState struct {
 	Services []proxyService
 	// Policy names the policy value that manages the proxy settings; empty when none does.
 	Policy string
+	// Unread counts services that could not be read; they are left alone.
+	Unread int
 }
+
+// serviceReader reads named services only. missing lists names the system
+// no longer knows; any other error means the read should be tried again.
+type serviceReader interface {
+	ReadServices(names []string) (found []proxyService, missing []string, err error)
+}
+
+// errServiceGone is a read of a service the system no longer knows.
+var errServiceGone = errors.New("not a known network service")
 
 // proxyService is one service's settings. Only the auto-config address is
 // ever written; the other fields are read to decide and kept for diagnosis.
@@ -160,17 +171,42 @@ func addServices(sp systemProxy, st proxyState, b *sysBackup) error {
 // uses ours. It reports whether it changed anything; after an error the
 // rest is still tried, and a later call finishes the job.
 func restoreSystemPAC(sp systemProxy, b sysBackup) (bool, error) {
+	r, err := restoreServices(sp, b)
+	return r.changed, err
+}
+
+// restoreResult says what a restore did.
+type restoreResult struct {
+	changed bool
+	missing int // backed-up services the system no longer knows
+}
+
+func restoreServices(sp systemProxy, b sysBackup) (restoreResult, error) {
+	var res restoreResult
 	if sp == nil || !b.Active {
-		return false, nil
+		return res, nil
 	}
-	st, err := sp.Read()
-	if err != nil {
-		return false, err
+	var services []proxyService
+	if sr, ok := sp.(serviceReader); ok {
+		names := make([]string, 0, len(b.Services))
+		for _, sb := range b.Services {
+			names = append(names, sb.Name)
+		}
+		found, missing, err := sr.ReadServices(names)
+		if err != nil {
+			return res, err
+		}
+		services, res.missing = found, len(missing)
+	} else {
+		st, err := sp.Read()
+		if err != nil {
+			return res, err
+		}
+		services = st.Services
 	}
-	changed := false
 	var first error
 	for _, sb := range b.Services {
-		for _, s := range st.Services {
+		for _, s := range services {
 			if s.Name != sb.Name || !s.ours(b.Ours) {
 				continue
 			}
@@ -180,10 +216,10 @@ func restoreSystemPAC(sp systemProxy, b sysBackup) (bool, error) {
 				}
 				continue
 			}
-			changed = true
+			res.changed = true
 		}
 	}
-	return changed, first
+	return res, first
 }
 
 // anyOurs: some service uses url now.

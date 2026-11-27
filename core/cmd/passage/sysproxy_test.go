@@ -53,6 +53,26 @@ func (f *fakeProxy) SetAutoConfig(name, url string, on bool) error {
 	return nil
 }
 
+// macReader is a macOS fake that also reads services by name.
+type macReader struct{ *fakeProxy }
+
+func (m macReader) ReadServices(names []string) ([]proxyService, []string, error) {
+	if m.readErr != nil {
+		return nil, nil, m.readErr
+	}
+	var found []proxyService
+	var missing []string
+	for _, n := range names {
+		i := slices.IndexFunc(m.st.Services, func(s proxyService) bool { return s.Name == n })
+		if i < 0 {
+			missing = append(missing, n)
+		} else {
+			found = append(found, m.st.Services[i])
+		}
+	}
+	return found, missing, nil
+}
+
 // winFake is a Windows system: one unnamed service.
 func winFake(s proxyService) *fakeProxy {
 	s.AutoConfigOn = s.AutoConfigURL != ""

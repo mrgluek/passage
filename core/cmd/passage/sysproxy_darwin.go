@@ -3,12 +3,14 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
+	"time"
 )
 
 // networksetupProxy changes the auto-config address of every network
@@ -19,10 +21,18 @@ type networksetupProxy struct{}
 
 func newSystemProxy() systemProxy { return networksetupProxy{} }
 
+// macCallTimeout bounds one networksetup or profiles call: they can hang
+// while the system rebuilds its network services.
+const macCallTimeout = 5 * time.Second
+
 func networksetup(args ...string) (string, error) {
-	out, err := exec.Command("/usr/sbin/networksetup", args...).CombinedOutput()
+	ctx, cancel := context.WithTimeout(context.Background(), macCallTimeout)
+	defer cancel()
+	out, err := exec.CommandContext(ctx, "/usr/sbin/networksetup", args...).CombinedOutput()
 	text := string(out)
-	if err == nil && strings.Contains(text, "** Error") {
+	if ctx.Err() != nil {
+		err = errors.New("timed out")
+	} else if err == nil && strings.Contains(text, "** Error") {
 		err = errors.New(strings.TrimSpace(text))
 	}
 	if err != nil {
@@ -37,23 +47,59 @@ func (networksetupProxy) Read() (proxyState, error) {
 	if err != nil {
 		return st, err
 	}
-	names := proxyServices(parseServiceOrder(out))
-	st.Services = make([]proxyService, len(names))
+	found, errs := readServices(proxyServices(parseServiceOrder(out)))
+	st.Services = found
+	st.Unread = len(errs) // left alone: it may be going away
+	st.Policy = managedProxyPolicy()
+	return st, nil
+}
+
+// ReadServices reads the named services, whatever their state now, so a
+// restore does not depend on the other services.
+func (networksetupProxy) ReadServices(names []string) ([]proxyService, []string, error) {
+	out, err := networksetup("-listallnetworkservices")
+	if err != nil {
+		return nil, nil, err
+	}
+	known := map[string]bool{}
+	for _, line := range strings.Split(out, "\n")[1:] {
+		known[strings.TrimPrefix(strings.TrimRight(line, "\r"), "*")] = true
+	}
+	var present, missing []string
+	for _, n := range names {
+		if known[n] {
+			present = append(present, n)
+		} else {
+			missing = append(missing, n)
+		}
+	}
+	found, errs := readServices(present)
+	return found, missing, errors.Join(errs...)
+}
+
+// readServices reads services in parallel; a service that fails is left out.
+func readServices(names []string) ([]proxyService, []error) {
+	services := make([]proxyService, len(names))
 	errs := make([]error, len(names))
 	var wg sync.WaitGroup
 	for i, name := range names {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			st.Services[i], errs[i] = readService(name)
+			services[i], errs[i] = readService(name)
 		}()
 	}
 	wg.Wait()
-	if err := errors.Join(errs...); err != nil {
-		return proxyState{}, err
+	var found []proxyService
+	var failed []error
+	for i := range names {
+		if errs[i] != nil {
+			failed = append(failed, errs[i])
+		} else {
+			found = append(found, services[i])
+		}
 	}
-	st.Policy = managedProxyPolicy()
-	return st, nil
+	return found, failed
 }
 
 func readService(name string) (proxyService, error) {
@@ -81,7 +127,9 @@ func readService(name string) (proxyService, error) {
 // managedProxyPolicy looks for proxy settings in the user's configuration
 // profiles and in managed preferences. Both are readable without a password.
 func managedProxyPolicy() string {
-	if out, err := exec.Command("/usr/bin/profiles", "show", "-type", "configuration", "-output", "stdout-xml").Output(); err == nil {
+	ctx, cancel := context.WithTimeout(context.Background(), macCallTimeout)
+	defer cancel()
+	if out, err := exec.CommandContext(ctx, "/usr/bin/profiles", "show", "-type", "configuration", "-output", "stdout-xml").Output(); err == nil {
 		if k := managedProxy(out); k != "" {
 			return "profile: " + k
 		}

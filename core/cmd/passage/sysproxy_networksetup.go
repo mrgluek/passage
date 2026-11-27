@@ -18,7 +18,9 @@ func parseServiceOrder(out string) []macService {
 		if rest, ok := strings.CutPrefix(line, "(Hardware Port: "); ok {
 			if len(list) > 0 {
 				if i := strings.LastIndex(rest, ", Device: "); i >= 0 {
-					list[len(list)-1].Device = strings.TrimSuffix(rest[i+len(", Device: "):], ")")
+					if d := strings.TrimSuffix(rest[i+len(", Device: "):], ")"); d != "(null)" {
+						list[len(list)-1].Device = d
+					}
 				}
 			}
 			continue

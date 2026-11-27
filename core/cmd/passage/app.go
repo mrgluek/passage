@@ -26,6 +26,8 @@ const (
 	siteURL   = "https://passage.gluek.info"
 	sourceURL = "https://github.com/mrgluek/passage"
 	tickEvery = 5 * time.Second
+	// quitRestoreLimit bounds how long quitting waits for the system proxy restore.
+	quitRestoreLimit = 10 * time.Second
 )
 
 // platform is what the app needs from the desktop it runs on.
@@ -78,6 +80,7 @@ type App struct {
 	subscriptionFetcher    subscriptionFetcher
 	sysProxy               systemProxy // nil: no system switch on this platform
 	sysNotice, sysError    string
+	sysMu                  sync.Mutex // held while the system proxy settings change
 	portFree               func(int) bool
 }
 
@@ -277,7 +280,7 @@ func (a *App) tick() {
 	case reload:
 		a.startLocked("restart on link change")
 	case a.networkChanged(time.Now()):
-		a.extendSystemPACLocked("network change")
+		go a.extendSystemPAC("network change")
 		a.startLocked("restart on network change")
 	default:
 		if a.subscriptionRefreshing {
@@ -299,12 +302,15 @@ func (a *App) tick() {
 
 func (a *App) run(ctx context.Context) {
 	a.mu.Lock()
-	a.recoverSystemPACLocked()
+	extend := a.recoverSystemPACLocked()
 	if a.settings.Running {
 		a.runningSince = time.Now()
 		a.startLocked("app start")
 	}
 	a.mu.Unlock()
+	if extend {
+		a.extendSystemPAC("start")
+	}
 	a.changed()
 	tk := time.NewTicker(tickEvery)
 	defer tk.Stop()
@@ -313,8 +319,8 @@ func (a *App) run(ctx context.Context) {
 		case <-ctx.Done():
 			a.cancelUpdate()
 			a.event("app quit")
+			a.restoreOnQuit(quitRestoreLimit)
 			a.mu.Lock()
-			a.restoreSystemPACLocked("quit")
 			if a.tun != nil {
 				a.tun.Close()
 				a.log.copyStalls(a.tun.Status(500).Events)

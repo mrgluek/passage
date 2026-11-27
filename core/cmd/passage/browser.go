@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"math/big"
+	"slices"
+	"time"
 
 	"github.com/mrgluek/passage/core/tunnel"
 )
@@ -99,7 +101,7 @@ func (a *App) browserViewLocked() browserView {
 	v.Confirmed = a.settings.BrowserConfirmed
 	if a.sysNotice != "" {
 		v.Notice = a.t.f(a.sysNotice)
-		if a.sysNotice == "browser_refuse_error" || a.sysNotice == "browser_refuse_policy" {
+		if a.sysNotice == "browser_refuse_error" || a.sysNotice == "browser_refuse_policy" || a.sysNotice == "browser_restore_error" {
 			v.Notice = a.t.f(a.sysNotice, a.sysError)
 		}
 	}
@@ -130,28 +132,53 @@ func noticeArg(err error) string {
 
 // setSystemPAC turns the system switch on or off. A refusal leaves the
 // system alone and is shown in the window; it is not an error of the call.
+// The system calls can take seconds, so they run outside a.mu; sysMu keeps
+// changes of the system settings in order.
 func (a *App) setSystemPAC(on bool) error {
+	a.sysMu.Lock()
+	defer a.sysMu.Unlock()
 	a.mu.Lock()
-	defer a.changedAfter()
-	defer a.mu.Unlock()
-	if a.sysProxy == nil {
+	sp := a.sysProxy
+	if sp == nil {
+		a.mu.Unlock()
 		return errSysUnsupported
 	}
 	a.sysNotice, a.sysError = "", ""
-	wanted := a.browserWantedLocked()
+	a.ensureBrowserPortLocked()
+	url, b := a.pacURLLocked(), a.settings.SysBackup
+	a.mu.Unlock()
+
+	var nb sysBackup
+	var res restoreResult
+	var err error
 	if on {
-		a.ensureBrowserPortLocked()
-		b, err := enableSystemPAC(a.sysProxy, a.pacURLLocked())
-		if err != nil {
-			a.sysNotice, a.sysError = noticeKey(err), noticeArg(err)
-			a.event("system proxy: not changed (%s)", a.sysNotice)
-			return nil
-		}
-		a.settings.SystemPAC, a.settings.SysBackup = true, b
-		a.event("system proxy: auto-config set")
+		nb, err = enableSystemPAC(sp, url)
 	} else {
-		a.restoreSystemPACLocked("off")
+		res, err = restoreServices(sp, b)
+	}
+
+	a.mu.Lock()
+	defer a.changedAfter()
+	defer a.mu.Unlock()
+	wanted := a.browserWantedLocked()
+	switch {
+	case on && err != nil:
+		a.sysNotice, a.sysError = noticeKey(err), noticeArg(err)
+		a.event("system proxy: not changed (%s)", a.sysNotice)
+		return nil
+	case on:
+		a.settings.SystemPAC, a.settings.SysBackup = true, nb
+		a.event("system proxy: auto-config set")
+	case err != nil:
+		// The switch shows what the system has: still ours. The wish is off,
+		// so the next start tries the restore again.
 		a.settings.SystemPAC = false
+		a.sysNotice, a.sysError = "browser_restore_error", err.Error()
+		a.event("system proxy: restore failed (off): %v", err)
+	default:
+		a.settings.SystemPAC = false
+		a.noteRestoreLocked(res, "off")
+		a.settings.SysBackup = sysBackup{}
 	}
 	a.saveSettings()
 	if wanted != a.browserWantedLocked() {
@@ -160,33 +187,75 @@ func (a *App) setSystemPAC(on bool) error {
 	return nil
 }
 
+func (a *App) noteRestoreLocked(res restoreResult, why string) {
+	if res.changed {
+		a.event("system proxy: restored (%s)", why)
+	} else {
+		a.event("system proxy: address changed by someone else, left alone (%s)", why)
+	}
+	if res.missing > 0 {
+		a.event("system proxy: %d network service(s) no longer exist, dropped from the backup (%s)", res.missing, why)
+	}
+}
+
 // restoreSystemPACLocked puts the old settings back if the address is still
-// ours, and forgets the backup either way.
+// ours, and forgets the backup unless the restore failed.
 func (a *App) restoreSystemPACLocked(why string) {
 	b := a.settings.SysBackup
 	if !b.Active {
 		return
 	}
-	changed, err := restoreSystemPAC(a.sysProxy, b)
-	switch {
-	case err != nil:
+	res, err := restoreServices(a.sysProxy, b)
+	if err != nil {
 		a.event("system proxy: restore failed (%s): %v", why, err)
 		return // keep the backup: the next start tries again
-	case changed:
-		a.event("system proxy: restored (%s)", why)
-	default:
-		a.event("system proxy: address changed by someone else, left alone (%s)", why)
 	}
+	a.noteRestoreLocked(res, why)
 	a.settings.SysBackup = sysBackup{}
 	a.saveSettings()
 }
 
+// restoreOnQuit restores outside a.mu and waits at most limit; a restore
+// that has not finished by then stays in the backup for the next start.
+func (a *App) restoreOnQuit(limit time.Duration) {
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		a.sysMu.Lock()
+		defer a.sysMu.Unlock()
+		a.mu.Lock()
+		sp, b := a.sysProxy, a.settings.SysBackup
+		a.mu.Unlock()
+		if sp == nil || !b.Active {
+			return
+		}
+		res, err := restoreServices(sp, b)
+		a.mu.Lock()
+		defer a.mu.Unlock()
+		if err != nil {
+			a.event("system proxy: restore failed (quit): %v", err)
+			return
+		}
+		a.noteRestoreLocked(res, "quit")
+		a.settings.SysBackup = sysBackup{}
+		a.saveSettings()
+	}()
+	select {
+	case <-done:
+	case <-time.After(limit):
+		a.mu.Lock()
+		a.event("system proxy: restore did not finish in time (quit); the next start finishes it")
+		a.mu.Unlock()
+	}
+}
+
 // recoverSystemPACLocked runs at start. A backup left by a crashed run is
 // either continued (the user still wants it) or undone; without a backup, a
-// wish for the switch is applied again.
-func (a *App) recoverSystemPACLocked() {
+// wish for the switch is applied again. extend asks the caller to run
+// extendSystemPAC once a.mu is released.
+func (a *App) recoverSystemPACLocked() (extend bool) {
 	if a.sysProxy == nil {
-		return
+		return false
 	}
 	s := &a.settings
 	switch {
@@ -198,9 +267,9 @@ func (a *App) recoverSystemPACLocked() {
 			s.SysBackup = sysBackup{} // changed meanwhile: not ours to restore
 			s.SystemPAC = false       // and the wish no longer matches the system
 			a.saveSettings()
-			return
+			return false
 		}
-		a.extendSystemPACLocked("start")
+		return true
 	case s.SystemPAC:
 		a.ensureBrowserPortLocked()
 		b, err := enableSystemPAC(a.sysProxy, a.pacURLLocked())
@@ -213,16 +282,27 @@ func (a *App) recoverSystemPACLocked() {
 		}
 		a.saveSettings()
 	}
+	return false
 }
 
-// extendSystemPACLocked points network services that appeared since the
-// switch was turned on at the address too (macOS).
-func (a *App) extendSystemPACLocked(why string) {
-	if a.sysProxy == nil || !a.settings.SystemPAC || !a.settings.SysBackup.Active {
+// extendSystemPAC points network services that appeared since the switch
+// was turned on at the address too (macOS). It runs outside a.mu.
+func (a *App) extendSystemPAC(why string) {
+	a.sysMu.Lock()
+	defer a.sysMu.Unlock()
+	a.mu.Lock()
+	sp, b := a.sysProxy, a.settings.SysBackup
+	on := a.settings.SystemPAC && b.Active
+	a.mu.Unlock()
+	if sp == nil || !on {
 		return
 	}
-	added, skipped, err := extendSystemPAC(a.sysProxy, &a.settings.SysBackup)
-	if added > 0 {
+	b.Services = slices.Clone(b.Services)
+	added, skipped, err := extendSystemPAC(sp, &b)
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if added > 0 && a.settings.SysBackup.Active && a.settings.SysBackup.Ours == b.Ours {
+		a.settings.SysBackup = b
 		a.saveSettings()
 		a.event("system proxy: auto-config set on %d new network service(s) (%s)", added, why)
 	}
