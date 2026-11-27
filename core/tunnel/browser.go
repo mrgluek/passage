@@ -244,6 +244,10 @@ func (t *Tunnel) connectSite(c bufferedConn, entry *siteEntry, host, addr string
 	<-done
 }
 
+// siteTunnelDelay is the head start direct and smart get over the tunnel for
+// a via:tunnel site, as for the app's groups.
+const siteTunnelDelay = 2 * time.Second
+
 // dialSite tries the routes the site's kind allows: those that have not
 // failed lately first, the others last. A refused destination is not a failure
 // of the route.
@@ -269,27 +273,137 @@ func (t *Tunnel) dialSite(entry *siteEntry, addr string) (net.Conn, Route, []Rou
 	}
 	var last error
 	var tried []Route
-	for _, r := range append(good, late...) {
-		tried = append(tried, r)
-		ctx, cancel := context.WithTimeout(t.ctx, ways[r].timeout)
-		dial := ways[r].dial
-		if pool, ok := t.client.(*routePool); ok && r == RouteTunnel {
-			dial = pool.siteDialContext // a failure stays with the browser connection
+	if entry.tunnel {
+		for _, routes := range [][]Route{good, late} {
+			if len(routes) == 0 {
+				continue
+			}
+			c, r, err := t.raceSite(entry, routes, ways, addr, now, &tried)
+			if err == nil {
+				return c, r, tried, nil
+			}
+			last = err
 		}
-		c, err := dial(ctx, "tcp", addr)
-		cancel()
-		if err == nil {
-			return c, r, tried, nil
-		}
-		last = err
-		if !errors.Is(err, errDestinationRefused) && t.ctx.Err() == nil {
-			entry.markBad(r, now.Add(siteBadFor))
+	} else {
+		for _, r := range append(good, late...) {
+			tried = append(tried, r)
+			ctx, cancel := context.WithTimeout(t.ctx, ways[r].timeout)
+			c, err := t.siteDial(r, ways)(ctx, "tcp", addr)
+			cancel()
+			if err == nil {
+				return c, r, tried, nil
+			}
+			last = err
+			t.siteDialFailed(entry, r, err, now)
 		}
 	}
 	if last == nil {
 		last = errors.New("no route available")
 	}
 	return nil, RouteDirect, tried, last
+}
+
+// siteDial is the dial function of a route for a site.
+func (t *Tunnel) siteDial(r Route, ways [numRoutes]way) dialFunc {
+	if pool, ok := t.client.(*routePool); ok && r == RouteTunnel {
+		return pool.siteDialContext // a failure stays with the browser connection
+	}
+	return ways[r].dial
+}
+
+func (t *Tunnel) siteDialFailed(entry *siteEntry, r Route, err error, now time.Time) {
+	if !errors.Is(err, errDestinationRefused) && t.ctx.Err() == nil {
+		entry.markBad(r, now.Add(siteBadFor))
+	}
+}
+
+func (t *Tunnel) siteTimer(d time.Duration) (<-chan time.Time, func()) {
+	if t.siteAfter != nil {
+		return t.siteAfter(d)
+	}
+	tm := time.NewTimer(d)
+	return tm.C, func() { tm.Stop() }
+}
+
+// raceSite dials the routes at once, except the tunnel, which starts after
+// siteTunnelDelay or as soon as the others have failed. The first connection
+// wins. A losing dial still running is left to finish within its timeout,
+// so a route that is blocked is remembered as bad; if it connects, it is
+// closed at once.
+func (t *Tunnel) raceSite(entry *siteEntry, routes []Route, ways [numRoutes]way, addr string, now time.Time, tried *[]Route) (net.Conn, Route, error) {
+	type result struct {
+		r    Route
+		conn net.Conn
+		err  error
+	}
+	results := make(chan result, len(routes))
+	pending, others, failed := 0, 0, 0
+	start := func(r Route) {
+		*tried = append(*tried, r)
+		pending++
+		ctx, cancel := context.WithTimeout(t.ctx, ways[r].timeout)
+		dial := t.siteDial(r, ways)
+		go func() {
+			c, err := dial(ctx, "tcp", addr)
+			cancel()
+			results <- result{r, c, err}
+		}()
+	}
+	waiting := false // the tunnel has not started yet
+	for _, r := range routes {
+		if r == RouteTunnel {
+			waiting = true
+		} else {
+			start(r)
+			others++
+		}
+	}
+	var timer <-chan time.Time
+	stop := func() {}
+	if waiting && others == 0 {
+		start(RouteTunnel)
+		waiting = false
+	} else if waiting {
+		timer, stop = t.siteTimer(siteTunnelDelay)
+	}
+	defer stop()
+	var last error
+	for pending > 0 {
+		select {
+		case <-timer:
+			timer = nil
+			if waiting {
+				start(RouteTunnel)
+				waiting = false
+			}
+		case res := <-results:
+			pending--
+			if res.err == nil {
+				if pending > 0 {
+					go func(n int) {
+						for ; n > 0; n-- {
+							late := <-results
+							if late.err == nil {
+								late.conn.Close()
+							} else {
+								t.siteDialFailed(entry, late.r, late.err, now)
+							}
+						}
+					}(pending)
+				}
+				return res.conn, res.r, nil
+			}
+			last = res.err
+			t.siteDialFailed(entry, res.r, res.err, now)
+			if res.r != RouteTunnel {
+				if failed++; failed == others && waiting {
+					start(RouteTunnel)
+					waiting = false
+				}
+			}
+		}
+	}
+	return nil, RouteDirect, last
 }
 
 // browserStatus is nil while the listener is off.

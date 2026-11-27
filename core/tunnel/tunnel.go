@@ -254,12 +254,14 @@ type Tunnel struct {
 	downBytes [numRoutes]atomic.Int64
 
 	// Browser listener (browser.go).
-	sites        *siteSet
-	browserLn    net.Listener
-	pac          []byte
-	browserOpen  atomic.Int64 // browser sockets, handshake included
-	siteOpen     atomic.Int64
-	siteRemotes  map[net.Conn]struct{} // guarded by mu
+	sites       *siteSet
+	browserLn   net.Listener
+	pac         []byte
+	browserOpen atomic.Int64 // browser sockets, handshake included
+	siteOpen    atomic.Int64
+	siteRemotes map[net.Conn]struct{} // guarded by mu
+	// siteAfter replaces the tunnel's head-start timer of site dials in tests.
+	siteAfter    func(time.Duration) (<-chan time.Time, func())
 	siteDiagLog  *siteLog
 	siteDiagOnce sync.Once
 	siteTotal    atomic.Int64
