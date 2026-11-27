@@ -522,3 +522,18 @@ func TestBrowserContentIsShared(t *testing.T) {
 		t.Fatal("still checked after turning off")
 	}
 }
+
+// The address block comes after the refusal notice in browserSetup.
+func TestRefusalTextsPointDownToTheAddress(t *testing.T) {
+	for _, lang := range []string{"en", "ru"} {
+		tr := tr(table(lang))
+		for _, k := range []string{"browser_refuse_pac", "browser_refuse_manual", "browser_refuse_policy"} {
+			if s := tr.f(k, "x"); strings.Contains(s, "above") || strings.Contains(s, "выше") {
+				t.Errorf("%s %s: %q", lang, k, s)
+			}
+		}
+	}
+	if s := tr(table("ru")).f("h_browser_done"); strings.HasPrefix(s, "Я ") {
+		t.Errorf("gendered: %q", s)
+	}
+}
