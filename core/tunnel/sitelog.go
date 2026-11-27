@@ -12,8 +12,10 @@ import (
 )
 
 const (
-	siteLogEvery    = time.Minute // per host, and the summary
+	siteLogEvery    = time.Minute // per listed site, and the summary
 	siteLogMaxHosts = 256
+	siteLogMaxLines = 20 // failure lines per minute for all sites together
+	siteNoReply     = "no reply"
 )
 
 // siteLog is the browser port's diagnostics: a rate-limited line per failed
@@ -25,6 +27,7 @@ type siteLog struct {
 	last        map[string]time.Time
 	suppressed  map[string]int
 	ok, failed  int
+	lines, held int // failure lines written and held back this minute
 	socksErrors map[byte]int
 	since       time.Time
 }
@@ -92,13 +95,28 @@ func viaName(tunnel bool) string {
 
 // failed records one failed site connection. what is the stage or event,
 // tried the routes attempted, took the time spent.
+// Lines and labels go by the listed site, not the requested subdomain, so
+// a site with many subdomains gets one allowance and one label.
 func (t *Tunnel) siteFailed(entry *siteEntry, host, what string, tried []Route, took time.Duration) {
 	l := t.siteDiag()
 	now := t.timeNow()
+	key := entry.name
+	if key == "" {
+		key = host
+	}
 	l.mu.Lock()
 	l.failed++
-	ok, n := l.allow(host, now)
-	label := l.mask(host)
+	if what == siteNoReply && l.ok > 0 {
+		l.ok-- // it was counted as connected a moment ago
+	}
+	ok, n := l.allow(key, now)
+	if ok && l.lines >= siteLogMaxLines {
+		ok = false
+		l.held++
+	} else if ok {
+		l.lines++
+	}
+	label := l.mask(key)
 	l.mu.Unlock()
 	if !ok {
 		return
@@ -140,15 +158,19 @@ func (t *Tunnel) flushSiteSummary(force bool) {
 		l.mu.Unlock()
 		return
 	}
-	ok, failed, errs, since := l.ok, l.failed, 0, l.since
+	ok, failed, errs, since, held := l.ok, l.failed, 0, l.since, l.held
 	for _, n := range l.socksErrors {
 		errs += n
 	}
-	l.ok, l.failed, l.since = 0, 0, now
+	l.ok, l.failed, l.since, l.lines, l.held = 0, 0, now, 0, 0
 	clear(l.socksErrors)
 	l.mu.Unlock()
 	if ok+failed+errs > 0 {
-		t.log.add("browser port, last %d s: %d connections ok, %d failed, %d SOCKS errors", int(now.Sub(since).Seconds()), ok, failed, errs)
+		heldNote := ""
+		if held > 0 {
+			heldNote = ", " + itoa(held) + " failure lines held back"
+		}
+		t.log.add("browser port, last %d s: %d connections ok, %d failed, %d SOCKS errors%s", int(now.Sub(since).Seconds()), ok, failed, errs, heldNote)
 	}
 }
 

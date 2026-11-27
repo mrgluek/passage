@@ -67,6 +67,7 @@ func (c Config) SiteGroups() []SiteGroup {
 // siteEntry is one listed host. The routes that failed for it are remembered
 // here only: site connections never touch the groups' route state.
 type siteEntry struct {
+	name   string // the listed host
 	tunnel bool
 	mu     sync.Mutex
 	bad    [numRoutes]time.Time
@@ -132,7 +133,7 @@ func newSiteSet(groups []SiteGroup) *siteSet {
 	s := &siteSet{entries: map[string]*siteEntry{}}
 	for _, g := range cleanSites(groups) {
 		for _, h := range g.Hosts {
-			s.entries[h] = &siteEntry{tunnel: g.Via == links.SiteViaTunnel}
+			s.entries[h] = &siteEntry{name: h, tunnel: g.Via == links.SiteViaTunnel}
 			s.hosts = append(s.hosts, h)
 		}
 	}

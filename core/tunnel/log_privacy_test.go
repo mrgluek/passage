@@ -125,3 +125,63 @@ func TestSiteSummaryLineHasNoNames(t *testing.T) {
 		t.Fatal("an empty summary was written")
 	}
 }
+
+// Subdomains of one listed site share its allowance and its label.
+func TestSiteFailureLinesAreLimitedPerListedSite(t *testing.T) {
+	tt, _ := failingSite(t, errDestinationRefused)
+	for _, sub := range []string{"a", "b", "c", "kws1", "rr3"} {
+		browserSocks(t, tt, sub+".private-site.example.org", nil)
+	}
+	n := 0
+	for _, l := range siteLines(tt) {
+		if strings.Contains(l, "failed:") {
+			n++
+		}
+	}
+	if n != 1 {
+		t.Fatalf("%d lines for one site's subdomains: %v", n, siteLines(tt))
+	}
+}
+
+func TestSiteFailureLinesHaveAnOverallCap(t *testing.T) {
+	var now atomic.Int64
+	now.Store(1_000_000)
+	fail := func(context.Context, string, string) (net.Conn, error) { return nil, errDestinationRefused }
+	var hosts []string
+	for i := range siteLogMaxLines + 10 {
+		hosts = append(hosts, fmt.Sprintf("site%d.example.org", i))
+	}
+	tt := newBrowserTunnel(t, []SiteGroup{{Via: "tunnel", Hosts: hosts}}, fail, fail)
+	tt.now = func() time.Time { return time.Unix(now.Load(), 0) }
+	for _, h := range hosts {
+		browserSocks(t, tt, h, nil)
+	}
+	n := 0
+	for _, l := range siteLines(tt) {
+		if strings.Contains(l, "failed:") {
+			n++
+		}
+	}
+	if n != siteLogMaxLines {
+		t.Fatalf("%d failure lines", n)
+	}
+	now.Add(61)
+	tt.flushSiteSummary(false)
+	if s := strings.Join(siteLines(tt), "\n"); !strings.Contains(s, "10 failure lines held back") {
+		t.Fatal(s)
+	}
+}
+
+// A connection that connected and then got no reply is one failure, not
+// also a success.
+func TestNoReplyIsNotAlsoCountedOK(t *testing.T) {
+	tt, now := failingSite(t, errDestinationRefused)
+	e := tt.sites.match("private-site.example.org")
+	tt.siteSucceeded()
+	tt.siteFailed(e, "private-site.example.org", siteNoReply, []Route{RouteDirect}, time.Second)
+	now.Add(61)
+	tt.flushSiteSummary(false)
+	if s := strings.Join(siteLines(tt), "\n"); !strings.Contains(s, "0 connections ok, 1 failed") {
+		t.Fatal(s)
+	}
+}

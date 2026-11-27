@@ -232,7 +232,7 @@ func (t *Tunnel) connectSite(c bufferedConn, entry *siteEntry, host, addr string
 	watched := watchResponsesKeep(remote, func() { entry.clear(route) }, func(first bool) {
 		if first {
 			entry.markBad(route, t.timeNow().Add(siteBadFor))
-			t.siteFailed(entry, host, "no reply", []Route{route}, t.timeNow().Sub(started))
+			t.siteFailed(entry, host, siteNoReply, []Route{route}, t.timeNow().Sub(started))
 		}
 		c.Close()
 	}, func() bool { return true })
