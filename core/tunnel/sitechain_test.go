@@ -88,9 +88,10 @@ func TestSiteSwitchesToAStrategyWhenDirectNeverAnswers(t *testing.T) {
 		t.Fatal("the silent way was not marked")
 	}
 	// The next connection starts on the strategy that answered.
-	if w, ok := e.winner(time.Now()); !ok || w.route != RouteSmart || w.strategy != "tlsfrag" {
-		t.Fatalf("%+v %v", w, ok)
-	}
+	waitFor(t, func() bool {
+		w, ok := e.winner(time.Now())
+		return ok && w.route == RouteSmart && w.strategy == "tlsfrag"
+	})
 	c2, _ := browserSocks(t, tt, "example.org", nil)
 	if got := roundTrip(t, c2); got != "s:hi" || d.Load() != 1 {
 		t.Fatalf("%q, direct dials %d", got, d.Load())
@@ -324,7 +325,10 @@ func TestTunnelSiteGoesToTheTunnelAfterAnEarlyStall(t *testing.T) {
 	now.Store(time.Now().UnixNano())
 	var d, s atomic.Int32
 	strat := answerN(20 << 10)
-	counted := func(context.Context, string, string) (net.Conn, error) { s.Add(1); return strat(context.Background(), "", "") }
+	counted := func(context.Context, string, string) (net.Conn, error) {
+		s.Add(1)
+		return strat(context.Background(), "", "")
+	}
 	tu := &recordingEcho{}
 	tt := newBrowserTunnel(t, testSites, failDialer(&d), tu.dial("t:"))
 	tt.now = func() time.Time { return time.Unix(0, now.Load()) }
@@ -353,9 +357,8 @@ func TestTunnelSiteGoesToTheTunnelAfterAnEarlyStall(t *testing.T) {
 	now.Add(int64(siteTunnelOnlyFor + time.Minute))
 	tt.sites.match("example.net").clear(RouteDirect)
 	res = <-dialSiteAsync(tt, "example.net")
-	if d.Load() == d0 {
-		t.Fatal("still tunnel only after 24 h")
-	}
+	// The direct attempt runs beside the others: wait for it to show up.
+	waitFor(t, func() bool { return d.Load() > d0 })
 	if res.conn != nil {
 		res.conn.Close()
 	}

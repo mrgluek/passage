@@ -173,7 +173,7 @@ func (r *siteRelay) up() {
 		if n > 0 {
 			r.wroteOnce.Do(func() { close(r.wrote) })
 			r.mu.Lock()
-			if !r.answered {
+			if !r.answered || r.switching { // a replay in progress still needs them
 				if len(r.buf)+n <= siteReplayMax {
 					r.buf = append(r.buf, b[:n]...)
 				} else {
@@ -221,7 +221,10 @@ func (r *siteRelay) down(c net.Conn, gen int, w siteWay) {
 		r.events <- relayEvent{gen: gen}
 		return
 	}
-	r.answered, r.buf = true, nil
+	r.answered = true
+	if !r.switching {
+		r.buf = nil // else replay drops it when done
+	}
 	r.lastDown, r.downTotal = time.Now(), int64(n)
 	r.mu.Unlock()
 	r.events <- relayEvent{gen: gen, answered: true}
@@ -265,8 +268,11 @@ func (r *siteRelay) replay(c net.Conn, w siteWay, upEnded bool) bool {
 			r.mu.Unlock()
 			return false // bytes were lost while switching: no faithful replay
 		}
-		if written == len(r.buf) {
+		if written >= len(r.buf) {
 			r.switching = false
+			if r.answered {
+				r.buf = nil
+			}
 			r.mu.Unlock()
 			break
 		}
@@ -349,6 +355,7 @@ func (t *Tunnel) connectSite(c bufferedConn, entry *siteEntry, host, addr string
 				}
 				entry.remember(w.route, exit, t.timeNow(), w.strategy)
 				t.siteLastOK.Store(t.timeNow().UnixNano())
+				t.wg.Add(1)
 				go r.watchStall(entry, w)
 				if !upEnded {
 					<-upDone
@@ -405,17 +412,21 @@ func (t *Tunnel) connectSite(c bufferedConn, entry *siteEntry, host, addr string
 // with nothing asked (a WebSocket at rest, a kept-alive socket) is never a
 // stall, and the connection itself is left alone.
 func (r *siteRelay) watchStall(entry *siteEntry, w siteWay) {
-	tick := time.NewTicker(max(siteStallWait/4, 10*time.Millisecond))
+	defer r.t.wg.Done()
+	wait := siteStallWait
+	tick := time.NewTicker(max(wait/4, 10*time.Millisecond))
 	defer tick.Stop()
 	for {
 		select {
 		case <-r.finished:
 			return
+		case <-r.t.ctx.Done():
+			return
 		case <-tick.C:
 		}
 		r.mu.Lock()
 		waiting := r.lastUp.After(r.lastDown) && r.upPending >= siteRequestMin
-		stalled := waiting && time.Since(r.lastUp) >= siteStallWait
+		stalled := waiting && time.Since(r.lastUp) >= wait
 		got := r.downTotal
 		r.mu.Unlock()
 		if stalled {
