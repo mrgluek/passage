@@ -11,7 +11,6 @@ import (
 	"slices"
 	"strconv"
 	"strings"
-	"sync/atomic"
 	"time"
 )
 
@@ -196,60 +195,6 @@ func (t *Tunnel) browserSOCKS(c bufferedConn) {
 	t.connectSite(c, entry, host, addr)
 }
 
-// connectSite carries one browser connection. It keeps its own counters and
-// per-site route memory; it never reaches the groups, probes or stall statistics.
-func (t *Tunnel) connectSite(c bufferedConn, entry *siteEntry, host, addr string) {
-	started := t.timeNow()
-	remote, route, tried, err := t.dialSite(entry, addr)
-	if err != nil {
-		t.siteFailed(entry, host, siteFailStage(err), tried, t.timeNow().Sub(started))
-		socksReply(c, repHostUnreachable)
-		t.siteSocksError(repHostUnreachable, "host unreachable")
-		return
-	}
-	t.siteSucceeded()
-	defer remote.Close()
-	// Close drops the remote side too: a direct server may ignore a half-close.
-	t.mu.Lock()
-	if t.ctx.Err() != nil {
-		t.mu.Unlock()
-		return
-	}
-	if t.siteRemotes == nil {
-		t.siteRemotes = map[net.Conn]struct{}{}
-	}
-	t.siteRemotes[remote] = struct{}{}
-	t.mu.Unlock()
-	defer func() {
-		t.mu.Lock()
-		delete(t.siteRemotes, remote)
-		t.mu.Unlock()
-	}()
-	if err := socksReply(c, repSucceeded); err != nil {
-		return
-	}
-	t.siteTotal.Add(1)
-	t.siteOpen.Add(1)
-	defer t.siteOpen.Add(-1)
-	watched := watchResponsesKeep(remote, func() {
-		entry.clear(route)
-		t.siteLastOK.Store(t.timeNow().UnixNano())
-	}, func(first bool) {
-		if first {
-			entry.markBad(route, t.timeNow().Add(siteBadFor))
-			t.siteFailed(entry, host, siteNoReply, []Route{route}, t.timeNow().Sub(started))
-		}
-		c.Close()
-	}, func() bool { return true })
-	defer watched.Close()
-	var up, down atomic.Int64
-	done := make(chan struct{}, 2)
-	go func() { pipe(watched, c, &up, &t.upBytes[route]); done <- struct{}{} }()
-	go func() { pipe(c, watched, &down, &t.downBytes[route]); done <- struct{}{} }()
-	<-done
-	<-done
-}
-
 // siteTunnelDelay is the head start direct and smart get over the tunnel for
 // a via:tunnel site, as for the app's groups.
 const siteTunnelDelay = 2 * time.Second
@@ -258,10 +203,24 @@ const siteTunnelDelay = 2 * time.Second
 // site last first, then those that have not failed lately, the others last.
 // A refused destination is not a failure of the route.
 func (t *Tunnel) dialSite(entry *siteEntry, addr string) (net.Conn, Route, []Route, error) {
+	c, r, _, tried, err := t.dialSiteWay(entry, addr)
+	return c, r, tried, err
+}
+
+// dialSiteWay is dialSite that also names the smart strategy it used.
+func (t *Tunnel) dialSiteWay(entry *siteEntry, addr string) (net.Conn, Route, string, []Route, error) {
 	t.mu.Lock()
 	ways := t.ways
+	strategies := t.siteStrategiesLocked()
 	t.mu.Unlock()
 	now := t.timeNow()
+	// Smart for a site does not wait for the router to pick a strategy:
+	// the site has its own choice, remembered or the first not failed.
+	strat, stratBad := t.pickSiteStrategy(entry, strategies, now)
+	ways[RouteSmart] = way{}
+	if strat.dial != nil {
+		ways[RouteSmart] = way{strat.dial, directDialTimeout}
+	}
 	var good, late []Route
 	mode := t.mode
 	for _, r := range []Route{RouteDirect, RouteSmart, RouteTunnel} {
@@ -271,7 +230,7 @@ func (t *Tunnel) dialSite(entry *siteEntry, addr string) (net.Conn, Route, []Rou
 			r != RouteTunnel && entry.tunnel && mode == ModeAlways: // the chosen route only
 			continue
 		}
-		if entry.badUntil(r).After(now) {
+		if entry.badUntil(r).After(now) || r == RouteSmart && stratBad {
 			late = append(late, r)
 		} else {
 			good = append(good, r)
@@ -283,9 +242,13 @@ func (t *Tunnel) dialSite(entry *siteEntry, addr string) (net.Conn, Route, []Rou
 	}
 	var last error
 	var tried []Route
-	done := func(c net.Conn, r Route) (net.Conn, Route, []Route, error) {
-		entry.remember(r, routeIDOf(c), t.timeNow())
-		return c, r, tried, nil
+	done := func(c net.Conn, r Route) (net.Conn, Route, string, []Route, error) {
+		name := ""
+		if r == RouteSmart {
+			name = strat.name
+		}
+		entry.remember(r, routeIDOf(c), t.timeNow(), name)
+		return c, r, name, tried, nil
 	}
 	if entry.tunnel {
 		for n, routes := range [][]Route{good, late} {
@@ -327,7 +290,41 @@ func (t *Tunnel) dialSite(entry *siteEntry, addr string) (net.Conn, Route, []Rou
 	if last == nil {
 		last = errors.New("no route available")
 	}
-	return nil, RouteDirect, tried, last
+	return nil, RouteDirect, "", tried, last
+}
+
+// siteStrategiesLocked are the smart strategies a site may use: the
+// router's whole list, whatever it chose for the apps. Without a list, an
+// installed smart route counts as one strategy.
+func (t *Tunnel) siteStrategiesLocked() []strategy {
+	if len(t.strategies) > 0 {
+		return t.strategies
+	}
+	if d := t.ways[RouteSmart].dial; d != nil {
+		return []strategy{{"smart", d}}
+	}
+	return nil
+}
+
+// pickSiteStrategy is the site's remembered strategy while it is fresh and
+// not failed, else the first one not failed lately. bad: all have failed.
+func (t *Tunnel) pickSiteStrategy(entry *siteEntry, strategies []strategy, now time.Time) (strategy, bool) {
+	if len(strategies) == 0 {
+		return strategy{}, false
+	}
+	if win, ok := entry.winner(now); ok && win.route == RouteSmart {
+		for _, s := range strategies {
+			if s.name == win.strategy && !entry.strategyBadUntil(s.name).After(now) {
+				return s, false
+			}
+		}
+	}
+	for _, s := range strategies {
+		if !entry.strategyBadUntil(s.name).After(now) {
+			return s, false
+		}
+	}
+	return strategies[0], true
 }
 
 // siteDial is the dial function of a route for a site. exit, a tunnel

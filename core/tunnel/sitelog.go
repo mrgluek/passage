@@ -99,7 +99,7 @@ func viaName(tunnel bool) string {
 // tried the routes attempted, took the time spent.
 // Lines and labels go by the listed site, not the requested subdomain, so
 // a site with many subdomains gets one allowance and one label.
-func (t *Tunnel) siteFailed(entry *siteEntry, host, what string, tried []Route, took time.Duration) {
+func (t *Tunnel) siteFailed(entry *siteEntry, host, what string, tried []Route, took time.Duration, ways ...string) {
 	l := t.siteDiag()
 	now := t.timeNow()
 	key := entry.name
@@ -123,9 +123,12 @@ func (t *Tunnel) siteFailed(entry *siteEntry, host, what string, tried []Route, 
 	if !ok {
 		return
 	}
-	names := make([]string, len(tried))
-	for i, r := range tried {
-		names[i] = r.String()
+	names := ways
+	if names == nil {
+		names = make([]string, len(tried))
+		for i, r := range tried {
+			names[i] = r.String()
+		}
 	}
 	t.log.add("site %s (%s) failed: %s; tried %s; %d ms%s", label, viaName(entry.tunnel), what, strings.Join(names, ","), took.Milliseconds(), suffix(n))
 }

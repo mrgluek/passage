@@ -71,7 +71,9 @@ type siteEntry struct {
 	tunnel bool
 	mu     sync.Mutex
 	bad    [numRoutes]time.Time
-	win    siteWin // the route that carried the last connection
+	// badStrategy: smart strategies that got no reply for this site lately.
+	badStrategy map[string]time.Time
+	win         siteWin // the route that carried the last connection
 }
 
 // siteWinFor is how long the route (and exit) that last carried a site is
@@ -79,9 +81,10 @@ type siteEntry struct {
 const siteWinFor = 10 * time.Minute
 
 type siteWin struct {
-	route Route
-	exit  string // the tunnel route's ID, for the tunnel
-	until time.Time
+	route    Route
+	exit     string // the tunnel route's ID, for the tunnel
+	strategy string // the smart strategy, for smart
+	until    time.Time
 }
 
 // winner returns the remembered route while it is fresh.
@@ -91,9 +94,30 @@ func (e *siteEntry) winner(now time.Time) (siteWin, bool) {
 	return e.win, now.Before(e.win.until)
 }
 
-func (e *siteEntry) remember(r Route, exit string, now time.Time) {
+func (e *siteEntry) remember(r Route, exit string, now time.Time, strategy ...string) {
 	e.mu.Lock()
-	e.win = siteWin{r, exit, now.Add(siteWinFor)}
+	e.win = siteWin{route: r, exit: exit, until: now.Add(siteWinFor)}
+	if len(strategy) > 0 {
+		e.win.strategy = strategy[0]
+	}
+	e.mu.Unlock()
+}
+
+func (e *siteEntry) strategyBadUntil(name string) time.Time {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return e.badStrategy[name]
+}
+
+func (e *siteEntry) markStrategyBad(name string, until time.Time) {
+	e.mu.Lock()
+	if e.badStrategy == nil {
+		e.badStrategy = map[string]time.Time{}
+	}
+	e.badStrategy[name] = until
+	if e.win.route == RouteSmart && e.win.strategy == name {
+		e.win = siteWin{}
+	}
 	e.mu.Unlock()
 }
 
@@ -149,7 +173,7 @@ func (s *siteSet) resetMemory() {
 	}
 	for _, e := range s.entries {
 		e.mu.Lock()
-		e.win, e.bad = siteWin{}, [numRoutes]time.Time{}
+		e.win, e.bad, e.badStrategy = siteWin{}, [numRoutes]time.Time{}, nil
 		e.mu.Unlock()
 	}
 }

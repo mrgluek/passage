@@ -1,0 +1,364 @@
+package tunnel
+
+import (
+	"context"
+	"errors"
+	"io"
+	"net"
+	"sync"
+	"sync/atomic"
+	"time"
+)
+
+// Before a site's first reply, a connection can move to another way: DPI
+// often lets the TCP connection through and drops the TLS ClientHello, so
+// the dial succeeds and nothing ever comes back.
+var siteSwitchWait = 3 * time.Second // without a reply, try the next way
+
+const siteReplayMax = 16 << 10 // client bytes kept for a replay
+
+// siteWay is one way to a site: a route and, for smart, its strategy.
+type siteWay struct {
+	route    Route
+	strategy string
+}
+
+func (w siteWay) String() string {
+	if w.route == RouteSmart && w.strategy != "" {
+		return "smart:" + w.strategy
+	}
+	return w.route.String()
+}
+
+// siteNextWays are the ways to try after first, in order: the smart
+// strategies not failed lately (failed ones last), then the tunnel.
+func (t *Tunnel) siteNextWays(entry *siteEntry, first siteWay) []siteWay {
+	if first.route == RouteTunnel {
+		return nil
+	}
+	t.mu.Lock()
+	strategies := t.siteStrategiesLocked()
+	tunnelOK := t.ways[RouteTunnel].dial != nil && entry.tunnel && t.mode != ModeOff
+	smartOK := !(entry.tunnel && t.mode == ModeAlways)
+	t.mu.Unlock()
+	now := t.timeNow()
+	var good, late []siteWay
+	if smartOK {
+		for _, s := range strategies {
+			if first.route == RouteSmart && s.name == first.strategy {
+				continue
+			}
+			w := siteWay{RouteSmart, s.name}
+			if entry.strategyBadUntil(s.name).After(now) {
+				late = append(late, w)
+			} else {
+				good = append(good, w)
+			}
+		}
+	}
+	out := append(good, late...)
+	if tunnelOK {
+		out = append(out, siteWay{route: RouteTunnel})
+	}
+	return out
+}
+
+// dialWay dials one way of a chain.
+func (t *Tunnel) dialWay(entry *siteEntry, w siteWay, addr string) (net.Conn, error) {
+	t.mu.Lock()
+	ways := t.ways
+	strategies := t.siteStrategiesLocked()
+	t.mu.Unlock()
+	if w.route == RouteSmart {
+		ways[RouteSmart] = way{}
+		for _, s := range strategies {
+			if s.name == w.strategy {
+				ways[RouteSmart] = way{s.dial, directDialTimeout}
+			}
+		}
+	}
+	if ways[w.route].dial == nil {
+		return nil, errNoWay
+	}
+	ctx, cancel := context.WithTimeout(t.ctx, ways[w.route].timeout)
+	defer cancel()
+	return t.siteDial(entry, w.route, ways, "")(ctx, "tcp", addr)
+}
+
+var errNoWay = &net.OpError{Op: "dial", Err: io.ErrUnexpectedEOF}
+
+func (t *Tunnel) markWayBad(entry *siteEntry, w siteWay) {
+	until := t.timeNow().Add(siteBadFor)
+	if w.route == RouteSmart && w.strategy != "" {
+		entry.markStrategyBad(w.strategy, until)
+		return
+	}
+	entry.markBad(w.route, until)
+}
+
+// siteRelay carries one browser connection whose remote side may change
+// until the first byte from the site.
+type siteRelay struct {
+	t       *Tunnel
+	browser net.Conn
+
+	mu        sync.Mutex
+	cur       net.Conn
+	way       siteWay
+	gen       int
+	buf       []byte // client bytes since the start, until the first reply
+	overflow  bool   // more than siteReplayMax: no replay possible
+	answered  bool
+	switching bool
+	wrote     chan struct{} // closed at the first client byte
+	wroteOnce sync.Once
+	events    chan relayEvent
+	finished  chan struct{} // the answering remote's copy is done
+}
+
+type relayEvent struct {
+	gen      int
+	answered bool // else: the remote closed or failed before a reply
+}
+
+func (r *siteRelay) setRemote(c net.Conn, w siteWay) int {
+	r.t.mu.Lock()
+	if r.t.siteRemotes == nil {
+		r.t.siteRemotes = map[net.Conn]struct{}{}
+	}
+	r.t.siteRemotes[c] = struct{}{}
+	r.t.mu.Unlock()
+	r.mu.Lock()
+	r.cur, r.way = c, w
+	r.gen++
+	gen := r.gen
+	r.mu.Unlock()
+	go r.down(c, gen, w)
+	return gen
+}
+
+func (r *siteRelay) dropRemote(c net.Conn) {
+	c.Close()
+	r.t.mu.Lock()
+	delete(r.t.siteRemotes, c)
+	r.t.mu.Unlock()
+}
+
+// up copies the browser to the current remote, keeping the bytes for a
+// replay until the first reply.
+func (r *siteRelay) up() {
+	b := make([]byte, 32<<10)
+	for {
+		n, err := r.browser.Read(b)
+		if n > 0 {
+			r.wroteOnce.Do(func() { close(r.wrote) })
+			r.mu.Lock()
+			if !r.answered {
+				if len(r.buf)+n <= siteReplayMax {
+					r.buf = append(r.buf, b[:n]...)
+				} else {
+					r.overflow = true
+				}
+			}
+			cur, way, hold := r.cur, r.way, r.switching
+			r.mu.Unlock()
+			if !hold {
+				if m, _ := cur.Write(b[:n]); m > 0 {
+					r.t.upBytes[way.route].Add(int64(m))
+				}
+			}
+		}
+		if err != nil {
+			r.mu.Lock()
+			cur := r.cur
+			r.mu.Unlock()
+			if cw, ok := cur.(interface{ CloseWrite() error }); ok {
+				cw.CloseWrite()
+			} else {
+				cur.Close()
+			}
+			return
+		}
+	}
+}
+
+// down copies one remote to the browser once it is the current one and
+// has answered; a remote replaced before its first byte writes nothing.
+func (r *siteRelay) down(c net.Conn, gen int, w siteWay) {
+	b := make([]byte, 32<<10)
+	n, err := c.Read(b)
+	r.mu.Lock()
+	if gen != r.gen {
+		r.mu.Unlock()
+		return
+	}
+	if n == 0 {
+		r.mu.Unlock()
+		r.events <- relayEvent{gen: gen}
+		return
+	}
+	r.answered, r.buf = true, nil
+	r.mu.Unlock()
+	r.events <- relayEvent{gen: gen, answered: true}
+	r.browser.Write(b[:n])
+	r.t.downBytes[w.route].Add(int64(n))
+	if err == nil {
+		var n atomic.Int64
+		io.Copy(countingWriter{r.browser, &n, &r.t.downBytes[w.route]}, c)
+	}
+	if cw, ok := r.browser.(interface{ CloseWrite() error }); ok {
+		cw.CloseWrite()
+	} else {
+		r.browser.Close()
+	}
+	close(r.finished)
+}
+
+func (r *siteRelay) current() (net.Conn, siteWay, int) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.cur, r.way, r.gen
+}
+
+// replay writes the kept client bytes to the new remote, also those that
+// arrive meanwhile, then lets up() write to it directly.
+func (r *siteRelay) replay(c net.Conn, w siteWay, upEnded bool) bool {
+	written := 0
+	for {
+		r.mu.Lock()
+		if r.overflow {
+			r.mu.Unlock()
+			return false // bytes were lost while switching: no faithful replay
+		}
+		if written == len(r.buf) {
+			r.switching = false
+			r.mu.Unlock()
+			break
+		}
+		d := r.buf[written:]
+		written = len(r.buf)
+		r.mu.Unlock()
+		if m, _ := c.Write(d); m > 0 {
+			r.t.upBytes[w.route].Add(int64(m))
+		}
+	}
+	if upEnded {
+		if cw, ok := c.(interface{ CloseWrite() error }); ok {
+			cw.CloseWrite()
+		}
+	}
+	return true
+}
+
+// connectSite carries one browser connection. It keeps its own counters and
+// per-site memory; it never reaches the groups, probes or stall statistics.
+// Until the site's first byte it may move to the next way (see siteSwitchWait).
+func (t *Tunnel) connectSite(c bufferedConn, entry *siteEntry, host, addr string) {
+	started := t.timeNow()
+	remote, route, strat, tried, err := t.dialSiteWay(entry, addr)
+	if err != nil {
+		t.siteFailed(entry, host, siteFailStage(err), tried, t.timeNow().Sub(started))
+		socksReply(c, repHostUnreachable)
+		t.siteSocksError(repHostUnreachable, "host unreachable")
+		return
+	}
+	if t.ctx.Err() != nil || socksReply(c, repSucceeded) != nil {
+		remote.Close()
+		return
+	}
+	t.siteSucceeded()
+	t.siteTotal.Add(1)
+	t.siteOpen.Add(1)
+	defer t.siteOpen.Add(-1)
+
+	r := &siteRelay{t: t, browser: c, wrote: make(chan struct{}), events: make(chan relayEvent, 16), finished: make(chan struct{})}
+	first := siteWay{route, strat}
+	r.setRemote(remote, first)
+	defer func() {
+		cur, _, _ := r.current()
+		r.dropRemote(cur)
+		c.Close()
+	}()
+	upDone := make(chan struct{})
+	go func() { r.up(); close(upDone) }()
+	names := make([]string, 0, len(tried)+4)
+	for _, x := range tried {
+		if x != route {
+			names = append(names, x.String())
+		}
+	}
+	names = append(names, first.String())
+	next := t.siteNextWays(entry, first)
+
+	select {
+	case <-r.wrote:
+	case <-upDone:
+		return // the browser left before sending anything
+	}
+	timer := time.NewTimer(siteSwitchWait)
+	defer timer.Stop()
+	upEnded := false
+	for {
+		select {
+		case ev := <-r.events:
+			if _, _, gen := r.current(); ev.gen != gen {
+				continue
+			}
+			if ev.answered {
+				_, w, _ := r.current()
+				entry.clear(w.route)
+				exit := ""
+				if w.route == RouteTunnel {
+					cur, _, _ := r.current()
+					exit = routeIDOf(cur)
+				}
+				entry.remember(w.route, exit, t.timeNow(), w.strategy)
+				t.siteLastOK.Store(t.timeNow().UnixNano())
+				if !upEnded {
+					<-upDone
+				}
+				<-r.finished
+				return
+			}
+			// Closed or failed before a reply: the next way at once.
+		case <-timer.C:
+		case <-upDone:
+			upDone, upEnded = nil, true
+			continue
+		}
+		r.mu.Lock()
+		if r.answered {
+			r.mu.Unlock()
+			continue // its event is on the way
+		}
+		r.switching = true
+		cur, w, overflow := r.cur, r.way, r.overflow
+		r.mu.Unlock()
+		t.markWayBad(entry, w)
+		r.dropRemote(cur)
+		var nc net.Conn
+		for !overflow && len(next) > 0 && nc == nil {
+			nw := next[0]
+			next = next[1:]
+			names = append(names, nw.String())
+			conn, err := t.dialWay(entry, nw, addr)
+			if err != nil {
+				t.siteDialFailed(entry, nw.route, err, t.timeNow())
+				if nw.route == RouteSmart && !errors.Is(err, errSiteDoT) && !errors.Is(err, errDestinationRefused) {
+					entry.markStrategyBad(nw.strategy, t.timeNow().Add(siteBadFor))
+				}
+				continue
+			}
+			nc = conn
+			r.setRemote(nc, nw)
+			if !r.replay(nc, nw, upEnded) {
+				return
+			}
+		}
+		if nc == nil {
+			t.siteFailed(entry, host, siteNoReply, nil, t.timeNow().Sub(started), names...)
+			return
+		}
+		timer.Reset(siteSwitchWait)
+	}
+}
