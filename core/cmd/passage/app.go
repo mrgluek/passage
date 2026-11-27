@@ -907,7 +907,8 @@ func (a *App) report() string {
 	a.mu.Unlock()
 	var test []string
 	if t != nil {
-		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+		// Listed sites are checked way by way: about (2 + strategies) * 6 s.
+		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 		d := t.Diagnose(ctx)
 		cancel()
 		a.mu.Lock()

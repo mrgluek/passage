@@ -9,6 +9,7 @@ import (
 	"net"
 	"slices"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -45,6 +46,7 @@ const diagSiteRows = 16
 type DiagResult struct {
 	OK    bool   `json:"ok"`
 	MS    int64  `json:"ms,omitempty"`
+	KB    int    `json:"kb,omitempty"` // data received, for checks that read data
 	Error string `json:"error,omitempty"`
 	Skip  bool   `json:"skip,omitempty"` // the way doesn't apply here
 }
@@ -114,6 +116,11 @@ func (t *Tunnel) Diagnose(ctx context.Context) Diagnosis {
 	for _, w := range tunnels {
 		d.Ways = append(d.Ways, w.name)
 	}
+	otherCol := -1
+	if len(sites) > 0 {
+		otherCol = len(d.Ways)
+		d.Ways = append(d.Ways, diagOtherNameCol)
+	}
 	d.Rows = make([]DiagRow, len(targets))
 	var wg sync.WaitGroup
 	for i, tg := range targets {
@@ -137,8 +144,11 @@ func (t *Tunnel) Diagnose(ctx context.Context) Diagnosis {
 			}()
 		}
 		if tg.site != nil {
-			t.diagSite(&d.Rows[i], tg.site, strategies, tunnels, tunnelCol, directDial, &wg, check)
+			t.diagSite(ctx, &d.Rows[i], tg.site, strategies, tunnels, tunnelCol, otherCol, directDial, &wg, check)
 			continue
+		}
+		if otherCol >= 0 {
+			d.Rows[i].Results[otherCol] = DiagResult{Skip: true}
 		}
 		host, _, _ := net.SplitHostPort(tg.addr)
 		telegram := tg.kind == "telegram"
@@ -245,8 +255,8 @@ func shortError(err error) string {
 
 // diagSitesLocked lists every listed site in number order.
 func (t *Tunnel) diagSitesLocked() []*siteEntry {
-	if t.sites == nil {
-		return nil
+	if t.sites == nil || t.browserLn == nil {
+		return nil // no browser port (Android in this release): no site rows
 	}
 	out := make([]*siteEntry, 0, len(t.sites.entries))
 	for _, e := range t.sites.entries {
@@ -259,12 +269,18 @@ func (t *Tunnel) diagSitesLocked() []*siteEntry {
 // diagSite checks a listed site on the ways its kind allows: the name is
 // resolved as site connections resolve it (DoT for direct and smart; the
 // exit resolves on the tunnel), and each way must carry data, not only a
-// handshake. A bare name without an address is tried with "www.".
-func (t *Tunnel) diagSite(row *DiagRow, e *siteEntry, strategies []strategy, tunnels []tunnelWay, tunnelCol int,
+// handshake. A bare name without an address is tried with "www.". The
+// network's own ways run one after another, so a site does not get a burst
+// of hellos at once; the tunnel routes run beside them.
+func (t *Tunnel) diagSite(ctx context.Context, row *DiagRow, e *siteEntry, strategies []strategy, tunnels []tunnelWay, tunnelCol, otherCol int,
 	directDial dialFunc, wg *sync.WaitGroup, check func(int, time.Duration, func(context.Context) error)) {
 	probe := t.siteDataProbe
 	if probe == nil {
 		probe = probeData
+	}
+	other := t.siteOtherProbe
+	if other == nil {
+		other = probeOtherName
 	}
 	res := row.Results
 	wg.Add(1)
@@ -280,33 +296,79 @@ func (t *Tunnel) diagSite(row *DiagRow, e *siteEntry, strategies []strategy, tun
 			return
 		}
 		row.Host = host
-		lookupErr := err
-		dataCheck := func(col int, dial dialFunc) {
-			if dial == nil {
-				res[col] = DiagResult{Skip: true}
-				return
-			}
-			check(col, probeTimeout+siteDataWait, func(c context.Context) error {
-				if lookupErr != nil {
-					return lookupErr
-				}
-				return probe(c, dial, addr, host)
-			})
-		}
-		dataCheck(0, directDial)
-		for j, s := range strategies {
-			dataCheck(1+j, s.dial)
-		}
 		for k, w := range tunnels {
 			if !e.tunnel {
 				res[tunnelCol+k] = DiagResult{Skip: true}
 				continue
 			}
-			check(tunnelCol+k, 15*time.Second+siteDataWait, func(c context.Context) error {
-				return probe(c, w.dial, net.JoinHostPort(host, "443"), host)
+			check(tunnelCol+k, 2*sitePerProbe, func(c context.Context) error {
+				n, err := probe(c, w.dial, net.JoinHostPort(host, "443"), host)
+				res[tunnelCol+k].KB = n / 1024
+				return err
 			})
 		}
+		one := func(col int, f func(context.Context) (int, error)) {
+			if err != nil {
+				res[col] = DiagResult{Error: shortError(err)}
+				return
+			}
+			c, cancel := context.WithTimeout(ctx, sitePerProbe)
+			start := time.Now()
+			n, perr := f(c)
+			cancel()
+			r := DiagResult{OK: perr == nil, MS: time.Since(start).Milliseconds(), KB: n / 1024}
+			if perr != nil {
+				r.MS, r.Error = 0, shortError(perr)
+			}
+			res[col] = r
+		}
+		ways := append([]strategy{{"direct", directDial}}, strategies...)
+		for col, s := range ways {
+			if s.dial == nil {
+				res[col] = DiagResult{Skip: true}
+				continue
+			}
+			one(col, func(c context.Context) (int, error) { return probe(c, s.dial, addr, host) })
+		}
+		one(otherCol, func(c context.Context) (int, error) { return 0, other(c, directDial, addr) })
 	}()
+}
+
+// sitePerProbe bounds one check of a listed site on one way. A site's
+// network ways run in turn: direct, each strategy and the other-name check,
+// so a test takes at most about (2 + strategies) * sitePerProbe.
+var sitePerProbe = 6 * time.Second
+
+// diagOtherNameCol is the column of the other-name check.
+const diagOtherNameCol = "other name"
+
+// diagOtherNames are widely reachable names used for the other-name check:
+// a handshake with one of them to the site's address.
+var diagOtherNames = []string{"ya.ru", "vk.com"}
+
+// probeOtherName asks the site's address for a handshake with a name that
+// is not blocked. Any answer from the server means its address is
+// reachable, so a failure with the site's own name is about the name;
+// silence means the address itself is blocked.
+func probeOtherName(ctx context.Context, dial dialFunc, addr string) error {
+	if dial == nil {
+		return errors.New("no direct way")
+	}
+	c, err := dial(ctx, "tcp", addr)
+	if err != nil {
+		return err
+	}
+	defer c.Close()
+	tc := tls.Client(c, &tls.Config{ServerName: diagOtherNames[0], InsecureSkipVerify: true, MinVersion: tls.VersionTLS12})
+	err = tc.HandshakeContext(ctx)
+	var alert tls.AlertError
+	if err == nil || errors.As(err, &alert) || strings.Contains(err.Error(), "remote error") {
+		return nil // the server answered
+	}
+	if errors.Is(err, context.DeadlineExceeded) || strings.Contains(err.Error(), "timeout") {
+		return errors.New("silent")
+	}
+	return err
 }
 
 // diagSiteAddr resolves a listed site for the test, with "www." when the
@@ -356,45 +418,73 @@ func (e *dataStall) Error() string {
 
 // probeData opens TLS through dial, asks for "/" and reads: ok when
 // siteDataLimit arrives or the reply ends, a dataStall when it stops short.
-func probeData(ctx context.Context, dial dialFunc, hostport, sni string) error {
+// It returns the bytes received. The request carries filler headers of
+// about 24 KB, so that the bytes sent count too; a server that refuses
+// large headers (any error status) is asked again with a long path instead.
+func probeData(ctx context.Context, dial dialFunc, hostport, sni string) (int, error) {
+	n, status, err := fetchData(ctx, dial, hostport, sni, true)
+	if status >= 400 { // some servers answer the filler with 431, others with 400 or 500
+		n, _, err = fetchData(ctx, dial, hostport, sni, false)
+	}
+	return n, err
+}
+
+// fillerHeaders: 6 headers of 4 KB each.
+var fillerHeaders = func() string {
+	var b strings.Builder
+	for i := range 6 {
+		fmt.Fprintf(&b, "X-Pad-%d: %s\r\n", i, strings.Repeat("x", 4000))
+	}
+	return b.String()
+}()
+
+func fetchData(ctx context.Context, dial dialFunc, hostport, sni string, filler bool) (int, int, error) {
 	c, err := dial(ctx, "tcp", hostport)
 	if err != nil {
-		return err
+		return 0, 0, err
 	}
 	defer c.Close()
 	tc := tls.Client(c, &tls.Config{ServerName: sni, MinVersion: tls.VersionTLS12, RootCAs: probeRoots, NextProtos: []string{"http/1.1"}})
 	if err := tc.HandshakeContext(ctx); err != nil {
-		return err
+		return 0, 0, err
 	}
 	deadline := time.Now().Add(siteDataWait)
 	if d, ok := ctx.Deadline(); ok && d.Before(deadline) {
 		deadline = d
 	}
 	tc.SetDeadline(deadline)
-	if _, err := fmt.Fprintf(tc, "GET / HTTP/1.1\r\nHost: %s\r\nUser-Agent: Mozilla/5.0\r\nAccept: */*\r\nConnection: close\r\n\r\n", sni); err != nil {
-		return err
+	path, extra := "/", fillerHeaders
+	if !filler {
+		path, extra = "/?"+strings.Repeat("a", 6000), ""
+	}
+	if _, err := fmt.Fprintf(tc, "GET %s HTTP/1.1\r\nHost: %s\r\nUser-Agent: Mozilla/5.0\r\nAccept: */*\r\n%sConnection: close\r\n\r\n", path, sni, extra); err != nil {
+		return 0, 0, err
 	}
 	return readData(tc)
 }
 
-// readData reads until siteDataLimit or the end of the reply.
-func readData(r io.Reader) error {
+// readData reads until siteDataLimit or the end of the reply. It returns
+// the bytes read and the HTTP status of the reply, 0 when there is none.
+func readData(r io.Reader) (int, int, error) {
 	buf := make([]byte, 16<<10)
-	got := 0
+	got, status := 0, 0
 	for got < siteDataLimit {
 		n, err := r.Read(buf)
+		if got == 0 && n >= 12 && string(buf[:5]) == "HTTP/" {
+			status, _ = strconv.Atoi(string(buf[9:12]))
+		}
 		got += n
 		if err == nil {
 			continue
 		}
 		if got >= siteDataLimit || errors.Is(err, io.EOF) && got > 0 {
-			return nil
+			return got, status, nil
 		}
 		var ne net.Error
 		if got > 0 || errors.As(err, &ne) && ne.Timeout() {
-			return &dataStall{got}
+			return got, status, &dataStall{got}
 		}
-		return err
+		return got, status, err
 	}
-	return nil
+	return got, status, nil
 }

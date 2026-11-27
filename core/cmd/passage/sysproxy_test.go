@@ -565,10 +565,10 @@ func TestBrowserSiteReplyCountsAsAppUse(t *testing.T) {
 // details screen by name.
 func TestNetworkTestSitesByNumberInTheReportByNameLocally(t *testing.T) {
 	d := tunnel.Diagnosis{Time: time.Now(), Ways: []string{"direct"}, SitesNotTested: 2, Rows: []tunnel.DiagRow{
-		{Target: "site #1 (smart)", Kind: "site", Site: 1, Via: "smart", Host: "private-site.example.org", Results: []tunnel.DiagResult{{OK: true, MS: 5}}},
+		{Target: "site #1 (smart)", Kind: "site", Site: 1, Via: "smart", Host: "private-site.example.org", Results: []tunnel.DiagResult{{OK: true, MS: 5, KB: 64}}},
 	}}
 	en, ru := diagnosis(tr(table("en")), d), diagnosis(tr(table("ru")), d)
-	if strings.Contains(en+ru, "private-site") || !strings.Contains(en, "site #1 (smart)") || !strings.Contains(ru, "сайт #1 (smart)") || !strings.Contains(en, "2 more listed sites") {
+	if strings.Contains(en+ru, "private-site") || !strings.Contains(en, "site #1 (smart)") || !strings.Contains(ru, "сайт #1 (smart)") || !strings.Contains(en, "2 more listed sites") || !strings.Contains(en, "ok 5ms 64KB") {
 		t.Fatalf("report table:\n%s\n%s", en, ru)
 	}
 	if local := diagnosisLocal(tr(table("en")), d); !strings.Contains(local, "private-site.example.org") {

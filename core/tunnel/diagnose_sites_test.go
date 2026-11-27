@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -29,17 +30,18 @@ func TestNetworkTestChecksListedSitesUnderLabels(t *testing.T) {
 		return nil, errors.New("down")
 	}
 	tt.ways[RouteTunnel] = way{tunnelDial, 0}
-	tt.siteDataProbe = func(ctx context.Context, dial dialFunc, addr, sni string) error {
+	tt.siteDataProbe = func(ctx context.Context, dial dialFunc, addr, sni string) (int, error) {
 		if c, err := dial(ctx, "tcp", addr); err != nil {
-			return err
+			return 0, err
 		} else {
 			c.Close()
 		}
 		mu.Lock()
 		probed[addr] = sni
 		mu.Unlock()
-		return nil
+		return 64 << 10, nil
 	}
+	tt.siteOtherProbe = func(context.Context, dialFunc, string) error { return nil }
 	tt.ways[RouteDirect] = way{echoDialer("d:", new(atomic.Int32)), time.Second}
 	d := tt.Diagnose(context.Background())
 	var sites []DiagRow
@@ -67,7 +69,7 @@ func TestNetworkTestChecksListedSitesUnderLabels(t *testing.T) {
 	}
 	mu.Unlock()
 	// The smart group skips the tunnel column, the tunnel group uses it.
-	tunnelCol := len(d.Ways) - 1
+	tunnelCol := slices.Index(d.Ways, "soar")
 	smart, tunnel := sites[0], sites[1]
 	if strings.Contains(smart.Target, "(tunnel)") {
 		smart, tunnel = tunnel, smart
@@ -107,7 +109,8 @@ func TestNetworkTestCapsTheSiteRows(t *testing.T) {
 	saved := diagTelegramDCs
 	diagTelegramDCs = nil
 	defer func() { diagTelegramDCs = saved }()
-	tt.siteDataProbe = func(context.Context, dialFunc, string, string) error { return nil }
+	tt.siteDataProbe = func(context.Context, dialFunc, string, string) (int, error) { return 1, nil }
+	tt.siteOtherProbe = func(context.Context, dialFunc, string) error { return nil }
 	d := tt.Diagnose(context.Background())
 	n := 0
 	for _, r := range d.Rows {
@@ -131,7 +134,7 @@ func TestDataProbeTellsFlowFromStall(t *testing.T) {
 		"stall":       {io.MultiReader(strings.NewReader(strings.Repeat("x", 12<<10)), timeoutReader{}), "stall 12KB"},
 		"nothing":     {timeoutReader{}, "no data"},
 	} {
-		err := readData(tc.r)
+		_, _, err := readData(tc.r)
 		got := ""
 		if err != nil {
 			got = shortError(err)
@@ -171,12 +174,13 @@ func TestNetworkTestTriesWWWThenSaysNoAddress(t *testing.T) {
 	tt.ways[RouteDirect] = way{echoDialer("d:", new(atomic.Int32)), time.Second}
 	var mu sync.Mutex
 	var snis []string
-	tt.siteDataProbe = func(_ context.Context, _ dialFunc, addr, sni string) error {
+	tt.siteDataProbe = func(_ context.Context, _ dialFunc, addr, sni string) (int, error) {
 		mu.Lock()
 		snis = append(snis, sni+"@"+addr)
 		mu.Unlock()
-		return nil
+		return 1, nil
 	}
+	tt.siteOtherProbe = func(context.Context, dialFunc, string) error { return nil }
 	d := tt.Diagnose(context.Background())
 	byHost := map[string]DiagRow{}
 	for _, r := range d.Rows {

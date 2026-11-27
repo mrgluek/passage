@@ -333,6 +333,8 @@ func diagnosisTable(t tr, d tunnel.Diagnosis, names bool) string {
 			switch {
 			case x.Skip:
 				row = append(row, "-")
+			case x.OK && x.KB > 0:
+				row = append(row, fmt.Sprintf("ok %dms %dKB", x.MS, x.KB))
 			case x.OK:
 				row = append(row, fmt.Sprintf("ok %dms", x.MS))
 			default:

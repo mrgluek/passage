@@ -153,7 +153,7 @@ func main() {
 		}
 	}
 	if *test {
-		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 		defer cancel()
 		out := json.NewEncoder(os.Stdout)
 		out.SetIndent("", "  ")
