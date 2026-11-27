@@ -632,9 +632,10 @@ function renderTabs(v) {
 function renderBrowserTab(pane, v, para, button) {
   const b = v.browser || {};
   const setup = document.createElement("div");
-  browserSetup(setup, b);
+  // The block folds once the step is done; it stays open while the user works in it.
+  browserSetup(setup, b, () => { tabsOpen = true; });
   pane.append(setup);
-  if (!b.on) pane.append(button(t(b.confirmed ? "h_browser_undo" : "h_browser_done"), () => call("confirmBrowser", !b.confirmed).then(refresh, fail)));
+  if (!b.on) pane.append(button(t(b.confirmed ? "h_browser_undo" : "h_browser_done"), () => { tabsOpen = true; call("confirmBrowser", !b.confirmed).then(refresh, fail); }));
   const more = document.createElement("div"); more.className = "step tap more";
   const label = document.createElement("span"); label.textContent = t("other_app_toggle");
   const chev = document.createElement("span"); chev.className = "chev"; chev.textContent = otherOpen ? "\u25B4" : "\u25BE";
@@ -721,7 +722,7 @@ function browserBlock(b) {
 // browserSetup is the Browsers content shared by Settings and the home tab:
 // intro, the system proxy checkbox (Windows), its explanation and any refusal,
 // then the manual address block.
-function browserSetup(pane, b) {
+function browserSetup(pane, b, keepOpen = () => {}) {
   const para = (text, warning = false) => {
     const p = document.createElement("p"); p.className = warning ? "hint warn" : "hint"; p.textContent = text; pane.append(p);
   };
@@ -730,7 +731,7 @@ function browserSetup(pane, b) {
     const label = document.createElement("label"); label.className = "check";
     const toggle = document.createElement("input"); toggle.type = "checkbox"; toggle.setAttribute("role", "switch");
     toggle.checked = b.on;
-    toggle.onchange = () => call("setSystemPAC", toggle.checked).then(refresh, e => { refresh(); fail(e); });
+    toggle.onchange = () => { keepOpen(); call("setSystemPAC", toggle.checked).then(refresh, e => { refresh(); fail(e); }); };
     label.append(toggle, t("browser_system")); pane.append(label);
     para(t("browser_system_help"));
     if (b.notice) para(b.notice, true);
