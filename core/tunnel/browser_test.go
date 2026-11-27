@@ -18,6 +18,7 @@ import (
 func newBrowserTunnel(t *testing.T, groups []SiteGroup, direct, tun dialFunc) *Tunnel {
 	t.Helper()
 	tt := newTestTunnel(t, ModeAuto, direct, tun)
+	tt.siteDNS = fakeSiteDNS(nil, nil)
 	tt.cfg.Sites = groups
 	tt.cfg.BrowserListen = "127.0.0.1:0"
 	tt.startBrowser()

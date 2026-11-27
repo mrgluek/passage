@@ -307,7 +307,7 @@ func (t *Tunnel) dialSite(entry *siteEntry, addr string) (net.Conn, Route, []Rou
 		for _, r := range order {
 			tried = append(tried, r)
 			ctx, cancel := context.WithTimeout(t.ctx, ways[r].timeout)
-			c, err := t.siteDial(r, ways, "")(ctx, "tcp", addr)
+			c, err := t.siteDial(entry, r, ways, "")(ctx, "tcp", addr)
 			cancel()
 			if err == nil {
 				return done(c, r)
@@ -327,8 +327,13 @@ func (t *Tunnel) dialSite(entry *siteEntry, addr string) (net.Conn, Route, []Rou
 
 // siteDial is the dial function of a route for a site. exit, a tunnel
 // route's ID, is tried first in the pool; the pool's state does not change.
-func (t *Tunnel) siteDial(r Route, ways [numRoutes]way, exit string) dialFunc {
-	if pool, ok := t.client.(*routePool); ok && r == RouteTunnel {
+func (t *Tunnel) siteDial(entry *siteEntry, r Route, ways [numRoutes]way, exit string) dialFunc {
+	if r != RouteTunnel {
+		// A tunnel site never asks the network's resolver: without DoT the
+		// tunnel takes it. A smart site has no other way, so it may.
+		return t.resolvedSiteDial(ways[r].dial, !entry.tunnel)
+	}
+	if pool, ok := t.client.(*routePool); ok {
 		if exit == "" {
 			return pool.siteDialContext // a failure stays with the browser connection
 		}
@@ -340,7 +345,8 @@ func (t *Tunnel) siteDial(r Route, ways [numRoutes]way, exit string) dialFunc {
 }
 
 func (t *Tunnel) siteDialFailed(entry *siteEntry, r Route, err error, now time.Time) {
-	if !errors.Is(err, errDestinationRefused) && t.ctx.Err() == nil {
+	// A refused destination or a DoT failure says nothing about the route.
+	if !errors.Is(err, errDestinationRefused) && !errors.Is(err, errSiteDoT) && t.ctx.Err() == nil {
 		entry.markBad(r, now.Add(siteBadFor))
 	}
 }
@@ -374,7 +380,7 @@ func (t *Tunnel) raceSite(entry *siteEntry, routes []Route, lead func(Route) boo
 		if remembered && r == win.route {
 			exit = win.exit
 		}
-		dial := t.siteDial(r, ways, exit)
+		dial := t.siteDial(entry, r, ways, exit)
 		go func() {
 			c, err := dial(ctx, "tcp", addr)
 			cancel()

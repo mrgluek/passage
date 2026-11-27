@@ -76,6 +76,8 @@ func siteFailStage(err error) string {
 	switch {
 	case errors.Is(err, errDestinationRefused):
 		return "refused by exit"
+	case errors.Is(err, errSiteDoT):
+		return "dot"
 	case err == nil:
 		return "no route"
 	case err.Error() == "all configured routes failed":

@@ -260,6 +260,8 @@ type Tunnel struct {
 	browserOpen atomic.Int64 // browser sockets, handshake included
 	siteOpen    atomic.Int64
 	siteRemotes map[net.Conn]struct{} // guarded by mu
+	siteDNS     *siteDNS              // set in tests; else made on first use
+	siteDNSOnce sync.Once
 	// siteAfter replaces the tunnel's head-start timer of site dials in tests.
 	siteAfter    func(time.Duration) (<-chan time.Time, func())
 	siteDiagLog  *siteLog
