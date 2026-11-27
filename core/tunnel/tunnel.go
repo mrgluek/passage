@@ -252,6 +252,14 @@ type Tunnel struct {
 	// hours, so totals taken at close would show nothing for them.
 	upBytes   [numRoutes]atomic.Int64
 	downBytes [numRoutes]atomic.Int64
+
+	// Browser listener (browser.go).
+	sites       *siteSet
+	browserLn   net.Listener
+	pac         []byte
+	browserOpen atomic.Int64 // browser sockets, handshake included
+	siteOpen    atomic.Int64
+	siteTotal   atomic.Int64
 }
 
 type tracked struct {
@@ -471,6 +479,7 @@ func Start(cfg Config) (*Tunnel, error) {
 		}
 	}
 	t.startForwards()
+	t.startBrowser()
 	t.warmTunnel()
 	t.settleHealth()
 	t.wg.Add(3)
@@ -706,6 +715,9 @@ func (t *Tunnel) Addr() string { return t.ln.Addr().String() }
 func (t *Tunnel) Close() {
 	t.cancel()
 	t.ln.Close()
+	if t.browserLn != nil {
+		t.browserLn.Close()
+	}
 	t.mu.Lock()
 	for i := range t.forwards {
 		f := &t.forwards[i]
@@ -2423,6 +2435,8 @@ type Status struct {
 	// Started is when the router started; Health is the plain verdict for the windows.
 	Started time.Time `json:"started"`
 	Health  Health    `json:"health"`
+	// Browser is set while the browser listener runs; it counts sites, never names them.
+	Browser *BrowserStatus `json:"browser,omitempty"`
 }
 
 // GroupStatus is one group's part of Status.
@@ -2582,6 +2596,7 @@ func (t *Tunnel) statusLocked(n int) Status {
 	s.Events = t.log.last(n)
 	s.Started = t.started.UTC()
 	s.Health = t.healthLocked(health(s, t.timeNow()), t.timeNow())
+	s.Browser = t.browserStatus()
 	return s
 }
 
