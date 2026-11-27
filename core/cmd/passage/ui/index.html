@@ -720,7 +720,7 @@ function browserBlock(b) {
   return box;
 }
 // browserSetup is the Browsers content shared by Settings and the home tab:
-// intro, the system proxy checkbox (Windows), its explanation and any refusal,
+// intro, the system proxy checkbox (Windows, macOS), its explanation and any refusal,
 // then the manual address block.
 function browserSetup(pane, b, keepOpen = () => {}) {
   const para = (text, warning = false) => {

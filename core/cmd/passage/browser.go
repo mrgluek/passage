@@ -194,11 +194,13 @@ func (a *App) recoverSystemPACLocked() {
 		a.restoreSystemPACLocked("crash recovery")
 	case s.SysBackup.Active:
 		st, err := a.sysProxy.Read()
-		if err == nil && st.AutoConfigURL != s.SysBackup.Ours {
+		if err == nil && !st.anyOurs(s.SysBackup.Ours) {
 			s.SysBackup = sysBackup{} // changed meanwhile: not ours to restore
 			s.SystemPAC = false       // and the wish no longer matches the system
 			a.saveSettings()
+			return
 		}
+		a.extendSystemPACLocked("start")
 	case s.SystemPAC:
 		a.ensureBrowserPortLocked()
 		b, err := enableSystemPAC(a.sysProxy, a.pacURLLocked())
@@ -210,6 +212,25 @@ func (a *App) recoverSystemPACLocked() {
 			s.SysBackup = b
 		}
 		a.saveSettings()
+	}
+}
+
+// extendSystemPACLocked points network services that appeared since the
+// switch was turned on at the address too (macOS).
+func (a *App) extendSystemPACLocked(why string) {
+	if a.sysProxy == nil || !a.settings.SystemPAC || !a.settings.SysBackup.Active {
+		return
+	}
+	added, skipped, err := extendSystemPAC(a.sysProxy, &a.settings.SysBackup)
+	if added > 0 {
+		a.saveSettings()
+		a.event("system proxy: auto-config set on %d new network service(s) (%s)", added, why)
+	}
+	if skipped > 0 {
+		a.event("system proxy: %d network service(s) left alone, they have their own proxy settings (%s)", skipped, why)
+	}
+	if err != nil {
+		a.event("system proxy: %v (%s)", err, why)
 	}
 }
 

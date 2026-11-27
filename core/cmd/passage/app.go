@@ -277,6 +277,7 @@ func (a *App) tick() {
 	case reload:
 		a.startLocked("restart on link change")
 	case a.networkChanged(time.Now()):
+		a.extendSystemPACLocked("network change")
 		a.startLocked("restart on network change")
 	default:
 		if a.subscriptionRefreshing {

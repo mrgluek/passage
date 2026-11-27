@@ -22,21 +22,24 @@ func newSystemProxy() systemProxy { return registryProxy{} }
 
 func (registryProxy) Read() (proxyState, error) {
 	var st proxyState
+	var sv proxyService
 	k, err := registry.OpenKey(registry.CURRENT_USER, internetSettingsKey, registry.QUERY_VALUE)
 	if err != nil {
 		return st, err
 	}
 	defer k.Close()
-	st.AutoConfigURL, _, _ = k.GetStringValue("AutoConfigURL")
+	sv.AutoConfigURL, _, _ = k.GetStringValue("AutoConfigURL")
+	sv.AutoConfigOn = sv.AutoConfigURL != ""
 	if n, _, err := k.GetIntegerValue("ProxyEnable"); err == nil {
-		st.ProxyEnable = n != 0
+		sv.ProxyEnable = n != 0
 	} else if v, _, err := k.GetStringValue("ProxyEnable"); err == nil {
-		st.ProxyEnable = v != "" && v != "0"
+		sv.ProxyEnable = v != "" && v != "0"
 	}
-	st.ProxyServer, _, _ = k.GetStringValue("ProxyServer")
+	sv.ProxyServer, _, _ = k.GetStringValue("ProxyServer")
 	if n, _, err := k.GetIntegerValue("AutoDetect"); err == nil {
-		st.AutoDetect = n != 0
+		sv.AutoDetect = n != 0
 	}
+	st.Services = []proxyService{sv}
 	st.Policy = policyPresent()
 	return st, nil
 }
@@ -68,7 +71,9 @@ func policyPresent() string {
 	return ""
 }
 
-func (registryProxy) SetAutoConfig(url string) error {
+// SetAutoConfig: Windows has one service and no separate on/off for the
+// address, so on is ignored.
+func (registryProxy) SetAutoConfig(_, url string, _ bool) error {
 	k, err := registry.OpenKey(registry.CURRENT_USER, internetSettingsKey, registry.SET_VALUE)
 	if err != nil {
 		return err

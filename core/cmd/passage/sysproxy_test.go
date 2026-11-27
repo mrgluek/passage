@@ -11,34 +11,70 @@ import (
 	links "github.com/mrgluek/passage-link/link"
 )
 
-// fakeProxy is the system's proxy settings in memory.
+// fakeProxy is the system's proxy settings in memory. With mac set, turning
+// auto-config off keeps the address, as networksetup does.
 type fakeProxy struct {
 	st      proxyState
+	mac     bool
 	writes  []string
 	readErr error
 	setErr  error
+	failOn  string // a service whose writes fail
 }
 
-func (f *fakeProxy) Read() (proxyState, error) { return f.st, f.readErr }
-func (f *fakeProxy) SetAutoConfig(url string) error {
+func (f *fakeProxy) Read() (proxyState, error) {
+	st := f.st
+	st.Services = slices.Clone(f.st.Services)
+	return st, f.readErr
+}
+
+func (f *fakeProxy) SetAutoConfig(name, url string, on bool) error {
 	if f.setErr != nil {
 		return f.setErr
 	}
-	f.st.AutoConfigURL = url
-	f.writes = append(f.writes, url)
+	if f.failOn != "" && name == f.failOn {
+		return errors.New("write failed")
+	}
+	for i := range f.st.Services {
+		s := &f.st.Services[i]
+		if s.Name != name {
+			continue
+		}
+		if f.mac {
+			if url != "" {
+				s.AutoConfigURL = url
+			}
+			s.AutoConfigOn = on
+		} else {
+			s.AutoConfigURL, s.AutoConfigOn = url, url != ""
+		}
+	}
+	f.writes = append(f.writes, name+"="+url)
 	return nil
+}
+
+// winFake is a Windows system: one unnamed service.
+func winFake(s proxyService) *fakeProxy {
+	s.AutoConfigOn = s.AutoConfigURL != ""
+	return &fakeProxy{st: proxyState{Services: []proxyService{s}}}
+}
+
+func (f *fakeProxy) url() string { return f.st.Services[0].AutoConfigURL }
+
+func (f *fakeProxy) setURL(u string) {
+	f.st.Services[0].AutoConfigURL, f.st.Services[0].AutoConfigOn = u, u != ""
 }
 
 const oursURL = "http://127.0.0.1:21000/proxy.pac"
 
 func TestEnableSetsWhenEmptyAndRestoreClearsIt(t *testing.T) {
-	f := &fakeProxy{st: proxyState{AutoDetect: true}}
+	f := winFake(proxyService{AutoDetect: true})
 	b, err := enableSystemPAC(f, oursURL)
-	if err != nil || f.st.AutoConfigURL != oursURL || !b.Active || b.Ours != oursURL || b.PrevURL != "" || !b.AutoDetect {
+	if err != nil || f.url() != oursURL || !b.Active || b.Ours != oursURL || len(b.Services) != 1 || b.Services[0].PrevURL != "" || !b.Services[0].AutoDetect {
 		t.Fatalf("%+v %v %+v", b, err, f.st)
 	}
 	changed, err := restoreSystemPAC(f, b)
-	if err != nil || !changed || f.st.AutoConfigURL != "" || !f.st.AutoDetect {
+	if err != nil || !changed || f.url() != "" || !f.st.Services[0].AutoDetect {
 		t.Fatalf("restore: %v %v %+v", changed, err, f.st)
 	}
 }
@@ -48,15 +84,16 @@ func TestEnableRefusesForeignSettings(t *testing.T) {
 		st   proxyState
 		want error
 	}{
-		"foreign PAC": {proxyState{AutoConfigURL: "http://example.org/other.pac"}, errSysForeignPAC},
-		"manual":      {proxyState{ProxyEnable: true, ProxyServer: "example.org:3128"}, errSysManualProxy},
-		"policy":      {proxyState{Policy: "ProxyServer"}, errSysPolicy},
+		"foreign PAC": {winFake(proxyService{AutoConfigURL: "http://example.org/other.pac"}).st, errSysForeignPAC},
+		"manual":      {winFake(proxyService{ProxyEnable: true, ProxyServer: "example.org:3128"}).st, errSysManualProxy},
+		"policy":      {proxyState{Services: []proxyService{{}}, Policy: "ProxyServer"}, errSysPolicy},
 	} {
 		f := &fakeProxy{st: tc.st}
+		before := slices.Clone(tc.st.Services)
 		if _, err := enableSystemPAC(f, oursURL); !errors.Is(err, tc.want) {
 			t.Errorf("%s: %v", name, err)
 		}
-		if len(f.writes) != 0 || f.st != tc.st {
+		if len(f.writes) != 0 || !slices.Equal(f.st.Services, before) {
 			t.Errorf("%s: the system was changed", name)
 		}
 		if noticeKey(tc.want) == "browser_refuse_error" {
@@ -69,14 +106,14 @@ func TestEnableRefusesForeignSettings(t *testing.T) {
 }
 
 func TestRestoreOnlyIfStillOurs(t *testing.T) {
-	f := &fakeProxy{}
+	f := winFake(proxyService{})
 	b, _ := enableSystemPAC(f, oursURL)
-	f.st.AutoConfigURL = "http://example.org/user.pac" // the user changed it meanwhile
+	f.setURL("http://example.org/user.pac") // the user changed it meanwhile
 	changed, err := restoreSystemPAC(f, b)
-	if err != nil || changed || f.st.AutoConfigURL != "http://example.org/user.pac" {
-		t.Fatalf("restore touched a foreign address: %v %v %q", changed, err, f.st.AutoConfigURL)
+	if err != nil || changed || f.url() != "http://example.org/user.pac" {
+		t.Fatalf("restore touched a foreign address: %v %v %q", changed, err, f.url())
 	}
-	f.st.AutoConfigURL = oursURL
+	f.setURL(oursURL)
 	f.readErr = errors.New("registry unavailable")
 	if _, err := restoreSystemPAC(f, b); err == nil {
 		t.Fatal("read error hidden")
@@ -84,9 +121,9 @@ func TestRestoreOnlyIfStillOurs(t *testing.T) {
 }
 
 func TestEnableAgainAfterACrashKeepsTheOriginalState(t *testing.T) {
-	f := &fakeProxy{st: proxyState{AutoConfigURL: oursURL}}
+	f := winFake(proxyService{AutoConfigURL: oursURL})
 	b, err := enableSystemPAC(f, oursURL)
-	if err != nil || b.PrevURL != "" || len(f.writes) != 0 {
+	if err != nil || b.Services[0].PrevURL != "" || len(f.writes) != 0 {
 		t.Fatalf("%+v %v %v", b, err, f.writes)
 	}
 }
@@ -113,7 +150,7 @@ func reload(t *testing.T, dir string) Settings {
 }
 
 func TestSystemSwitchOnOffThroughTheApp(t *testing.T) {
-	f := &fakeProxy{}
+	f := winFake(proxyService{})
 	a, dir := browserApp(t, f, true)
 	if err := a.setSystemPAC(true); err != nil {
 		t.Fatal(err)
@@ -121,8 +158,8 @@ func TestSystemSwitchOnOffThroughTheApp(t *testing.T) {
 	a.mu.Lock()
 	url := a.pacURLLocked()
 	a.mu.Unlock()
-	if f.st.AutoConfigURL != url || !strings.HasPrefix(url, "http://127.0.0.1:") || !strings.HasSuffix(url, "/proxy.pac") {
-		t.Fatalf("address %q", f.st.AutoConfigURL)
+	if f.url() != url || !strings.HasPrefix(url, "http://127.0.0.1:") || !strings.HasSuffix(url, "/proxy.pac") {
+		t.Fatalf("address %q", f.url())
 	}
 	s := reload(t, dir)
 	if !s.SystemPAC || !s.SysBackup.Active || s.SysBackup.Ours != url || s.BrowserPort == 0 || s.BrowserPort == s.Port {
@@ -131,7 +168,7 @@ func TestSystemSwitchOnOffThroughTheApp(t *testing.T) {
 	if err := a.setSystemPAC(false); err != nil {
 		t.Fatal(err)
 	}
-	if f.st.AutoConfigURL != "" {
+	if f.url() != "" {
 		t.Fatal("not restored")
 	}
 	if s := reload(t, dir); s.SystemPAC || s.SysBackup.Active {
@@ -140,7 +177,7 @@ func TestSystemSwitchOnOffThroughTheApp(t *testing.T) {
 }
 
 func TestSystemSwitchRefusalIsShownAndChangesNothing(t *testing.T) {
-	f := &fakeProxy{st: proxyState{AutoConfigURL: "http://example.org/other.pac"}}
+	f := winFake(proxyService{AutoConfigURL: "http://example.org/other.pac"})
 	a, dir := browserApp(t, f, true)
 	if err := a.setSystemPAC(true); err != nil {
 		t.Fatal(err)
@@ -155,13 +192,13 @@ func TestSystemSwitchRefusalIsShownAndChangesNothing(t *testing.T) {
 }
 
 func TestQuitRestoresAndNextStartAppliesAgain(t *testing.T) {
-	f := &fakeProxy{}
+	f := winFake(proxyService{})
 	a, dir := browserApp(t, f, true)
 	a.setSystemPAC(true)
 	a.mu.Lock()
 	a.restoreSystemPACLocked("quit")
 	a.mu.Unlock()
-	if f.st.AutoConfigURL != "" {
+	if f.url() != "" {
 		t.Fatal("quit did not restore")
 	}
 	s := reload(t, dir)
@@ -173,17 +210,17 @@ func TestQuitRestoresAndNextStartAppliesAgain(t *testing.T) {
 	b.mu.Lock()
 	b.recoverSystemPACLocked()
 	b.mu.Unlock()
-	if f.st.AutoConfigURL == "" || !reload(t, dir).SysBackup.Active {
+	if f.url() == "" || !reload(t, dir).SysBackup.Active {
 		t.Fatal("the next start did not apply the switch again")
 	}
 }
 
 // The app was killed with the address set: the backup is in passage.ini.
 func TestCrashRecovery(t *testing.T) {
-	f := &fakeProxy{}
+	f := winFake(proxyService{})
 	a, dir := browserApp(t, f, true)
 	a.setSystemPAC(true)
-	ours := f.st.AutoConfigURL
+	ours := f.url()
 
 	// The user turned the switch off in passage.ini by hand: undo at start.
 	s := reload(t, dir)
@@ -196,37 +233,37 @@ func TestCrashRecovery(t *testing.T) {
 	b.mu.Lock()
 	b.recoverSystemPACLocked()
 	b.mu.Unlock()
-	if f.st.AutoConfigURL != "" || reload(t, dir).SysBackup.Active {
+	if f.url() != "" || reload(t, dir).SysBackup.Active {
 		t.Fatal("crash left the address behind")
 	}
 
 	// Backup present, switch still wanted, address still ours: it continues.
-	f.st.AutoConfigURL = ours
-	s.SystemPAC, s.SysBackup = true, sysBackup{Active: true, Ours: ours}
+	f.setURL(ours)
+	s.SystemPAC, s.SysBackup = true, sysBackup{Active: true, Ours: ours, Services: []serviceBackup{{}}}
 	s.save(filepath.Join(dir, iniName))
 	c := newApp(dir, "test", "", "en", &fakePlatform{})
 	c.sysProxy = f
 	c.mu.Lock()
 	c.recoverSystemPACLocked()
 	c.mu.Unlock()
-	if f.st.AutoConfigURL != ours || !reload(t, dir).SysBackup.Active {
+	if f.url() != ours || !reload(t, dir).SysBackup.Active {
 		t.Fatal("a wanted switch was dropped")
 	}
 
 	// Someone replaced the address: the backup is dropped, their value stays.
-	f.st.AutoConfigURL = "http://example.org/user.pac"
+	f.setURL("http://example.org/user.pac")
 	d := newApp(dir, "test", "", "en", &fakePlatform{})
 	d.sysProxy = f
 	d.mu.Lock()
 	d.recoverSystemPACLocked()
 	d.mu.Unlock()
-	if f.st.AutoConfigURL != "http://example.org/user.pac" || reload(t, dir).SysBackup.Active {
+	if f.url() != "http://example.org/user.pac" || reload(t, dir).SysBackup.Active {
 		t.Fatal("a foreign address was touched")
 	}
 }
 
 func TestRestoreFailureKeepsTheBackup(t *testing.T) {
-	f := &fakeProxy{}
+	f := winFake(proxyService{})
 	a, dir := browserApp(t, f, true)
 	a.setSystemPAC(true)
 	f.setErr = errors.New("access denied")
@@ -239,7 +276,7 @@ func TestRestoreFailureKeepsTheBackup(t *testing.T) {
 }
 
 func TestBrowserSectionOnlyWithSitesAndNoListenerWithout(t *testing.T) {
-	a, _ := browserApp(t, &fakeProxy{}, false)
+	a, _ := browserApp(t, winFake(proxyService{}), false)
 	if v := a.view().Browser; v.Show || v.PAC != "" {
 		t.Fatalf("%+v", v)
 	}
@@ -267,7 +304,7 @@ func TestBrowserSectionOnlyWithSitesAndNoListenerWithout(t *testing.T) {
 }
 
 func TestBrowserPortIsStableAndDistinct(t *testing.T) {
-	a, dir := browserApp(t, &fakeProxy{}, true)
+	a, dir := browserApp(t, winFake(proxyService{}), true)
 	a.view()
 	first := reload(t, dir).BrowserPort
 	if first < minPort || first >= maxPort || first == a.settings.Port {
@@ -342,7 +379,7 @@ func TestPolicyBlocksOnlyProxyPolicies(t *testing.T) {
 }
 
 func TestPolicyRefusalNamesTheValue(t *testing.T) {
-	f := &fakeProxy{st: proxyState{Policy: "ProxyServer"}}
+	f := &fakeProxy{st: proxyState{Services: []proxyService{{}}, Policy: "ProxyServer"}}
 	_, err := enableSystemPAC(f, oursURL)
 	if !errors.Is(err, errSysPolicy) || noticeArg(err) != "ProxyServer" {
 		t.Fatal(err)
@@ -376,7 +413,7 @@ func TestConnectDoneRules(t *testing.T) {
 }
 
 func TestHomeViewStopsOfferingAfterTheBrowserIsSetUp(t *testing.T) {
-	f := &fakeProxy{}
+	f := winFake(proxyService{})
 	a, dir := browserApp(t, f, true)
 	if a.view().ConnectDone {
 		t.Fatal("done before anything was set up")
@@ -417,7 +454,7 @@ func TestHomeTabsRule(t *testing.T) {
 	if without[3] != "tab_other" || slices.Contains(without, "tab_browser") {
 		t.Fatalf("without sites: %v", without)
 	}
-	a, _ := browserApp(t, &fakeProxy{}, true)
+	a, _ := browserApp(t, winFake(proxyService{}), true)
 	if v := a.view(); !slices.Equal(v.Tabs, with) {
 		t.Fatalf("view tabs %v", v.Tabs)
 	}
@@ -452,7 +489,7 @@ func TestBrowserContentIsShared(t *testing.T) {
 		}
 	}
 	// The checkbox in the tab follows the same view field after a switch.
-	a, _ := browserApp(t, &fakeProxy{}, true)
+	a, _ := browserApp(t, winFake(proxyService{}), true)
 	if a.view().Browser.On {
 		t.Fatal("on before the switch")
 	}

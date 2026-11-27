@@ -56,7 +56,7 @@ type Settings struct {
 	// same so the auto-config address does not change.
 	BrowserPort int
 	// SystemPAC is the wish to use Passage in the system proxy settings
-	// (Windows); SysBackup is kept while the system address is ours.
+	// (Windows, macOS); SysBackup is kept while the system address is ours.
 	SystemPAC bool
 	// BrowserConfirmed: the user said the browser is set up by hand.
 	BrowserConfirmed bool
@@ -138,6 +138,14 @@ func loadSettings(path string) (Settings, bool, error) {
 	}
 	defer f.Close()
 	sawAppSeen := false
+	win := -1 // index of the unnamed (Windows) service in the backup
+	winBackup := func() *serviceBackup {
+		if win < 0 {
+			win = len(s.SysBackup.Services)
+			s.SysBackup.Services = append(s.SysBackup.Services, serviceBackup{})
+		}
+		return &s.SysBackup.Services[win]
+	}
 	sc := bufio.NewScanner(f)
 	for sc.Scan() {
 		line := strings.TrimSpace(sc.Text())
@@ -208,13 +216,19 @@ func loadSettings(path string) (Settings, bool, error) {
 		case "sys_backup_ours":
 			s.SysBackup.Ours = v
 		case "sys_backup_prev":
-			s.SysBackup.PrevURL = v
+			winBackup().PrevURL = v
 		case "sys_backup_enable":
-			s.SysBackup.ProxyEnable = v == "true" || v == "1"
+			winBackup().ProxyEnable = v == "true" || v == "1"
 		case "sys_backup_server":
-			s.SysBackup.ProxyServer = v
+			winBackup().ProxyServer = v
 		case "sys_backup_detect":
-			s.SysBackup.AutoDetect = v == "true" || v == "1"
+			winBackup().AutoDetect = v == "true" || v == "1"
+		case "sys_backup_service":
+			// The service's name, a tab, the address before.
+			name, prev, _ := strings.Cut(v, "\t")
+			if name != "" {
+				s.SysBackup.Services = append(s.SysBackup.Services, serviceBackup{Name: name, PrevURL: prev})
+			}
 		}
 	}
 	// Settings written before this key existed: a proxy that was running was in use.
@@ -229,6 +243,9 @@ func loadSettings(path string) (Settings, bool, error) {
 		s.User, s.Pass = fresh.User, fresh.Pass
 	}
 	s.SysBackup.Active = s.SysBackup.Ours != ""
+	if s.SysBackup.Active && s.SysBackup.Services == nil {
+		winBackup() // a Windows backup that had nothing to note but the address
+	}
 	if s.Mode == "" {
 		s.Mode = tunnel.ModeAuto
 	}
@@ -299,7 +316,14 @@ system_pac=%t
 browser_confirmed=%t
 `, s.Port, s.User, s.Pass, s.Auth, s.WhatsApp, s.WhatsAppChatPort, s.WhatsAppMediaPort, s.Mode, s.My, s.Running, s.AutoUpdate, s.NextUpdate.Format(time.RFC3339), s.DismissedUpdate, s.AutostartDismissed, s.RoutesNotice, s.AppSeen, s.Lang, s.BrowserPort, s.SystemPAC, s.BrowserConfirmed)
 	if b := s.SysBackup; b.Active {
-		text += fmt.Sprintf("sys_backup_ours=%s\nsys_backup_prev=%s\nsys_backup_enable=%t\nsys_backup_server=%s\nsys_backup_detect=%t\n", oneLineValue(b.Ours), oneLineValue(b.PrevURL), b.ProxyEnable, oneLineValue(b.ProxyServer), b.AutoDetect)
+		text += fmt.Sprintf("sys_backup_ours=%s\n", oneLineValue(b.Ours))
+		for _, sb := range b.Services {
+			if sb.Name == "" {
+				text += fmt.Sprintf("sys_backup_prev=%s\nsys_backup_enable=%t\nsys_backup_server=%s\nsys_backup_detect=%t\n", oneLineValue(sb.PrevURL), sb.ProxyEnable, oneLineValue(sb.ProxyServer), sb.AutoDetect)
+			} else {
+				text += fmt.Sprintf("sys_backup_service=%s\t%s\n", noTab(sb.Name), noTab(sb.PrevURL))
+			}
+		}
 	}
 	text += s.editLines()
 	return writeFile(path, []byte(text))
@@ -307,6 +331,9 @@ browser_confirmed=%t
 
 // oneLineValue keeps a registry value from breaking the ini format.
 func oneLineValue(v string) string { return strings.NewReplacer("\r", "", "\n", "").Replace(v) }
+
+// noTab is oneLineValue for a field of a tab-separated value.
+func noTab(v string) string { return strings.ReplaceAll(oneLineValue(v), "\t", " ") }
 
 // writeFile replaces path through a temporary file, so a crash never
 // leaves half a file.
