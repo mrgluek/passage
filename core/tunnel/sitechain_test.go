@@ -239,3 +239,81 @@ func TestQuietSiteConnectionIsNoStall(t *testing.T) {
 		t.Fatal("an idle connection counted as a stall")
 	}
 }
+
+// answerN replies to the first request with n bytes and then never again.
+func answerN(n int) dialFunc {
+	return func(context.Context, string, string) (net.Conn, error) {
+		a, b := net.Pipe()
+		go func() {
+			b.Read(make([]byte, 4096))
+			b.Write(make([]byte, n))
+			io.Copy(io.Discard, b)
+		}()
+		return a, nil
+	}
+}
+
+// stallAfter opens a connection to host, takes n reply bytes, sends a second
+// request and waits for the stall line.
+func stallAfter(t *testing.T, tt *Tunnel, host string, n int) string {
+	t.Helper()
+	c, rep := browserSocks(t, tt, host, nil)
+	if rep != 0 {
+		t.Fatal(rep)
+	}
+	t.Cleanup(func() { c.Close() })
+	c.Write([]byte("GET / first"))
+	if _, err := io.ReadFull(c, make([]byte, n)); err != nil {
+		t.Fatal(err)
+	}
+	c.Write(make([]byte, 200))
+	var line string
+	waitFor(t, func() bool {
+		for _, e := range tt.log.last(50) {
+			if strings.Contains(e.Msg, "stalled on") {
+				line = e.Msg
+				return true
+			}
+		}
+		return false
+	})
+	return line
+}
+
+func TestTunnelStallIsNotMarked(t *testing.T) {
+	stallWait(t, 50*time.Millisecond)
+	tt := newBrowserTunnel(t, testSites, failDialer(new(atomic.Int32)), answerN(3000))
+	useFakeSiteTimer(tt)
+	line := stallAfter(t, tt, "example.net", 3000)
+	if !strings.HasSuffix(line, "(not marked)") || tt.sites.match("example.net").badUntil(RouteTunnel).After(time.Now()) {
+		t.Fatalf("%q", line)
+	}
+}
+
+func TestEarlySmartStallIsMarked(t *testing.T) {
+	stallWait(t, 50*time.Millisecond)
+	tt := newBrowserTunnel(t, testSites, failDialer(new(atomic.Int32)), echoDialer("t:", new(atomic.Int32)))
+	tt.strategies = []strategy{{"tlsfrag:1", answerN(20 << 10)}}
+	line := stallAfter(t, tt, "example.org", 20<<10)
+	if strings.Contains(line, "not marked") || !strings.Contains(line, "stalled on smart:tlsfrag:1 after 20 KB") ||
+		!tt.sites.match("example.org").strategyBadUntil("tlsfrag:1").After(time.Now()) {
+		t.Fatalf("%q", line)
+	}
+}
+
+func TestLateQuietIsNotMarked(t *testing.T) {
+	stallWait(t, 50*time.Millisecond)
+	// After 200 KB.
+	tt := newBrowserTunnel(t, testSites, answerN(200<<10), echoDialer("t:", new(atomic.Int32)))
+	if line := stallAfter(t, tt, "example.org", 200<<10); !strings.HasSuffix(line, "(not marked)") || tt.sites.match("example.org").badUntil(RouteDirect).After(time.Now()) {
+		t.Fatalf("after 200 KB: %q", line)
+	}
+	// After the early phase (two minutes, shortened here).
+	old := siteStallEarlyAge
+	siteStallEarlyAge = 10 * time.Millisecond
+	t.Cleanup(func() { siteStallEarlyAge = old })
+	tt2 := newBrowserTunnel(t, testSites, answerN(3000), echoDialer("t:", new(atomic.Int32)))
+	if line := stallAfter(t, tt2, "example.org", 3000); !strings.HasSuffix(line, "(not marked)") || tt2.sites.match("example.org").badUntil(RouteDirect).After(time.Now()) {
+		t.Fatalf("late: %q", line)
+	}
+}

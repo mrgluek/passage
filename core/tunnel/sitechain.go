@@ -20,6 +20,12 @@ const siteReplayMax = 16 << 10 // client bytes kept for a replay
 // while a request of the browser waits has stalled on this way.
 var siteStallWait = 10 * time.Second
 
+// A stall marks a way only early in a connection, where throttling shows:
+// later quiet periods are WebSockets and long polls doing their job.
+var siteStallEarlyAge = 60 * time.Second
+
+const siteStallEarlyBytes = 64 << 10
+
 // siteWay is one way to a site: a route and, for smart, its strategy.
 type siteWay struct {
 	route    Route
@@ -119,6 +125,7 @@ type siteRelay struct {
 	finished  chan struct{} // the answering remote's copy is done
 
 	// After the first reply, for the stall check.
+	started          time.Time
 	lastUp, lastDown time.Time
 	downTotal        int64
 	upPending        int // client bytes since the site's last byte
@@ -299,7 +306,7 @@ func (t *Tunnel) connectSite(c bufferedConn, entry *siteEntry, host, addr string
 	t.siteOpen.Add(1)
 	defer t.siteOpen.Add(-1)
 
-	r := &siteRelay{t: t, browser: c, wrote: make(chan struct{}), events: make(chan relayEvent, 16), finished: make(chan struct{})}
+	r := &siteRelay{t: t, browser: c, started: time.Now(), wrote: make(chan struct{}), events: make(chan relayEvent, 16), finished: make(chan struct{})}
 	first := siteWay{route, strat}
 	r.setRemote(remote, first)
 	defer func() {
@@ -392,8 +399,9 @@ func (t *Tunnel) connectSite(c bufferedConn, entry *siteEntry, host, addr string
 	}
 }
 
-// watchStall marks the way bad for the site once, when a request of the
-// browser has waited siteStallWait without a byte back. A quiet connection
+// watchStall marks a direct or smart way bad for the site once, when early
+// in the connection a request of the browser has waited siteStallWait
+// without a byte back. A quiet connection
 // with nothing asked (a WebSocket at rest, a kept-alive socket) is never a
 // stall, and the connection itself is left alone.
 func (r *siteRelay) watchStall(entry *siteEntry, w siteWay) {
@@ -411,8 +419,16 @@ func (r *siteRelay) watchStall(entry *siteEntry, w siteWay) {
 		got := r.downTotal
 		r.mu.Unlock()
 		if stalled {
-			r.t.markWayBad(entry, w)
-			r.t.log.add("%s stalled on %s after %d KB", entry.label(), w, got/1024)
+			// The tunnel is the last resort of a tunnel site: a stall there
+			// is noted only, or the next connections would go back to the
+			// blocked ways.
+			early := got < siteStallEarlyBytes && time.Since(r.started) < siteStallEarlyAge
+			if w.route != RouteTunnel && early {
+				r.t.markWayBad(entry, w)
+				r.t.log.add("%s stalled on %s after %d KB", entry.label(), w, got/1024)
+			} else {
+				r.t.log.add("%s stalled on %s after %d KB (not marked)", entry.label(), w, got/1024)
+			}
 			return
 		}
 	}
