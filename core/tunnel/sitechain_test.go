@@ -317,3 +317,77 @@ func TestLateQuietIsNotMarked(t *testing.T) {
 		t.Fatalf("late: %q", line)
 	}
 }
+
+func TestTunnelSiteGoesToTheTunnelAfterAnEarlyStall(t *testing.T) {
+	stallWait(t, 50*time.Millisecond)
+	var now atomic.Int64
+	now.Store(time.Now().UnixNano())
+	var d, s atomic.Int32
+	strat := answerN(20 << 10)
+	counted := func(context.Context, string, string) (net.Conn, error) { s.Add(1); return strat(context.Background(), "", "") }
+	tu := &recordingEcho{}
+	tt := newBrowserTunnel(t, testSites, failDialer(&d), tu.dial("t:"))
+	tt.now = func() time.Time { return time.Unix(0, now.Load()) }
+	tt.strategies = []strategy{{"tlsfrag:1", counted}}
+	clock := useFakeSiteTimer(tt)
+	line := stallAfter(t, tt, "example.net", 20<<10)
+	if strings.Contains(line, "not marked") {
+		t.Fatal(line)
+	}
+	waitFor(t, func() bool {
+		for _, e := range tt.log.last(50) {
+			if strings.Contains(e.Msg, "site #2 (tunnel) uses the tunnel for 24 h after a stall on smart:tlsfrag:1") {
+				return true
+			}
+		}
+		return false
+	})
+	// The next connection goes to the tunnel at once.
+	d0, s0, timers := d.Load(), s.Load(), len(clock.asked)
+	res := <-dialSiteAsync(tt, "example.net")
+	if res.err != nil || res.route != RouteTunnel || d.Load() != d0 || s.Load() != s0 || len(clock.asked) != timers {
+		t.Fatalf("%+v; direct %d->%d, smart %d->%d", res, d0, d.Load(), s0, s.Load())
+	}
+	res.conn.Close()
+	// 24 hours later the race is back.
+	now.Add(int64(siteTunnelOnlyFor + time.Minute))
+	tt.sites.match("example.net").clear(RouteDirect)
+	res = <-dialSiteAsync(tt, "example.net")
+	if d.Load() == d0 {
+		t.Fatal("still tunnel only after 24 h")
+	}
+	if res.conn != nil {
+		res.conn.Close()
+	}
+}
+
+func TestTunnelOnlyEndsOnNetworkChangeAndTunnelFailure(t *testing.T) {
+	tt := newBrowserTunnel(t, testSites, failDialer(new(atomic.Int32)), echoDialer("t:", new(atomic.Int32)))
+	e := tt.sites.match("example.net")
+	e.useTunnelOnly(time.Now())
+	tt.NetworkChanged()
+	if e.tunnelOnlyNow(time.Now()) {
+		t.Fatal("kept after a network change")
+	}
+	e.useTunnelOnly(time.Now())
+	e.markBad(RouteTunnel, time.Now().Add(siteBadFor))
+	if e.tunnelOnlyNow(time.Now()) {
+		t.Fatal("kept after the tunnel failed")
+	}
+}
+
+func TestSmartSiteStallKeepsTodaysRule(t *testing.T) {
+	stallWait(t, 50*time.Millisecond)
+	tt := newBrowserTunnel(t, testSites, failDialer(new(atomic.Int32)), echoDialer("t:", new(atomic.Int32)))
+	tt.strategies = []strategy{{"tlsfrag:1", answerN(20 << 10)}}
+	stallAfter(t, tt, "example.org", 20<<10)
+	e := tt.sites.match("example.org")
+	if e.tunnelOnlyNow(time.Now()) || !e.strategyBadUntil("tlsfrag:1").After(time.Now()) {
+		t.Fatal("smart site rule changed")
+	}
+	for _, l := range tt.log.last(50) {
+		if strings.Contains(l.Msg, "uses the tunnel") {
+			t.Fatal(l.Msg)
+		}
+	}
+}

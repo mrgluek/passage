@@ -48,7 +48,7 @@ func (t *Tunnel) siteNextWays(entry *siteEntry, first siteWay) []siteWay {
 	t.mu.Lock()
 	strategies := t.siteStrategiesLocked()
 	tunnelOK := t.ways[RouteTunnel].dial != nil && entry.tunnel && t.mode != ModeOff
-	smartOK := !(entry.tunnel && t.mode == ModeAlways)
+	smartOK := !(entry.tunnel && (t.mode == ModeAlways || tunnelOK && entry.tunnelOnlyNow(t.timeNow())))
 	t.mu.Unlock()
 	now := t.timeNow()
 	var good, late []siteWay
@@ -426,6 +426,9 @@ func (r *siteRelay) watchStall(entry *siteEntry, w siteWay) {
 			if w.route != RouteTunnel && early {
 				r.t.markWayBad(entry, w)
 				r.t.log.add("%s stalled on %s after %d KB", entry.label(), w, got/1024)
+				if entry.tunnel && entry.useTunnelOnly(r.t.timeNow()) {
+					r.t.log.add("%s uses the tunnel for 24 h after a stall on %s", entry.label(), w)
+				}
 			} else {
 				r.t.log.add("%s stalled on %s after %d KB (not marked)", entry.label(), w, got/1024)
 			}

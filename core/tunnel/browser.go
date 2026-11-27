@@ -224,11 +224,12 @@ func (t *Tunnel) dialSiteWay(entry *siteEntry, addr string) (net.Conn, Route, st
 	}
 	var good, late []Route
 	mode := t.mode
+	tunnelOnly := entry.tunnel && mode != ModeOff && ways[RouteTunnel].dial != nil && entry.tunnelOnlyNow(now)
 	for _, r := range []Route{RouteDirect, RouteSmart, RouteTunnel} {
 		switch {
 		case ways[r].dial == nil,
 			r == RouteTunnel && (!entry.tunnel || mode == ModeOff),
-			r != RouteTunnel && entry.tunnel && mode == ModeAlways: // the chosen route only
+			r != RouteTunnel && entry.tunnel && (mode == ModeAlways || tunnelOnly): // the chosen route only
 			continue
 		}
 		if entry.badUntil(r).After(now) || r == RouteSmart && stratBad {

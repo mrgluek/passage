@@ -107,6 +107,28 @@ type siteEntry struct {
 	// badStrategy: smart strategies that got no reply for this site lately.
 	badStrategy map[string]time.Time
 	win         siteWin // the route that carried the last connection
+	// tunnelOnly: a tunnel site whose direct or smart way stalled goes
+	// straight to the tunnel until then.
+	tunnelOnly time.Time
+}
+
+// siteTunnelOnlyFor is how long a tunnel site skips direct and smart after
+// an early stall on one of them: the stall repeats on every new connection.
+const siteTunnelOnlyFor = 24 * time.Hour
+
+// useTunnelOnly starts the tunnel-only period; it reports whether it was new.
+func (e *siteEntry) useTunnelOnly(now time.Time) bool {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	fresh := !now.Before(e.tunnelOnly)
+	e.tunnelOnly = now.Add(siteTunnelOnlyFor)
+	return fresh
+}
+
+func (e *siteEntry) tunnelOnlyNow(now time.Time) bool {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return now.Before(e.tunnelOnly)
 }
 
 // siteWinFor is how long the route (and exit) that last carried a site is
@@ -172,6 +194,9 @@ func (e *siteEntry) markBad(r Route, until time.Time) {
 	if e.win.route == r {
 		e.win = siteWin{}
 	}
+	if r == RouteTunnel {
+		e.tunnelOnly = time.Time{} // the tunnel fails too: back to every way
+	}
 	e.mu.Unlock()
 }
 
@@ -207,7 +232,7 @@ func (s *siteSet) resetMemory() {
 	}
 	for _, e := range s.entries {
 		e.mu.Lock()
-		e.win, e.bad, e.badStrategy = siteWin{}, [numRoutes]time.Time{}, nil
+		e.win, e.bad, e.badStrategy, e.tunnelOnly = siteWin{}, [numRoutes]time.Time{}, nil, time.Time{}
 		e.mu.Unlock()
 	}
 }
