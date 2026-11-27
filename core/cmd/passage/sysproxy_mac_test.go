@@ -215,3 +215,27 @@ func TestManagedProxyKeys(t *testing.T) {
 		}
 	}
 }
+
+// An address left unused by another Passage (another port) or another
+// program is not in use: it is replaced and put back exactly. Only an
+// enabled one refuses.
+func TestMacDisabledForeignAddressIsAllowedAndPutBack(t *testing.T) {
+	const other = "http://127.0.0.1:29033/proxy.pac"
+	f := macFake(proxyService{Name: "Wi-Fi", AutoConfigURL: other}, proxyService{Name: "Ethernet", AutoConfigURL: other})
+	b, err := enableSystemPAC(f, oursURL)
+	if err != nil || !f.st.anyOurs(oursURL) || b.Services[0].PrevURL != other {
+		t.Fatalf("%+v %v %+v", b, err, f.st.Services)
+	}
+	if _, err := restoreSystemPAC(f, b); err != nil {
+		t.Fatal(err)
+	}
+	want := []proxyService{{Name: "Wi-Fi", AutoConfigURL: other}, {Name: "Ethernet", AutoConfigURL: other}}
+	if !slices.Equal(f.st.Services, want) {
+		t.Fatalf("not put back as it was: %+v", f.st.Services)
+	}
+
+	f = macFake(proxyService{Name: "Wi-Fi", AutoConfigURL: other, AutoConfigOn: true}, proxyService{Name: "Ethernet"})
+	if _, err := enableSystemPAC(f, oursURL); !errors.Is(err, errSysForeignPAC) || len(f.writes) != 0 {
+		t.Fatalf("an address in use was not refused: %v %v", err, f.writes)
+	}
+}
