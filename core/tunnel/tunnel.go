@@ -254,13 +254,15 @@ type Tunnel struct {
 	downBytes [numRoutes]atomic.Int64
 
 	// Browser listener (browser.go).
-	sites       *siteSet
-	browserLn   net.Listener
-	pac         []byte
-	browserOpen atomic.Int64 // browser sockets, handshake included
-	siteOpen    atomic.Int64
-	siteRemotes map[net.Conn]struct{} // guarded by mu
-	siteTotal   atomic.Int64
+	sites        *siteSet
+	browserLn    net.Listener
+	pac          []byte
+	browserOpen  atomic.Int64 // browser sockets, handshake included
+	siteOpen     atomic.Int64
+	siteRemotes  map[net.Conn]struct{} // guarded by mu
+	siteDiagLog  *siteLog
+	siteDiagOnce sync.Once
+	siteTotal    atomic.Int64
 }
 
 type tracked struct {

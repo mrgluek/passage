@@ -337,7 +337,7 @@ func TestSiteNamesAreMaskedInLogs(t *testing.T) {
 		if strings.Contains(e.Msg, "private-site") {
 			t.Fatalf("site name in log: %s", e.Msg)
 		}
-		found = found || strings.Contains(e.Msg, "site dial failed")
+		found = found || strings.Contains(e.Msg, "failed: ")
 	}
 	if !found {
 		t.Fatal("failure not logged")

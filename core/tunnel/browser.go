@@ -74,8 +74,9 @@ func (t *Tunnel) startBrowser() {
 	t.browserLn = ln
 	t.pac = buildPAC(t.sites.hosts, ln.Addr().(*net.TCPAddr).Port)
 	t.log.add("browser listener started: %d sites", len(t.sites.hosts))
-	t.wg.Add(1)
+	t.wg.Add(2)
 	go t.serveBrowser(ln)
+	go t.siteSummaryLoop()
 }
 
 // BrowserAddr is the browser listener's address, empty when it is off.
@@ -176,12 +177,16 @@ func (t *Tunnel) browserHTTP(c net.Conn, br *bufio.Reader) {
 func (t *Tunnel) browserSOCKS(c bufferedConn) {
 	addr, err := socksHandshake(c, "", "")
 	if err != nil {
+		if strings.HasPrefix(err.Error(), "unsupported ") {
+			t.siteSocksError(repCmdUnsupported, "bad request")
+		}
 		return
 	}
 	host, _, _ := net.SplitHostPort(addr)
 	entry := t.sites.match(host)
 	if entry == nil || net.ParseIP(host) != nil {
 		socksReply(c, repNotAllowed)
+		t.siteSocksError(repNotAllowed, "host not listed")
 		return
 	}
 	c.SetDeadline(time.Time{})
@@ -191,12 +196,15 @@ func (t *Tunnel) browserSOCKS(c bufferedConn) {
 // connectSite carries one browser connection. It keeps its own counters and
 // per-site route memory; it never reaches the groups, probes or stall statistics.
 func (t *Tunnel) connectSite(c bufferedConn, entry *siteEntry, host, addr string) {
-	remote, route, err := t.dialSite(entry, addr)
+	started := t.timeNow()
+	remote, route, tried, err := t.dialSite(entry, addr)
 	if err != nil {
-		t.log.add("site dial failed: %s", maskSite(err.Error(), host))
+		t.siteFailed(entry, host, siteFailStage(err), tried, t.timeNow().Sub(started))
 		socksReply(c, repHostUnreachable)
+		t.siteSocksError(repHostUnreachable, "host unreachable")
 		return
 	}
+	t.siteSucceeded()
 	defer remote.Close()
 	// Close drops the remote side too: a direct server may ignore a half-close.
 	t.mu.Lock()
@@ -223,7 +231,7 @@ func (t *Tunnel) connectSite(c bufferedConn, entry *siteEntry, host, addr string
 	watched := watchResponsesKeep(remote, func() { entry.clear(route) }, func(first bool) {
 		if first {
 			entry.markBad(route, t.timeNow().Add(siteBadFor))
-			t.log.add("site: no reply on %s, trying another route next time", route)
+			t.siteFailed(entry, host, "no reply", []Route{route}, t.timeNow().Sub(started))
 		}
 		c.Close()
 	}, func() bool { return true })
@@ -239,7 +247,7 @@ func (t *Tunnel) connectSite(c bufferedConn, entry *siteEntry, host, addr string
 // dialSite tries the routes the site's kind allows: those that have not
 // failed lately first, the others last. A refused destination is not a failure
 // of the route.
-func (t *Tunnel) dialSite(entry *siteEntry, addr string) (net.Conn, Route, error) {
+func (t *Tunnel) dialSite(entry *siteEntry, addr string) (net.Conn, Route, []Route, error) {
 	t.mu.Lock()
 	ways := t.ways
 	t.mu.Unlock()
@@ -260,7 +268,9 @@ func (t *Tunnel) dialSite(entry *siteEntry, addr string) (net.Conn, Route, error
 		}
 	}
 	var last error
+	var tried []Route
 	for _, r := range append(good, late...) {
+		tried = append(tried, r)
 		ctx, cancel := context.WithTimeout(t.ctx, ways[r].timeout)
 		dial := ways[r].dial
 		if pool, ok := t.client.(*routePool); ok && r == RouteTunnel {
@@ -269,7 +279,7 @@ func (t *Tunnel) dialSite(entry *siteEntry, addr string) (net.Conn, Route, error
 		c, err := dial(ctx, "tcp", addr)
 		cancel()
 		if err == nil {
-			return c, r, nil
+			return c, r, tried, nil
 		}
 		last = err
 		if !errors.Is(err, errDestinationRefused) && t.ctx.Err() == nil {
@@ -279,15 +289,7 @@ func (t *Tunnel) dialSite(entry *siteEntry, addr string) (net.Conn, Route, error
 	if last == nil {
 		last = errors.New("no route available")
 	}
-	return nil, RouteDirect, last
-}
-
-// maskSite removes a site's name from text before it reaches the logs.
-func maskSite(text, host string) string {
-	for _, h := range []string{host, strings.ToLower(host), strings.ToUpper(host)} {
-		text = strings.ReplaceAll(text, h, "<site>")
-	}
-	return text
+	return nil, RouteDirect, tried, last
 }
 
 // browserStatus is nil while the listener is off.
