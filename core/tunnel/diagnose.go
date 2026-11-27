@@ -23,7 +23,7 @@ type Diagnosis struct {
 // DiagRow is one target's results, in the order of Diagnosis.Ways.
 type DiagRow struct {
 	Target  string       `json:"target"`
-	Kind    string       `json:"kind"` // relay, canary or telegram
+	Kind    string       `json:"kind"` // relay, canary, reference, telegram or site
 	Results []DiagResult `json:"results"`
 }
 
@@ -42,7 +42,10 @@ var diagTelegramDCs = []string{telegramDCs[1], telegramDCs[3]}
 // directly, with each smart strategy and through the tunnel, all at once.
 // It is the user's own test, so it runs whether or not a route needs it.
 func (t *Tunnel) Diagnose(ctx context.Context) Diagnosis {
-	type target struct{ addr, kind string }
+	type target struct {
+		addr, kind string
+		site       *siteEntry // a listed site: addr is its label, the name stays here
+	}
 	ipv6 := t.hasIPv6Route()
 	t.mu.Lock()
 	var targets []target
@@ -53,17 +56,21 @@ func (t *Tunnel) Diagnose(ctx context.Context) Diagnosis {
 	sort.Strings(names)
 	for _, n := range names {
 		for _, hp := range t.targetsLocked(t.relays[n]) {
-			targets = append(targets, target{hp, "relay"})
+			targets = append(targets, target{addr: hp, kind: "relay"})
 		}
 	}
 	for _, c := range t.cfg.Canaries {
-		targets = append(targets, target{c, "canary"})
+		targets = append(targets, target{addr: c, kind: "canary"})
 	}
 	for _, r := range t.cfg.References {
-		targets = append(targets, target{r, "reference"})
+		targets = append(targets, target{addr: r, kind: "reference"})
 	}
 	for _, dc := range diagTelegramDCs {
-		targets = append(targets, target{dc, "telegram"})
+		targets = append(targets, target{addr: dc, kind: "telegram"})
+	}
+	for _, e := range t.diagSitesLocked() {
+		label := t.siteDiag().mask(e.name) + " (" + viaName(e.tunnel) + ")"
+		targets = append(targets, target{addr: label, kind: "site", site: e})
 	}
 	strategies := t.strategies
 	var tunnels []tunnelWay
@@ -106,6 +113,10 @@ func (t *Tunnel) Diagnose(ctx context.Context) Diagnosis {
 				}
 				d.Rows[i].Results[col] = r
 			}()
+		}
+		if tg.site != nil {
+			t.diagSite(d.Rows[i].Results, tg.site, strategies, tunnels, tunnelCol, direct, via, check)
+			continue
 		}
 		host, _, _ := net.SplitHostPort(tg.addr)
 		telegram := tg.kind == "telegram"
@@ -163,6 +174,8 @@ func dataTargets(rows []DiagRow) []dataTarget {
 	for _, r := range rows {
 		_, port, _ := net.SplitHostPort(r.Target)
 		switch {
+		case r.Kind == "site":
+			// Not an address; the data stage never fetches from a listed site.
 		case r.Kind == "telegram":
 			telegram = append(telegram, dataTarget{r.Target, true})
 		case port == "443":
@@ -200,4 +213,67 @@ func shortError(err error) string {
 		s = s[:40]
 	}
 	return s
+}
+
+// diagSitesLocked picks one host per listed site group, the group's first,
+// so the test stays short however long the list is.
+func (t *Tunnel) diagSitesLocked() []*siteEntry {
+	if t.sites == nil {
+		return nil
+	}
+	var out []*siteEntry
+	for _, g := range t.cfg.SiteGroups() {
+		if len(g.Hosts) == 0 {
+			continue
+		}
+		if e := t.sites.entries[g.Hosts[0]]; e != nil {
+			out = append(out, e)
+		}
+	}
+	return out
+}
+
+// diagSite checks a listed site on the ways its kind allows: the name is
+// resolved as site connections resolve it (DoT for direct and smart; the
+// exit resolves on the tunnel).
+func (t *Tunnel) diagSite(res []DiagResult, e *siteEntry, strategies []strategy, tunnels []tunnelWay, tunnelCol int,
+	direct func(context.Context, string, string) error, via func(context.Context, dialFunc, string, string) error,
+	check func(int, time.Duration, func(context.Context) error)) {
+	host := e.name
+	resolve := func(c context.Context) (string, error) {
+		addrs, err := t.siteResolver().lookup(c, host, !e.tunnel)
+		if err != nil {
+			return "", err
+		}
+		addrs = addrsIPv4First(addrs)
+		if len(addrs) == 0 {
+			return "", errors.New("no addresses")
+		}
+		return net.JoinHostPort(addrs[0], "443"), nil
+	}
+	check(0, probeTimeout, func(c context.Context) error {
+		addr, err := resolve(c)
+		if err != nil {
+			return err
+		}
+		return direct(c, addr, host)
+	})
+	for j, s := range strategies {
+		check(1+j, probeTimeout, func(c context.Context) error {
+			addr, err := resolve(c)
+			if err != nil {
+				return err
+			}
+			return via(c, s.dial, addr, host)
+		})
+	}
+	for k, w := range tunnels {
+		if !e.tunnel {
+			res[tunnelCol+k] = DiagResult{Skip: true}
+			continue
+		}
+		check(tunnelCol+k, 15*time.Second, func(c context.Context) error {
+			return probeTLSVia(c, w.dial, net.JoinHostPort(host, "443"), host)
+		})
+	}
 }
