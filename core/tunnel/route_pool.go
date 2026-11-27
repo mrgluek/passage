@@ -784,18 +784,20 @@ func (c *irohClient) dialContext(ctx context.Context, n, a string, mode irohDial
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if c.generation == generation && c.dial != nil && !c.closed {
-		// A network test dial is a check, not traffic: its outcome neither
-		// marks the route up or down nor clears the real failures.
-		if mode != irohDiagnosis {
+		// A network test dial is a check, not traffic, and a site dial for a
+		// browser stays with that connection: their outcome neither marks
+		// the route up or down nor counts toward a restart.
+		counts := mode != irohDiagnosis && ctx.Value(quietDialKey{}) == nil
+		if counts {
 			c.ready.Store(err == nil)
 		}
 		restart := false
 		now := c.clock()
 		if err == nil {
-			if mode != irohDiagnosis {
+			if counts {
 				c.failures = 0
 			}
-		} else if mode != irohDiagnosis && !errors.Is(err, errDestinationRefused) && !errors.Is(err, context.Canceled) {
+		} else if counts && !errors.Is(err, errDestinationRefused) && !errors.Is(err, context.Canceled) {
 			c.failures++
 			c.restarts = slices.DeleteFunc(c.restarts, func(at time.Time) bool { return now.Sub(at) >= irohRestartWindow })
 			restart = c.failures >= 3 && len(c.restarts) < irohRestartBudget && (c.lastRestart.IsZero() || now.Sub(c.lastRestart) >= 5*time.Minute)
