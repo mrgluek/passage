@@ -148,7 +148,7 @@ func RestoreSubscriptionState(cfg Config, path string) (Config, error) {
 			saved.Name, saved.Sources, saved.ReadKey = sub.Name, sources, slices.Clone(sub.ReadKey)
 			saved.InviteSources = slices.Clone(sub.originalSources())
 			if !trusted {
-				saved.BundleSources, saved.Canaries, saved.References, saved.RefsCleared = nil, nil, nil, false
+				saved.BundleSources, saved.Canaries, saved.References, saved.RefsCleared, saved.Sites = nil, nil, nil, false, nil
 			}
 			saved.SourceStats = saved.retainedSourceStats()
 			cfg.Subscriptions[j] = saved

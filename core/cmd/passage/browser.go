@@ -157,6 +157,7 @@ func (a *App) recoverSystemPACLocked() {
 		st, err := a.sysProxy.Read()
 		if err == nil && st.AutoConfigURL != s.SysBackup.Ours {
 			s.SysBackup = sysBackup{} // changed meanwhile: not ours to restore
+			s.SystemPAC = false       // and the wish no longer matches the system
 			a.saveSettings()
 		}
 	case s.SystemPAC:

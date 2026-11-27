@@ -259,6 +259,7 @@ type Tunnel struct {
 	pac         []byte
 	browserOpen atomic.Int64 // browser sockets, handshake included
 	siteOpen    atomic.Int64
+	siteRemotes map[net.Conn]struct{} // guarded by mu
 	siteTotal   atomic.Int64
 }
 
@@ -349,6 +350,8 @@ func Start(cfg Config) (*Tunnel, error) {
 		mode:   mode,
 		conns:  map[*tracked]struct{}{},
 		relays: map[string]*group{},
+
+		siteRemotes: map[net.Conn]struct{}{},
 	}
 	t.log.now = t.timeNow
 	t.telegram = t.newGroup("telegram", kindTelegram, initialRoute(mode))
@@ -733,6 +736,9 @@ func (t *Tunnel) Close() {
 	var all []*tracked
 	for c := range t.conns {
 		all = append(all, c)
+	}
+	for c := range t.siteRemotes {
+		locals = append(locals, c)
 	}
 	t.mu.Unlock()
 	for _, c := range locals {

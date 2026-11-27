@@ -331,6 +331,7 @@ func SubscribeLink(cfg Config, text string, replaceSigner bool) (ImportResult, e
 				sub.Canaries = slices.Clone(old.Canaries)
 				sub.References = slices.Clone(old.References)
 				sub.RefsCleared = old.RefsCleared
+				sub.Sites = slices.Clone(old.Sites)
 				sub.Sources = mergeSubscriptionSources(sub.BundleSources, sub.InviteSources)
 			}
 			if slices.Equal(sub.Sources, old.Sources) && bytes.Equal(sub.ReadKey, old.ReadKey) {

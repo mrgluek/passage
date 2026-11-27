@@ -374,3 +374,41 @@ func TestSiteGroupsMergeAndDeduplicate(t *testing.T) {
 		t.Fatalf("got %v want %v", got, want)
 	}
 }
+
+func TestSiteModesChooseTheRoute(t *testing.T) {
+	var d, tu atomic.Int32
+	tt := newBrowserTunnel(t, testSites, echoDialer("d:", &d), echoDialer("t:", &tu))
+	tt.mode = ModeAlways
+	c, rep := browserSocks(t, tt, "example.net", nil)
+	if rep != 0 || roundTrip(t, c) != "t:hi" || d.Load() != 0 {
+		t.Fatalf("always: reply %d, direct calls %d", rep, d.Load())
+	}
+	tt.mode = ModeOff
+	c, rep = browserSocks(t, tt, "example.net", nil)
+	if rep != 0 || roundTrip(t, c) != "d:hi" {
+		t.Fatalf("off: reply %d", rep)
+	}
+}
+
+// Close must not wait for a direct server that ignores the half-close.
+func TestCloseDropsOpenSiteConnections(t *testing.T) {
+	hold := func(context.Context, string, string) (net.Conn, error) {
+		a, b := net.Pipe()
+		go io.Copy(io.Discard, b) // never closes
+		return a, nil
+	}
+	var calls atomic.Int32
+	tt := newBrowserTunnel(t, testSites, hold, echoDialer("t:", &calls))
+	c, rep := browserSocks(t, tt, "example.org", nil)
+	if rep != 0 {
+		t.Fatal(rep)
+	}
+	c.Close()
+	done := make(chan struct{})
+	go func() { tt.Close(); close(done) }()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("Close hangs on a site connection")
+	}
+}

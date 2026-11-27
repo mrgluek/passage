@@ -57,8 +57,8 @@ func (t *Tunnel) startBrowser() {
 		return
 	}
 	host, _, err := net.SplitHostPort(t.cfg.BrowserListen)
-	if ip := net.ParseIP(host); err != nil || ip == nil || !ip.IsLoopback() {
-		t.log.add("browser listener: the address must be a loopback IP and port")
+	if ip := net.ParseIP(host); err != nil || ip == nil || !ip.Equal(net.IPv4(127, 0, 0, 1)) {
+		t.log.add("browser listener: the address must be 127.0.0.1 and a port")
 		return
 	}
 	ln, err := net.Listen("tcp", t.cfg.BrowserListen)
@@ -198,6 +198,22 @@ func (t *Tunnel) connectSite(c bufferedConn, entry *siteEntry, host, addr string
 		return
 	}
 	defer remote.Close()
+	// Close drops the remote side too: a direct server may ignore a half-close.
+	t.mu.Lock()
+	if t.ctx.Err() != nil {
+		t.mu.Unlock()
+		return
+	}
+	if t.siteRemotes == nil {
+		t.siteRemotes = map[net.Conn]struct{}{}
+	}
+	t.siteRemotes[remote] = struct{}{}
+	t.mu.Unlock()
+	defer func() {
+		t.mu.Lock()
+		delete(t.siteRemotes, remote)
+		t.mu.Unlock()
+	}()
 	if err := socksReply(c, repSucceeded); err != nil {
 		return
 	}
@@ -229,8 +245,12 @@ func (t *Tunnel) dialSite(entry *siteEntry, addr string) (net.Conn, Route, error
 	t.mu.Unlock()
 	now := t.timeNow()
 	var good, late []Route
+	mode := t.mode
 	for _, r := range []Route{RouteDirect, RouteSmart, RouteTunnel} {
-		if ways[r].dial == nil || r == RouteTunnel && !entry.tunnel {
+		switch {
+		case ways[r].dial == nil,
+			r == RouteTunnel && (!entry.tunnel || mode == ModeOff),
+			r != RouteTunnel && entry.tunnel && mode == ModeAlways: // the chosen route only
 			continue
 		}
 		if entry.badUntil(r).After(now) {
@@ -242,7 +262,11 @@ func (t *Tunnel) dialSite(entry *siteEntry, addr string) (net.Conn, Route, error
 	var last error
 	for _, r := range append(good, late...) {
 		ctx, cancel := context.WithTimeout(t.ctx, ways[r].timeout)
-		c, err := ways[r].dial(ctx, "tcp", addr)
+		dial := ways[r].dial
+		if pool, ok := t.client.(*routePool); ok && r == RouteTunnel {
+			dial = pool.maintenanceDialContext // no route statistics for browser traffic
+		}
+		c, err := dial(ctx, "tcp", addr)
 		cancel()
 		if err == nil {
 			return c, r, nil

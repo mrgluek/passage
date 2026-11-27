@@ -31,6 +31,8 @@ func (registryProxy) Read() (proxyState, error) {
 	st.AutoConfigURL, _, _ = k.GetStringValue("AutoConfigURL")
 	if n, _, err := k.GetIntegerValue("ProxyEnable"); err == nil {
 		st.ProxyEnable = n != 0
+	} else if v, _, err := k.GetStringValue("ProxyEnable"); err == nil {
+		st.ProxyEnable = v != "" && v != "0"
 	}
 	st.ProxyServer, _, _ = k.GetStringValue("ProxyServer")
 	if n, _, err := k.GetIntegerValue("AutoDetect"); err == nil {

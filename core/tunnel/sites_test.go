@@ -48,3 +48,17 @@ func TestSchemaBumpAppliesSitesToTheSameRevision(t *testing.T) {
 		t.Fatal("schema not bumped")
 	}
 }
+
+func TestResubscribeKeepsSites(t *testing.T) {
+	sub, key, bundle := subFixture(t)
+	trustSubscription(t, sub)
+	bundle.Sites = []links.SiteGroup{{Via: "smart", Hosts: []string{"example.org"}}}
+	cfg, err := ApplySubFile(Config{Subscriptions: []Subscription{sub}}, sub, bundle)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := SubscribeLink(cfg, subInvite(t, sub, key, nil), false)
+	if err != nil || fmtSites(result.Config.SiteGroups()) != "[{smart [example.org]}]" {
+		t.Fatalf("sites lost on re-subscribe: %v %v", result.Config.SiteGroups(), err)
+	}
+}
