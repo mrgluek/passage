@@ -1,6 +1,9 @@
 package main
 
-import "errors"
+import (
+	"errors"
+	"strings"
+)
 
 // systemProxy is the part of the system's proxy settings Passage may touch:
 // the auto-config address. Windows keeps it in the registry; the state
@@ -20,8 +23,8 @@ type proxyState struct {
 	ProxyEnable   bool
 	ProxyServer   string
 	AutoDetect    bool
-	// Policy is set when a group policy manages the proxy settings.
-	Policy bool
+	// Policy names the policy value that manages the proxy settings; empty when none does.
+	Policy string
 }
 
 // sysBackup is saved in passage.ini while the address is ours, so a crash
@@ -53,8 +56,8 @@ func enableSystemPAC(sp systemProxy, url string) (sysBackup, error) {
 		return sysBackup{}, err
 	}
 	switch {
-	case st.Policy:
-		return sysBackup{}, errSysPolicy
+	case st.Policy != "":
+		return sysBackup{}, &policyError{st.Policy}
 	case st.AutoConfigURL != "" && st.AutoConfigURL != url:
 		return sysBackup{}, errSysForeignPAC
 	case st.ProxyEnable:
@@ -87,4 +90,39 @@ func restoreSystemPAC(sp systemProxy, b sysBackup) (bool, error) {
 		return false, nil
 	}
 	return true, sp.SetAutoConfig(b.PrevURL)
+}
+
+// policyError is errSysPolicy with the name of the value that blocks.
+type policyError struct{ Name string }
+
+func (e *policyError) Error() string { return errSysPolicy.Error() + " (" + e.Name + ")" }
+func (e *policyError) Unwrap() error { return errSysPolicy }
+
+// Policy keys, below HKCU and HKLM.
+const (
+	policyInternetSettings = `Software\Policies\Microsoft\Windows\CurrentVersion\Internet Settings`
+	policyControlPanel     = `Software\Policies\Microsoft\Internet Explorer\Control Panel`
+)
+
+// policyBlocks decides whether one policy value takes the proxy settings away
+// from the user. root is "HKCU" or "HKLM"; dword is meaningful when isDWORD.
+// Everything not listed here (CallLegacyWCMPolicies, SecureProtocols, ...)
+// has nothing to do with proxies.
+func policyBlocks(root, path, name string, dword uint32, isDWORD bool) bool {
+	switch {
+	case strings.EqualFold(path, policyInternetSettings):
+		switch strings.ToLower(name) {
+		case "autoconfigurl", "proxyenable", "proxyserver", "proxyoverride", "autodetect":
+			return true
+		case "proxysettingsperuser":
+			// 0 makes the proxy machine-wide; 1 is the normal per-user setting.
+			return root == "HKLM" && isDWORD && dword == 0
+		}
+	case strings.EqualFold(path, policyControlPanel):
+		switch strings.ToLower(name) {
+		case "proxy", "autoconfig":
+			return isDWORD && dword != 0 // locks the proxy settings page
+		}
+	}
+	return false
 }

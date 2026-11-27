@@ -69,8 +69,8 @@ func (a *App) browserViewLocked() browserView {
 	v.On = a.settings.SysBackup.Active
 	if a.sysNotice != "" {
 		v.Notice = a.t.f(a.sysNotice)
-		if a.sysNotice == "browser_refuse_error" {
-			v.Notice = a.t.f("browser_refuse_error", a.sysError)
+		if a.sysNotice == "browser_refuse_error" || a.sysNotice == "browser_refuse_policy" {
+			v.Notice = a.t.f(a.sysNotice, a.sysError)
 		}
 	}
 	return v
@@ -89,6 +89,15 @@ func noticeKey(err error) string {
 	return "browser_refuse_error"
 }
 
+// noticeArg is the detail a refusal text shows: the policy value's name, else the error.
+func noticeArg(err error) string {
+	var pe *policyError
+	if errors.As(err, &pe) {
+		return pe.Name
+	}
+	return err.Error()
+}
+
 // setSystemPAC turns the system switch on or off. A refusal leaves the
 // system alone and is shown in the window; it is not an error of the call.
 func (a *App) setSystemPAC(on bool) error {
@@ -104,7 +113,7 @@ func (a *App) setSystemPAC(on bool) error {
 		a.ensureBrowserPortLocked()
 		b, err := enableSystemPAC(a.sysProxy, a.pacURLLocked())
 		if err != nil {
-			a.sysNotice, a.sysError = noticeKey(err), err.Error()
+			a.sysNotice, a.sysError = noticeKey(err), noticeArg(err)
 			a.event("system proxy: not changed (%s)", a.sysNotice)
 			return nil
 		}
@@ -165,7 +174,7 @@ func (a *App) recoverSystemPACLocked() {
 		b, err := enableSystemPAC(a.sysProxy, a.pacURLLocked())
 		if err != nil {
 			s.SystemPAC = false
-			a.sysNotice, a.sysError = noticeKey(err), err.Error()
+			a.sysNotice, a.sysError = noticeKey(err), noticeArg(err)
 			a.event("system proxy: not set at start (%s)", a.sysNotice)
 		} else {
 			s.SysBackup = b

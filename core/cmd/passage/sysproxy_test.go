@@ -49,7 +49,7 @@ func TestEnableRefusesForeignSettings(t *testing.T) {
 	}{
 		"foreign PAC": {proxyState{AutoConfigURL: "http://example.org/other.pac"}, errSysForeignPAC},
 		"manual":      {proxyState{ProxyEnable: true, ProxyServer: "example.org:3128"}, errSysManualProxy},
-		"policy":      {proxyState{Policy: true}, errSysPolicy},
+		"policy":      {proxyState{Policy: "ProxyServer"}, errSysPolicy},
 	} {
 		f := &fakeProxy{st: tc.st}
 		if _, err := enableSystemPAC(f, oursURL); !errors.Is(err, tc.want) {
@@ -303,5 +303,52 @@ func TestBrowserStringsInBothLanguages(t *testing.T) {
 				t.Errorf("%s %s missing", lang, k)
 			}
 		}
+	}
+}
+
+func TestPolicyBlocksOnlyProxyPolicies(t *testing.T) {
+	const is, cp = policyInternetSettings, policyControlPanel
+	for _, tc := range []struct {
+		root, path, name string
+		dword            uint32
+		isDWORD, want    bool
+	}{
+		// The stock value found on a Windows Server: nothing to do with proxies.
+		{"HKLM", is, "CallLegacyWCMPolicies", 0, true, false},
+		{"HKCU", is, "SecureProtocols", 2048, true, false},
+		{"HKLM", is, "CertificateRevocation", 1, true, false},
+		{"HKLM", is, "EnableAutoProxyResultCache", 0, true, false},
+		{"HKCU", is, "AutoConfigURL", 0, false, true},
+		{"HKLM", is, "autoconfigurl", 0, false, true},
+		{"HKCU", is, "ProxyEnable", 1, true, true},
+		{"HKLM", is, "ProxyServer", 0, false, true},
+		{"HKLM", is, "ProxyOverride", 0, false, true},
+		{"HKCU", is, "AutoDetect", 0, true, true},
+		{"HKLM", is, "ProxySettingsPerUser", 1, true, false},
+		{"HKLM", is, "ProxySettingsPerUser", 0, true, true},
+		{"HKCU", is, "ProxySettingsPerUser", 0, true, false},
+		{"HKCU", cp, "Proxy", 1, true, true},
+		{"HKLM", cp, "Autoconfig", 1, true, true},
+		{"HKLM", cp, "Proxy", 0, true, false},
+		{"HKCU", cp, "Autoconfig", 0, true, false},
+		{"HKCU", cp, "HomePage", 1, true, false},
+		{"HKCU", `Software\Policies\Other`, "ProxyServer", 0, false, false},
+	} {
+		if got := policyBlocks(tc.root, tc.path, tc.name, tc.dword, tc.isDWORD); got != tc.want {
+			t.Errorf("%s %s %s=%d: %v, want %v", tc.root, tc.path, tc.name, tc.dword, got, tc.want)
+		}
+	}
+}
+
+func TestPolicyRefusalNamesTheValue(t *testing.T) {
+	f := &fakeProxy{st: proxyState{Policy: "ProxyServer"}}
+	_, err := enableSystemPAC(f, oursURL)
+	if !errors.Is(err, errSysPolicy) || noticeArg(err) != "ProxyServer" {
+		t.Fatal(err)
+	}
+	a, _ := browserApp(t, f, true)
+	a.setSystemPAC(true)
+	if n := a.view().Browser.Notice; !strings.Contains(n, "ProxyServer") {
+		t.Fatalf("notice %q", n)
 	}
 }

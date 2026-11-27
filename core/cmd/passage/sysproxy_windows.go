@@ -11,7 +11,6 @@ import (
 
 const (
 	internetSettingsKey = `Software\Microsoft\Windows\CurrentVersion\Internet Settings`
-	policyKey           = `Software\Policies\Microsoft\Windows\CurrentVersion\Internet Settings`
 
 	internetOptionSettingsChanged = 39
 	internetOptionRefresh         = 37
@@ -42,21 +41,31 @@ func (registryProxy) Read() (proxyState, error) {
 	return st, nil
 }
 
-func policyPresent() bool {
-	for _, root := range []registry.Key{registry.CURRENT_USER, registry.LOCAL_MACHINE} {
-		for _, path := range []string{policyKey} {
-			k, err := registry.OpenKey(root, path, registry.QUERY_VALUE)
+// policyPresent returns the name of the first policy value that manages the
+// proxy, or "". The decision is policyBlocks; this only reads the values.
+func policyPresent() string {
+	roots := []struct {
+		name string
+		key  registry.Key
+	}{{"HKCU", registry.CURRENT_USER}, {"HKLM", registry.LOCAL_MACHINE}}
+	for _, root := range roots {
+		for _, path := range []string{policyInternetSettings, policyControlPanel} {
+			k, err := registry.OpenKey(root.key, path, registry.QUERY_VALUE)
 			if err != nil {
 				continue
 			}
 			names, _ := k.ReadValueNames(-1)
-			k.Close()
-			if len(names) > 0 {
-				return true
+			for _, name := range names {
+				n, _, err := k.GetIntegerValue(name)
+				if policyBlocks(root.name, path, name, uint32(n), err == nil) {
+					k.Close()
+					return name
+				}
 			}
+			k.Close()
 		}
 	}
-	return false
+	return ""
 }
 
 func (registryProxy) SetAutoConfig(url string) error {
