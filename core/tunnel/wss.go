@@ -249,15 +249,19 @@ func (c *WSSClient) dialSession(ctx context.Context) (*wssSession, error) {
 	for {
 		var addr string
 		attempt, cancel := ctx, context.CancelFunc(func() {})
+		heard := c.received()
 		if c.pin != nil {
 			addr = c.pin.current()
 			if c.pin.canMove() {
-				attempt, cancel = context.WithTimeout(ctx, pinnedAttemptLimit)
+				attempt, cancel = attemptContext(ctx)
 			}
 		}
 		s, err := c.dialWSSSession(attempt)
 		timedOut := attempt.Err() != nil
 		cancel()
+		if err != nil && timedOut && c.received() > heard {
+			return s, err // other sessions are still receiving: the address serves, the path is slow
+		}
 		if err == nil || err != errWSSFailed && !timedOut || c.pin == nil || ctx.Err() != nil || !c.pin.next(ctx, addr) {
 			return s, err
 		}

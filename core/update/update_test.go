@@ -397,10 +397,10 @@ func TestDownloadCancelDuringRetryReportsCancel(t *testing.T) {
 	var n atomic.Int32
 	trip := func(h http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
-			if n.Add(1) == 2 {
-				cancel()
-			}
 			h.ServeHTTP(w, req)
+			if n.Add(1) == 1 {
+				cancel() // after the first source served its wrong bytes in full
+			}
 		})
 	}
 	r.offer.Sources = []string{serve(t, bad, trip), serve(t, bad, trip), serve(t, bad, trip)}

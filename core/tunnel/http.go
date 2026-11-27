@@ -112,7 +112,7 @@ func (c *WSSClient) dialHTTPSession(ctx context.Context) (*wssSession, error) {
 		if c.pin != nil {
 			addr = c.pin.current()
 			if c.pin.canMove() {
-				attempt, cancel = context.WithTimeout(ctx, pinnedAttemptLimit)
+				attempt, cancel = attemptContext(ctx)
 			}
 		}
 		s, err := c.openHTTPSession(attempt)

@@ -367,7 +367,11 @@ func (c *Client) Download(ctx context.Context, offer *Offer, dest string, progre
 			}
 		}
 		for _, source := range offer.Sources {
-			if bad[source] || ctx.Err() != nil {
+			if ctx.Err() != nil {
+				err = ctx.Err()
+				break
+			}
+			if bad[source] {
 				continue
 			}
 			if rerr := restart(); rerr != nil {

@@ -80,11 +80,46 @@ func newPinnedAddr(pinned, host string) *pinnedAddr {
 
 func (p *pinnedAddr) current() string {
 	p.mu.Lock()
-	defer p.mu.Unlock()
+	var stale map[*pinConn]struct{}
 	if p.idx != 0 && p.now().Sub(p.since) >= pinnedReturn {
 		p.idx = 0
+		stale = p.takeOthersLocked()
 	}
-	return p.cands[p.idx]
+	addr := p.cands[p.idx]
+	p.mu.Unlock()
+	closeAll(stale)
+	return addr
+}
+
+// takeOthersLocked removes and returns the pooled connections to every
+// address but the current one, in HTTP mode, where a pooled connection is
+// reused whatever the dialed address is.
+func (p *pinnedAddr) takeOthersLocked() map[*pinConn]struct{} {
+	if !p.httpMode {
+		return nil
+	}
+	out := map[*pinConn]struct{}{}
+	for addr, conns := range p.live {
+		if addr == p.cands[p.idx] {
+			continue
+		}
+		for c := range conns {
+			out[c] = struct{}{}
+		}
+		delete(p.live, addr)
+	}
+	return out
+}
+
+// attemptContext bounds one attempt to open a session by pinnedAttemptLimit,
+// and by half of what is left of the caller's deadline, so that a retry
+// still has time.
+func attemptContext(ctx context.Context) (context.Context, context.CancelFunc) {
+	limit := pinnedAttemptLimit
+	if d, ok := ctx.Deadline(); ok {
+		limit = min(limit, time.Until(d)/2)
+	}
+	return context.WithTimeout(ctx, limit)
 }
 
 func (p *pinnedAddr) DialContext(ctx context.Context, network, address string) (net.Conn, error) {
@@ -158,16 +193,14 @@ func (p *pinnedAddr) next(ctx context.Context, failed string) bool {
 	}
 	if p.idx+1 >= len(cands) {
 		p.idx = 0
+		stale := p.takeOthersLocked()
 		p.mu.Unlock()
+		closeAll(stale)
 		return false
 	}
 	p.idx++
 	p.since = p.now()
-	var stale map[*pinConn]struct{}
-	if p.httpMode {
-		stale = p.live[failed]
-		delete(p.live, failed)
-	}
+	stale := p.takeOthersLocked()
 	p.mu.Unlock()
 	closeAll(stale)
 	return true
@@ -207,11 +240,10 @@ type lookupFunc = func(ctx context.Context, host string) ([]string, error)
 // builtinDoT answers when the resolver list has no DNS-over-TLS server.
 var builtinDoT = []string{"77.88.8.8:853", "77.88.8.1:853"}
 
-const maxDoTServers = 4
+const maxDoTServers = 2 // what pinnedDoTLimit allows at 1.5 s each
 
 // dotServers picks the DNS-over-TLS servers (port 853) from a resolver list,
-// in its order, so that the first lookup does not send the name in clear text
-// from the user's network.
+// in its order.
 func dotServers(resolvers []string) []string {
 	var out []string
 	for _, r := range resolvers {

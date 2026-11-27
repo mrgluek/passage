@@ -82,7 +82,7 @@ func TestNewRelayIsNotEvictedDuringFirstDial(t *testing.T) {
 	tt.mu.Lock()
 	for i := range maxRelayGroups + 1 {
 		g := tt.relayLocked("old" + string(rune('a'+i)) + ".example.org")
-		g.used = time.Now().Add(-time.Hour)
+		g.used = time.Now().Add(time.Hour) // newer than the group being dialed
 	}
 	_, kept := tt.relays["new.example.org"]
 	tt.mu.Unlock()

@@ -190,8 +190,8 @@ func TestPinnedLookupRefreshes(t *testing.T) {
 }
 
 func TestPinnedFallbackLooksUpEndpointHostWithSNI(t *testing.T) {
-	// The route's SNI is a front name; the endpoint host is what the CDN resolves.
-	c, err := NewHTTPClient(links.HTTPParams{Endpoint: "https://example.com/passage", Key: wssTestKey, DialIP: "192.0.2.1", SNI: "front.example.net"})
+	// The endpoint host is looked up even when TLS uses another name.
+	c, err := NewHTTPClient(links.HTTPParams{Endpoint: "https://example.com/passage", Key: wssTestKey, DialIP: "192.0.2.1", SNI: "sni.example.net"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -267,7 +267,7 @@ func TestLookupDoTFirst(t *testing.T) {
 func TestDoTServersFromResolverList(t *testing.T) {
 	list := []string{"192.0.2.53:53", "198.51.100.1:853", "77.88.8.8:853", "198.51.100.1:853", "203.0.113.7:853"}
 	got := dotServers(list)
-	want := []string{"198.51.100.1:853", "77.88.8.8:853", "203.0.113.7:853"}
+	want := []string{"198.51.100.1:853", "77.88.8.8:853"}
 	if !slices.Equal(got, want) {
 		t.Fatalf("got %v, want %v", got, want)
 	}
@@ -361,5 +361,40 @@ func TestPinnedCanMove(t *testing.T) {
 	}
 	if newPinnedAddr("192.0.2.1", "").canMove() || newPinnedAddr("192.0.2.1", "192.0.2.9").canMove() {
 		t.Fatal("no host name to look up")
+	}
+}
+
+func TestPinnedStallFallsBackInsideCallerDeadline(t *testing.T) {
+	// A route inside a pool gets a short deadline: the fallback must fit in it.
+	client, _, _ := pinnedFixture(t, func(w http.ResponseWriter, r *http.Request) { <-r.Context().Done() })
+	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Second)
+	defer cancel()
+	conn, err := client.DialContext(ctx, "tcp", "mail.example.org:443")
+	if err != nil {
+		t.Fatal(err)
+	}
+	conn.Close()
+}
+
+func TestPinnedReturnClosesConnectionsToTheFallback(t *testing.T) {
+	p := newPinnedAddr("192.0.2.1", "example.com")
+	p.httpMode = true
+	now := time.Unix(1000, 0)
+	p.now = func() time.Time { return now }
+	p.lookup = func(context.Context, string) ([]string, error) { return []string{"192.0.2.2"}, nil }
+	a, b := net.Pipe()
+	defer b.Close()
+	p.dial = func(context.Context, string, string) (net.Conn, error) { return a, nil }
+	p.next(context.Background(), "192.0.2.1") // moves to 192.0.2.2
+	if _, err := p.DialContext(context.Background(), "tcp", "example.com:443"); err != nil {
+		t.Fatal(err)
+	}
+	now = now.Add(pinnedReturn)
+	p.current() // back to the pinned address
+	p.mu.Lock()
+	n := len(p.live["192.0.2.2"])
+	p.mu.Unlock()
+	if n != 0 {
+		t.Fatalf("%d pooled connections to the fallback stay after the return", n)
 	}
 }
