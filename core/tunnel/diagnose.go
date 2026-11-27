@@ -18,6 +18,8 @@ type Diagnosis struct {
 	Rows   []DiagRow    `json:"rows"`
 	Routes []string     `json:"routes"` // set-up routes
 	Checks []RouteCheck `json:"checks,omitempty"`
+	// SitesNotTested counts listed sites beyond diagSiteRows.
+	SitesNotTested int `json:"sites_not_tested,omitempty"`
 }
 
 // DiagRow is one target's results, in the order of Diagnosis.Ways.
@@ -25,7 +27,16 @@ type DiagRow struct {
 	Target  string       `json:"target"`
 	Kind    string       `json:"kind"` // relay, canary, reference, telegram or site
 	Results []DiagResult `json:"results"`
+	// Site is a listed site's number (Target is then "site #N (via)"), Via
+	// its kind. Host is its name, for the user's own screen only: it never
+	// goes into JSON or a report.
+	Site int    `json:"site,omitempty"`
+	Via  string `json:"via,omitempty"`
+	Host string `json:"-"`
 }
+
+// diagSiteRows caps the listed sites a network test checks.
+const diagSiteRows = 16
 
 // DiagResult is one check: OK with the time it took, or the error.
 type DiagResult struct {
@@ -68,9 +79,13 @@ func (t *Tunnel) Diagnose(ctx context.Context) Diagnosis {
 	for _, dc := range diagTelegramDCs {
 		targets = append(targets, target{addr: dc, kind: "telegram"})
 	}
-	for _, e := range t.diagSitesLocked() {
-		label := t.siteDiag().mask(e.name) + " (" + viaName(e.tunnel) + ")"
-		targets = append(targets, target{addr: label, kind: "site", site: e})
+	sites := t.diagSitesLocked()
+	notTested := 0
+	if len(sites) > diagSiteRows {
+		sites, notTested = sites[:diagSiteRows], len(sites)-diagSiteRows
+	}
+	for _, e := range sites {
+		targets = append(targets, target{addr: e.label(), kind: "site", site: e})
 	}
 	strategies := t.strategies
 	var tunnels []tunnelWay
@@ -87,7 +102,7 @@ func (t *Tunnel) Diagnose(ctx context.Context) Diagnosis {
 	routes := t.routes()
 	t.mu.Unlock()
 
-	d := Diagnosis{Time: time.Now().UTC(), Ways: []string{"direct"}, Routes: routes}
+	d := Diagnosis{Time: time.Now().UTC(), Ways: []string{"direct"}, Routes: routes, SitesNotTested: notTested}
 	for _, s := range strategies {
 		d.Ways = append(d.Ways, s.name)
 	}
@@ -99,6 +114,9 @@ func (t *Tunnel) Diagnose(ctx context.Context) Diagnosis {
 	var wg sync.WaitGroup
 	for i, tg := range targets {
 		d.Rows[i] = DiagRow{Target: tg.addr, Kind: tg.kind, Results: make([]DiagResult, len(d.Ways))}
+		if tg.site != nil {
+			d.Rows[i].Site, d.Rows[i].Via, d.Rows[i].Host = tg.site.num, viaName(tg.site.tunnel), tg.site.name
+		}
 		check := func(col int, timeout time.Duration, f func(context.Context) error) {
 			wg.Add(1)
 			go func() {
@@ -215,21 +233,16 @@ func shortError(err error) string {
 	return s
 }
 
-// diagSitesLocked picks one host per listed site group, the group's first,
-// so the test stays short however long the list is.
+// diagSitesLocked lists every listed site in number order.
 func (t *Tunnel) diagSitesLocked() []*siteEntry {
 	if t.sites == nil {
 		return nil
 	}
-	var out []*siteEntry
-	for _, g := range t.cfg.SiteGroups() {
-		if len(g.Hosts) == 0 {
-			continue
-		}
-		if e := t.sites.entries[g.Hosts[0]]; e != nil {
-			out = append(out, e)
-		}
+	out := make([]*siteEntry, 0, len(t.sites.entries))
+	for _, e := range t.sites.entries {
+		out = append(out, e)
 	}
+	slices.SortFunc(out, func(a, b *siteEntry) int { return a.num - b.num })
 	return out
 }
 

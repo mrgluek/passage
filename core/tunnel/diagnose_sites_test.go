@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net"
 	"strings"
 	"sync"
@@ -46,7 +47,7 @@ func TestNetworkTestChecksListedSitesUnderLabels(t *testing.T) {
 		t.Fatalf("site names in the test result: %s", out)
 	}
 	for _, r := range sites {
-		if !strings.HasPrefix(r.Target, "site-") || !r.Results[0].OK {
+		if !strings.HasPrefix(r.Target, "site #") || r.Site == 0 || r.Host == "" || !r.Results[0].OK {
 			t.Fatalf("%+v", r)
 		}
 	}
@@ -65,8 +66,47 @@ func TestNetworkTestChecksListedSitesUnderLabels(t *testing.T) {
 	if !smart.Results[tunnelCol].Skip || tunnel.Results[tunnelCol].Skip || tunnelProbes.Load() != 1 {
 		t.Fatalf("smart %+v tunnel %+v probes %d", smart.Results, tunnel.Results, tunnelProbes.Load())
 	}
-	// The label matches the one in the site log lines of this run.
-	if !strings.HasPrefix(smart.Target, tt.siteDiag().mask("example.org")) {
-		t.Fatalf("%q", smart.Target)
+	// The number is the place in the list as subscribed: example.org first.
+	if smart.Target != "site #1 (smart)" || smart.Host != "example.org" || tunnel.Target != "site #2 (tunnel)" {
+		t.Fatalf("%q %q %q", smart.Target, smart.Host, tunnel.Target)
+	}
+}
+
+// Numbers follow the subscription's order, not the sorted list, and stay
+// the same for the same list.
+func TestSiteNumbersFollowTheSubscriptionOrder(t *testing.T) {
+	groups := []SiteGroup{{Via: "tunnel", Hosts: []string{"zeta.example.org", "alpha.example.org"}}, {Via: "smart", Hosts: []string{"mid.example.org", "alpha.example.org"}}}
+	for range 2 {
+		tt := newBrowserTunnel(t, groups, nil, nil)
+		for host, want := range map[string]string{"zeta.example.org": "site #1 (tunnel)", "alpha.example.org": "site #2 (tunnel)", "mid.example.org": "site #3 (smart)"} {
+			if got := tt.sites.match(host).label(); got != want {
+				t.Fatalf("%s: %q, want %q", host, got, want)
+			}
+		}
+	}
+}
+
+// Every listed site is tested, at most diagSiteRows of them; the rest is counted.
+func TestNetworkTestCapsTheSiteRows(t *testing.T) {
+	var hosts []string
+	for i := range diagSiteRows + 3 {
+		hosts = append(hosts, fmt.Sprintf("s%02d.example.org", i))
+	}
+	down := func(context.Context, string, string) (net.Conn, error) { return nil, errors.New("filtered") }
+	tt := newBrowserTunnel(t, []SiteGroup{{Via: "smart", Hosts: hosts}}, down, down)
+	tt.cfg.Canaries, tt.cfg.References = nil, nil
+	saved := diagTelegramDCs
+	diagTelegramDCs = nil
+	defer func() { diagTelegramDCs = saved }()
+	tt.probeTLS = func(context.Context, string, string) error { return nil }
+	d := tt.Diagnose(context.Background())
+	n := 0
+	for _, r := range d.Rows {
+		if r.Kind == "site" {
+			n++
+		}
+	}
+	if n != diagSiteRows || d.SitesNotTested != 3 {
+		t.Fatalf("%d rows, %d not tested", n, d.SitesNotTested)
 	}
 }

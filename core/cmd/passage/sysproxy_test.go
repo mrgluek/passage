@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -557,5 +558,34 @@ func TestBrowserSiteReplyCountsAsAppUse(t *testing.T) {
 	}
 	if !appUsed(tunnel.Status{Browser: &tunnel.BrowserStatus{Total: 33, LastOK: time.Now()}}) {
 		t.Fatal("answered site connections ignored")
+	}
+}
+
+// Listed sites: the report and the JSON name them by number, the user's own
+// details screen by name.
+func TestNetworkTestSitesByNumberInTheReportByNameLocally(t *testing.T) {
+	d := tunnel.Diagnosis{Time: time.Now(), Ways: []string{"direct"}, SitesNotTested: 2, Rows: []tunnel.DiagRow{
+		{Target: "site #1 (smart)", Kind: "site", Site: 1, Via: "smart", Host: "private-site.example.org", Results: []tunnel.DiagResult{{OK: true, MS: 5}}},
+	}}
+	en, ru := diagnosis(tr(table("en")), d), diagnosis(tr(table("ru")), d)
+	if strings.Contains(en+ru, "private-site") || !strings.Contains(en, "site #1 (smart)") || !strings.Contains(ru, "сайт #1 (smart)") || !strings.Contains(en, "2 more listed sites") {
+		t.Fatalf("report table:\n%s\n%s", en, ru)
+	}
+	if local := diagnosisLocal(tr(table("en")), d); !strings.Contains(local, "private-site.example.org") {
+		t.Fatal(local)
+	}
+	b, _ := json.Marshal(d)
+	if strings.Contains(string(b), "private-site") {
+		t.Fatalf("name in JSON: %s", b)
+	}
+	a, _ := browserApp(t, winFake(proxyService{}), true)
+	a.mu.Lock()
+	a.lastTest = d
+	a.mu.Unlock()
+	if v := a.view(); !strings.Contains(v.Full, "private-site.example.org") {
+		t.Fatal("details do not show the site by name")
+	}
+	if strings.Contains(a.report(), "private-site") {
+		t.Fatal("the shared report names the site")
 	}
 }

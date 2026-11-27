@@ -1,9 +1,6 @@
 package tunnel
 
 import (
-	"crypto/rand"
-	"crypto/sha256"
-	"encoding/hex"
 	"errors"
 	"strconv"
 	"strings"
@@ -20,10 +17,9 @@ const (
 
 // siteLog is the browser port's diagnostics: a rate-limited line per failed
 // connection and a summary per minute. Site names never appear: a host shows
-// as a short hash with a key that lives only as long as the process.
+// by its number in the merged list (see numberSites).
 type siteLog struct {
 	mu          sync.Mutex
-	salt        [16]byte
 	last        map[string]time.Time
 	suppressed  map[string]int
 	ok, failed  int
@@ -34,15 +30,7 @@ type siteLog struct {
 
 func newSiteLog(now time.Time) *siteLog {
 	l := &siteLog{last: map[string]time.Time{}, suppressed: map[string]int{}, socksErrors: map[byte]int{}, since: now}
-	rand.Read(l.salt[:])
 	return l
-}
-
-// mask is "site-" and four hex digits of a salted hash: the same host gives
-// the same label within one run, and the label cannot be matched to a name.
-func (l *siteLog) mask(host string) string {
-	sum := sha256.Sum256(append(l.salt[:], strings.ToLower(host)...))
-	return "site-" + hex.EncodeToString(sum[:2])
 }
 
 // allow reports whether a line for key may be written now, and how many were
@@ -118,7 +106,6 @@ func (t *Tunnel) siteFailed(entry *siteEntry, host, what string, tried []Route, 
 	} else if ok {
 		l.lines++
 	}
-	label := l.mask(key)
 	l.mu.Unlock()
 	if !ok {
 		return
@@ -130,7 +117,7 @@ func (t *Tunnel) siteFailed(entry *siteEntry, host, what string, tried []Route, 
 			names[i] = r.String()
 		}
 	}
-	t.log.add("site %s (%s) failed: %s; tried %s; %d ms%s", label, viaName(entry.tunnel), what, strings.Join(names, ","), took.Milliseconds(), suffix(n))
+	t.log.add("%s failed: %s; tried %s; %d ms%s", entry.label(), what, strings.Join(names, ","), took.Milliseconds(), suffix(n))
 }
 
 func (t *Tunnel) siteSucceeded() {

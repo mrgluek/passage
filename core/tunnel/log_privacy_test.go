@@ -24,7 +24,7 @@ func TestLiveEventsRedactSecrets(t *testing.T) {
 func siteLines(tt *Tunnel) []string {
 	var out []string
 	for _, e := range tt.log.last(100) {
-		if strings.Contains(e.Msg, "site-") || strings.Contains(e.Msg, "browser port") {
+		if strings.Contains(e.Msg, "site #") || strings.Contains(e.Msg, "browser port") {
 			out = append(out, e.Msg)
 		}
 	}
@@ -55,7 +55,7 @@ func TestFailedSiteLineIsMaskedAndHasTheFacts(t *testing.T) {
 			fail = l
 		}
 	}
-	for _, want := range []string{"site-", "(tunnel)", "connect", "tried direct,tunnel", " ms"} {
+	for _, want := range []string{"site #1 (tunnel)", "connect", "tried direct,tunnel", " ms"} {
 		if !strings.Contains(fail, want) {
 			t.Errorf("line lacks %q: %s", want, fail)
 		}

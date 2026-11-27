@@ -63,6 +63,7 @@ type App struct {
 	settings               Settings
 	tun                    *tunnel.Tunnel
 	lastErr                string
+	lastTest               tunnel.Diagnosis // the last network test, for the details
 	linkStamp              fileStamp
 	linkCfg                tunnel.Config
 	linkErr                string
@@ -604,6 +605,9 @@ func (a *App) viewLocked() (view, bool) {
 	if a.linkErr != "" {
 		full = "⚠ " + a.t.f("link_error", a.linkErr) + "\n\n" + full
 	}
+	if !a.lastTest.Time.IsZero() {
+		full += "\n" + a.t.f("test_last") + "\n" + diagnosisLocal(a.t, a.lastTest)
+	}
 	if events := a.log.text(32); events != "" {
 		full += "\n" + a.t.f("app_events") + "\n" + events
 	}
@@ -910,6 +914,9 @@ func (a *App) report() string {
 		a.event("network test: %s", diagnosisSummary(d))
 		a.mu.Unlock()
 		test = strings.Split(strings.TrimRight(diagnosis(text, d), "\n"), "\n")
+		a.mu.Lock()
+		a.lastTest = d // shown by name in the details, never in the report
+		a.mu.Unlock()
 	}
 	a.mu.Lock()
 	defer a.mu.Unlock()

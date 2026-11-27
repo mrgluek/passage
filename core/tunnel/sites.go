@@ -3,6 +3,7 @@ package tunnel
 import (
 	"slices"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -57,17 +58,49 @@ func sameSites(a, b []SiteGroup) bool {
 
 // SiteGroups merges the groups of Config.Sites and every subscription.
 func (c Config) SiteGroups() []SiteGroup {
+	return cleanSites(c.siteGroupsInOrder())
+}
+
+// siteGroupsInOrder is the groups as the subscriptions list them, before
+// cleaning; the site numbers follow this order.
+func (c Config) siteGroupsInOrder() []SiteGroup {
 	all := slices.Clone(c.Sites)
 	for _, s := range c.Subscriptions {
 		all = append(all, s.Sites...)
 	}
-	return cleanSites(all)
+	return all
+}
+
+// numberSites gives each entry its place in the merged list in
+// subscription order, counting each host once. Reports and logs name a
+// site by this number, which the subscription's author can map back and
+// nobody else can.
+func (s *siteSet) numberSites(ordered []SiteGroup) {
+	for _, e := range s.entries {
+		e.num = 0
+	}
+	n := 0
+	for _, g := range ordered {
+		for _, h := range g.Hosts {
+			h = strings.ToLower(strings.TrimSuffix(h, "."))
+			if e := s.entries[h]; e != nil && e.num == 0 {
+				n++
+				e.num = n
+			}
+		}
+	}
+}
+
+// label names the entry in reports and logs: "site #3 (smart)".
+func (e *siteEntry) label() string {
+	return "site #" + strconv.Itoa(e.num) + " (" + viaName(e.tunnel) + ")"
 }
 
 // siteEntry is one listed host. The routes that failed for it are remembered
 // here only: site connections never touch the groups' route state.
 type siteEntry struct {
 	name   string // the listed host
+	num    int    // 1-based place in the merged list, in subscription order
 	tunnel bool
 	mu     sync.Mutex
 	bad    [numRoutes]time.Time
@@ -162,6 +195,7 @@ func newSiteSet(groups []SiteGroup) *siteSet {
 		}
 	}
 	sort.Strings(s.hosts)
+	s.numberSites(groups)
 	return s
 }
 

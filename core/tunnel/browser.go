@@ -55,6 +55,7 @@ func buildPAC(hosts []string, port int) []byte {
 // A failure is logged and leaves the router running without it.
 func (t *Tunnel) startBrowser() {
 	t.sites = newSiteSet(t.cfg.SiteGroups())
+	t.sites.numberSites(t.cfg.siteGroupsInOrder())
 	if t.cfg.BrowserListen == "" {
 		return
 	}

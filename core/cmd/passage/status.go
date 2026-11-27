@@ -311,11 +311,24 @@ func shortResolver(r string) string {
 	return r
 }
 
-// diagnosis is the network test as a table: one row per target.
-func diagnosis(t tr, d tunnel.Diagnosis) string {
+// diagnosis is the network test as a table for the report: one row per
+// target, a listed site by its number only.
+func diagnosis(t tr, d tunnel.Diagnosis) string { return diagnosisTable(t, d, false) }
+
+// diagnosisLocal is the table for the user's own screen: listed sites by name.
+func diagnosisLocal(t tr, d tunnel.Diagnosis) string { return diagnosisTable(t, d, true) }
+
+func diagnosisTable(t tr, d tunnel.Diagnosis, names bool) string {
 	rows := [][]string{append([]string{t.f("test_target")}, d.Ways...)}
 	for _, r := range d.Rows {
-		row := []string{truncate(r.Target, 32)}
+		target := r.Target
+		if r.Site > 0 {
+			target = t.f("test_site", r.Site, r.Via)
+			if names && r.Host != "" {
+				target = r.Host + " (" + r.Via + ")"
+			}
+		}
+		row := []string{truncate(target, 32)}
 		for _, x := range r.Results {
 			switch {
 			case x.Skip:
@@ -347,6 +360,9 @@ func diagnosis(t tr, d tunnel.Diagnosis) string {
 			cells = append(cells, cell)
 		}
 		b.WriteString(strings.TrimRight(strings.Join(cells, "  "), " ") + "\n")
+	}
+	if d.SitesNotTested > 0 {
+		b.WriteString(t.f("test_sites_not_tested", d.SitesNotTested) + "\n")
 	}
 	return b.String()
 }
