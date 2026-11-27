@@ -251,7 +251,9 @@ func (c *WSSClient) dialSession(ctx context.Context) (*wssSession, error) {
 		attempt, cancel := ctx, context.CancelFunc(func() {})
 		if c.pin != nil {
 			addr = c.pin.current()
-			attempt, cancel = context.WithTimeout(ctx, pinnedAttemptLimit)
+			if c.pin.canMove() {
+				attempt, cancel = context.WithTimeout(ctx, pinnedAttemptLimit)
+			}
 		}
 		s, err := c.dialWSSSession(attempt)
 		timedOut := attempt.Err() != nil

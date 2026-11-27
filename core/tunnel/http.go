@@ -108,13 +108,19 @@ func (c *WSSClient) dialHTTPSession(ctx context.Context) (*wssSession, error) {
 	for {
 		var addr string
 		attempt, cancel := ctx, context.CancelFunc(func() {})
+		heard := c.received()
 		if c.pin != nil {
 			addr = c.pin.current()
-			attempt, cancel = context.WithTimeout(ctx, pinnedAttemptLimit)
+			if c.pin.canMove() {
+				attempt, cancel = context.WithTimeout(ctx, pinnedAttemptLimit)
+			}
 		}
 		s, err := c.openHTTPSession(attempt)
 		timedOut := attempt.Err() != nil
 		cancel()
+		if err != nil && timedOut && c.received() > heard {
+			return s, err // other sessions are still receiving: the address serves, the path is slow
+		}
 		if err == nil || err != errHTTPFailed && err != errHTTPEnded && !timedOut || c.pin == nil || ctx.Err() != nil || !c.pin.next(ctx, addr) {
 			return s, err
 		}
@@ -209,6 +215,10 @@ func (c *WSSClient) openHTTPSession(ctx context.Context) (*wssSession, error) {
 	})
 	select {
 	case <-s.ready:
+		if !stop() { // the deadline cancelled the session just now
+			s.fail(ctx.Err())
+			return nil, ctx.Err()
+		}
 		return s, nil
 	case <-s.done:
 		cancel()

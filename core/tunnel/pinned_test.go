@@ -346,3 +346,20 @@ func TestPinnedFallbackWhenNodeStalls(t *testing.T) {
 		t.Fatalf("lookups=%d", lookups.Load())
 	}
 }
+
+func TestPinnedCanMove(t *testing.T) {
+	now := time.Unix(1000, 0)
+	p := newPinnedAddr("192.0.2.1", "example.com")
+	p.now = func() time.Time { return now }
+	p.lookup = func(context.Context, string) ([]string, error) { return nil, errors.New("no answer") }
+	if !p.canMove() {
+		t.Fatal("lookup not tried yet: should be able to move")
+	}
+	p.next(context.Background(), "192.0.2.1") // lookup fails, nothing to move to
+	if p.canMove() {
+		t.Fatal("nowhere to move after a failed lookup")
+	}
+	if newPinnedAddr("192.0.2.1", "").canMove() || newPinnedAddr("192.0.2.1", "192.0.2.9").canMove() {
+		t.Fatal("no host name to look up")
+	}
+}

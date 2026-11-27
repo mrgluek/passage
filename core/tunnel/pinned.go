@@ -118,6 +118,14 @@ func (p *pinnedAddr) DialContext(ctx context.Context, network, address string) (
 	return pc, nil
 }
 
+// canMove reports whether a failed attempt could still lead to another
+// address: one is known, or the lookup has not been tried yet.
+func (p *pinnedAddr) canMove() bool {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.idx+1 < len(p.cands) || p.host != "" && net.ParseIP(p.host) == nil && p.now().Sub(p.resolved) >= pinnedLookupTTL
+}
+
 // next moves past failed, which must be the address the failed attempt used.
 // It reports false when no untried address is left; the next attempt then
 // starts again from the pinned one.
@@ -233,7 +241,7 @@ func dotLookup(ctx context.Context, host string, servers []string) ([]string, er
 		var err error
 		for _, server := range servers {
 			// Each server gets its share, so a silent one does not use it all.
-			sctx, cancel := context.WithTimeout(ctx, pinnedDoTLimit/time.Duration(len(servers)))
+			sctx, cancel := context.WithTimeout(ctx, max(pinnedDoTLimit/time.Duration(len(servers)), 1500*time.Millisecond))
 			var c net.Conn
 			c, err = dialResolver(sctx, "tcp", server)
 			cancel()
