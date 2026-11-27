@@ -34,9 +34,6 @@ func ValidateSites(groups []SiteGroup) error {
 		return errors.New("too many site groups")
 	}
 	for _, g := range groups {
-		if !validSiteVia(g.Via) {
-			return errors.New("invalid site group kind")
-		}
 		if g.Via != SiteViaSmart && g.Via != SiteViaTunnel && g.Via != SiteViaRU {
 			continue
 		}
@@ -60,18 +57,6 @@ func ValidateSitesStrict(groups []SiteGroup) error {
 		}
 	}
 	return ValidateSites(groups)
-}
-
-func validSiteVia(via string) bool {
-	if len(via) < 1 || len(via) > 16 {
-		return false
-	}
-	for _, c := range via {
-		if !(c >= 'a' && c <= 'z' || c >= '0' && c <= '9' || c == '-') {
-			return false
-		}
-	}
-	return true
 }
 
 // ValidateSiteHost accepts a lower-case DNS name with at least two labels. A

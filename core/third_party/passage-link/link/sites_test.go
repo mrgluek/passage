@@ -119,9 +119,14 @@ func TestSitesReservedAndUnknownKinds(t *testing.T) {
 	if ValidateSitesStrict(b.Sites) == nil {
 		t.Fatal("publisher accepted unknown kind")
 	}
+	// Any other spelling is a kind this version does not know: ignored by
+	// readers, refused by the publisher.
 	b.Sites = []SiteGroup{{Via: "Smart!", Hosts: []string{"example.org"}}}
-	if _, err := Encode(b, nil); err == nil {
-		t.Fatal("malformed kind accepted")
+	if _, err := Encode(b, nil); err != nil {
+		t.Fatalf("unknown spelling rejected the bundle: %v", err)
+	}
+	if ValidateSitesStrict(b.Sites) == nil {
+		t.Fatal("publisher accepted a malformed kind")
 	}
 }
 
@@ -138,7 +143,7 @@ func TestClosedSubscriptionRefusesSites(t *testing.T) {
 // A group of an unknown kind is ignored whole: whatever it holds, the bundle decodes.
 func TestUnknownKindGroupIsIgnoredWhole(t *testing.T) {
 	b := sitesBundle()
-	b.Sites = []SiteGroup{{Via: "future", Hosts: []string{"Not A Host", "10.0.0.1", "*.example.org"}}, {Via: "future2"}, {Via: "smart", Hosts: []string{"example.org"}}}
+	b.Sites = []SiteGroup{{Via: "future", Hosts: []string{"Not A Host", "10.0.0.1", "*.example.org"}}, {Via: "future2"}, {Via: "Future_Kind.With-A-Long-Name"}, {Via: ""}, {Via: "smart", Hosts: []string{"example.org"}}}
 	if _, err := Encode(b, nil); err != nil {
 		t.Fatalf("future group rejected: %v", err)
 	}
