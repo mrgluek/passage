@@ -141,7 +141,7 @@ func managedProxyPolicy() string {
 	for _, dir := range dirs {
 		files, _ := filepath.Glob(filepath.Join(dir, "*.plist"))
 		for _, f := range files {
-			if data, err := os.ReadFile(f); err == nil {
+			if data, err := plistXML(f); err == nil {
 				if k := managedProxy(data); k != "" {
 					return "managed preferences: " + k
 				}
@@ -163,4 +163,12 @@ func (networksetupProxy) SetAutoConfig(service, url string, on bool) error {
 		}
 	}
 	return nil
+}
+
+// plistXML reads a property list as XML, so only whole keys and strings
+// match: plutil converts a binary one without a password.
+func plistXML(path string) ([]byte, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), macCallTimeout)
+	defer cancel()
+	return exec.CommandContext(ctx, "/usr/bin/plutil", "-convert", "xml1", "-o", "-", path).Output()
 }
