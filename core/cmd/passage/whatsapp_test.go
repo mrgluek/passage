@@ -139,7 +139,7 @@ func TestWhatsAppStatus(t *testing.T) {
 
 func TestWhatsAppHomeAndSettings(t *testing.T) {
 	for _, want := range []string{
-		`["tab_delta", "tab_tg", "whatsapp", "tab_other"]`,
+		`const names = v.tabs`,
 		`else if (current === "whatsapp") renderWhatsApp(pane, v, true)`,
 		`call("setWhatsApp", toggle.checked)`,
 		`home && !v.whatsapp`, `para(t("whatsapp_turn_on"))`,

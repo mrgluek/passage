@@ -22,6 +22,15 @@ type browserView struct {
 	Notice    string `json:"notice,omitempty"` // why the switch was refused
 }
 
+// homeTabs lists the home screen's setup tabs, four at most. With sites the
+// Browser tab replaces Other; its "other app (SOCKS5)" line holds those details.
+func homeTabs(hasSites bool) []string {
+	if hasSites {
+		return []string{"tab_delta", "tab_tg", "whatsapp", "tab_browser"}
+	}
+	return []string{"tab_delta", "tab_tg", "whatsapp", "tab_other"}
+}
+
 // connectDone says whether the home screen's "connect an app" step is done:
 // a chat app has used the proxy, or, when the subscription lists sites, the
 // browser is set up (the system switch is on, or the user confirmed a manual

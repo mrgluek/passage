@@ -521,6 +521,7 @@ type view struct {
 	Forwards          []tunnel.ForwardStatus `json:"forwards"`
 	WhatsAppStatus    whatsappStatus         `json:"whatsapp_status"`
 	Browser           browserView            `json:"browser"`
+	Tabs              []string               `json:"tabs"`
 	// ConnectDone: the home screen's connect step is done (app or browser).
 	ConnectDone bool `json:"connect_done"`
 }
@@ -609,6 +610,7 @@ func (a *App) viewLocked() (view, bool) {
 		v.SubscriptionNotice = a.subscriptionNotice
 	}
 	v.Browser = a.browserViewLocked()
+	v.Tabs = homeTabs(v.Browser.Sites > 0)
 	v.ConnectDone = connectDone(v.AppSeen, v.Browser.Sites > 0, v.Browser.On || a.settings.SystemPAC, v.Browser.Confirmed)
 	v.Update = a.updateViewLocked()
 	v.Full = full

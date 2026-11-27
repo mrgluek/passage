@@ -549,7 +549,7 @@ func TestHomeTitleAndWindowCaption(t *testing.T) {
 
 func TestHomeAppPanes(t *testing.T) {
 	for _, want := range []string{
-		`["tab_delta", "tab_tg", "whatsapp", "tab_other"]`,
+		`const names = v.tabs`,
 		`download(DOWNLOADS.delta));
     pane.append(para(t("tab_velta_text"))`,
 		`v.velta_link`, `call("openVelta")`,

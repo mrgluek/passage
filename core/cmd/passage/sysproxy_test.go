@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -298,7 +299,7 @@ func TestBrowserSettingsKeysOldFileKeepsDefaults(t *testing.T) {
 func TestBrowserStringsInBothLanguages(t *testing.T) {
 	for _, lang := range []string{"en", "ru"} {
 		tr := tr(table(lang))
-		for _, k := range []string{"browser_title", "browser_text_system", "browser_text_manual", "browser_manual_system", "browser_manual_only", "tab_browser", "h_browser_turn_on", "h_browser_done", "h_step_app_sites", "h_waiting_sites", "browser_pac", "browser_sites", "browser_system", "browser_system_help", "browser_refuse_pac", "browser_refuse_manual", "browser_refuse_policy"} {
+		for _, k := range []string{"browser_title", "browser_text_system", "browser_text_manual", "browser_manual_system", "browser_manual_only", "tab_browser", "h_browser_turn_on", "h_browser_done", "h_step_connected", "browser_pac", "browser_sites", "browser_system", "browser_system_help", "browser_refuse_pac", "browser_refuse_manual", "browser_refuse_policy"} {
 			if tr.f(k) == "" || tr.f(k) == k {
 				t.Errorf("%s %s missing", lang, k)
 			}
@@ -402,5 +403,39 @@ func TestHomeViewStopsOfferingAfterTheBrowserIsSetUp(t *testing.T) {
 	a.linkCfg.Sites = nil
 	if a.view().ConnectDone {
 		t.Fatal("browser counts without sites")
+	}
+}
+
+func TestHomeTabsRule(t *testing.T) {
+	with, without := homeTabs(true), homeTabs(false)
+	if len(with) != 4 || len(without) != 4 {
+		t.Fatalf("more than four tabs: %v %v", with, without)
+	}
+	if with[3] != "tab_browser" || slices.Contains(with, "tab_other") {
+		t.Fatalf("with sites: %v", with)
+	}
+	if without[3] != "tab_other" || slices.Contains(without, "tab_browser") {
+		t.Fatalf("without sites: %v", without)
+	}
+	a, _ := browserApp(t, &fakeProxy{}, true)
+	if v := a.view(); !slices.Equal(v.Tabs, with) {
+		t.Fatalf("view tabs %v", v.Tabs)
+	}
+	a.linkCfg.Sites = nil
+	if v := a.view(); !slices.Equal(v.Tabs, without) {
+		t.Fatalf("view tabs %v", v.Tabs)
+	}
+	for _, lang := range []string{"en", "ru"} {
+		tr := tr(table(lang))
+		for _, k := range append(slices.Clone(with), "tab_other", "other_app_toggle") {
+			if tr.f(k) == "" || tr.f(k) == k {
+				t.Errorf("%s: no text for %s", lang, k)
+			}
+		}
+		for _, k := range []string{"h_step_app", "h_waiting", "h_reason_wait", "h_reason_ok", "h_reason_off", "h_step_app_done", "autostart_offer_text"} {
+			if strings.Contains(strings.ToLower(tr.f(k)), "мессенджер") || strings.Contains(strings.ToLower(tr.f(k)), "chat app") {
+				t.Errorf("%s %s still names messengers: %s", lang, k, tr.f(k))
+			}
+		}
 	}
 }
