@@ -62,3 +62,13 @@ func TestResubscribeKeepsSites(t *testing.T) {
 		t.Fatalf("sites lost on re-subscribe: %v %v", result.Config.SiteGroups(), err)
 	}
 }
+
+func TestUnknownKindGroupDoesNotRejectTheSubscription(t *testing.T) {
+	sub, _, bundle := subFixture(t)
+	trustSubscription(t, sub)
+	bundle.Sites = []links.SiteGroup{{Via: "future", Hosts: []string{"Not A Host", "10.0.0.1"}}, {Via: "smart", Hosts: []string{"example.org"}}}
+	cfg, err := ApplySubFile(Config{Subscriptions: []Subscription{sub}}, sub, bundle)
+	if err != nil || fmtSites(cfg.SiteGroups()) != "[{smart [example.org]}]" {
+		t.Fatalf("%v %v", cfg.SiteGroups(), err)
+	}
+}

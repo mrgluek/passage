@@ -193,7 +193,16 @@ func (p *routePool) maintenanceDialContext(ctx context.Context, network, address
 	return p.dialContext(ctx, network, address, false, false)
 }
 
+type quietDialKey struct{}
+
+// siteDialContext dials for a browser connection. A failure is returned to
+// the caller only: no cooldown, no route statistics, no subscription refresh.
+func (p *routePool) siteDialContext(ctx context.Context, network, address string) (net.Conn, error) {
+	return p.dialContext(context.WithValue(ctx, quietDialKey{}, true), network, address, false, false)
+}
+
 func (p *routePool) dialContext(ctx context.Context, network, address string, background, recordStats bool) (net.Conn, error) {
+	quiet := ctx.Value(quietDialKey{}) != nil
 	p.tick(p.clock())
 	host, _, _ := net.SplitHostPort(address)
 	order := p.order(net.ParseIP(host))
@@ -306,7 +315,7 @@ func (p *routePool) dialContext(ctx context.Context, network, address string, ba
 			if err != nil {
 				waited = time.Since(start)
 			}
-			if err != nil && !errors.Is(err, errIrohSleeping) && !errors.Is(err, context.Canceled) && !errors.Is(err, errDestinationRefused) {
+			if err != nil && !errors.Is(err, errIrohSleeping) && !errors.Is(err, context.Canceled) && !errors.Is(err, errDestinationRefused) && !quiet {
 				p.mark(i, true)
 			}
 			cancel()
@@ -392,6 +401,9 @@ func (p *routePool) dialContext(ctx context.Context, network, address string, ba
 	}
 	if refusals == started-skipped && (refusals > 0 || len(order) < len(available)) {
 		return nil, errDestinationRefused
+	}
+	if quiet {
+		return nil, errors.New("all configured routes failed")
 	}
 	p.established.Store(false)
 	if p.onFailure != nil {

@@ -264,7 +264,7 @@ func (t *Tunnel) dialSite(entry *siteEntry, addr string) (net.Conn, Route, error
 		ctx, cancel := context.WithTimeout(t.ctx, ways[r].timeout)
 		dial := ways[r].dial
 		if pool, ok := t.client.(*routePool); ok && r == RouteTunnel {
-			dial = pool.maintenanceDialContext // no route statistics for browser traffic
+			dial = pool.siteDialContext // a failure stays with the browser connection
 		}
 		c, err := dial(ctx, "tcp", addr)
 		cancel()

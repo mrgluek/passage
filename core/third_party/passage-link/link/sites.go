@@ -25,9 +25,10 @@ const (
 	SiteViaRU     = "ru"
 )
 
-// ValidateSites checks the group and host limits and every host name. An
-// unknown Via is accepted so that a later app version can add kinds; clients
-// ignore a group they do not know. Publishers use ValidateSitesStrict.
+// ValidateSites checks the group limit and the groups of the kinds this
+// version knows (smart, tunnel, ru). A group of an unknown kind is ignored as
+// a whole, hosts included, so a later format can never make this version
+// reject a subscription. Publishers use ValidateSitesStrict.
 func ValidateSites(groups []SiteGroup) error {
 	if len(groups) > MaxSiteGroups {
 		return errors.New("too many site groups")
@@ -35,6 +36,9 @@ func ValidateSites(groups []SiteGroup) error {
 	for _, g := range groups {
 		if !validSiteVia(g.Via) {
 			return errors.New("invalid site group kind")
+		}
+		if g.Via != SiteViaSmart && g.Via != SiteViaTunnel && g.Via != SiteViaRU {
+			continue
 		}
 		if len(g.Hosts) < 1 || len(g.Hosts) > MaxSiteHosts {
 			return errors.New("invalid number of site hosts")
@@ -50,15 +54,12 @@ func ValidateSites(groups []SiteGroup) error {
 
 // ValidateSitesStrict is ValidateSites plus a check that every kind is known.
 func ValidateSitesStrict(groups []SiteGroup) error {
-	if err := ValidateSites(groups); err != nil {
-		return err
-	}
 	for _, g := range groups {
 		if g.Via != SiteViaSmart && g.Via != SiteViaTunnel && g.Via != SiteViaRU {
 			return errors.New("unknown site group kind")
 		}
 	}
-	return nil
+	return ValidateSites(groups)
 }
 
 func validSiteVia(via string) bool {

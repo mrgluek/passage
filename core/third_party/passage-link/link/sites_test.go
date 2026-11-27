@@ -134,3 +134,19 @@ func TestClosedSubscriptionRefusesSites(t *testing.T) {
 		t.Fatal("closed bundle with sites accepted")
 	}
 }
+
+// A group of an unknown kind is ignored whole: whatever it holds, the bundle decodes.
+func TestUnknownKindGroupIsIgnoredWhole(t *testing.T) {
+	b := sitesBundle()
+	b.Sites = []SiteGroup{{Via: "future", Hosts: []string{"Not A Host", "10.0.0.1", "*.example.org"}}, {Via: "future2"}, {Via: "smart", Hosts: []string{"example.org"}}}
+	if _, err := Encode(b, nil); err != nil {
+		t.Fatalf("future group rejected: %v", err)
+	}
+	if ValidateSitesStrict(b.Sites) == nil {
+		t.Fatal("publisher accepted an unknown kind")
+	}
+	b.Sites = []SiteGroup{{Via: "smart", Hosts: []string{"Not A Host"}}}
+	if _, err := Encode(b, nil); err == nil {
+		t.Fatal("bad host in a smart group accepted")
+	}
+}
