@@ -29,6 +29,8 @@ type BrowserStatus struct {
 	Hosts int    `json:"hosts"`
 	Open  int64  `json:"open"`
 	Total int64  `json:"total"`
+	// LastOK is when a site connection last got a reply from the site.
+	LastOK time.Time `json:"last_ok,omitzero"`
 }
 
 // buildPAC returns the proxy auto-config for the listed hosts. A stopped
@@ -229,7 +231,10 @@ func (t *Tunnel) connectSite(c bufferedConn, entry *siteEntry, host, addr string
 	t.siteTotal.Add(1)
 	t.siteOpen.Add(1)
 	defer t.siteOpen.Add(-1)
-	watched := watchResponsesKeep(remote, func() { entry.clear(route) }, func(first bool) {
+	watched := watchResponsesKeep(remote, func() {
+		entry.clear(route)
+		t.siteLastOK.Store(t.timeNow().UnixNano())
+	}, func(first bool) {
 		if first {
 			entry.markBad(route, t.timeNow().Add(siteBadFor))
 			t.siteFailed(entry, host, siteNoReply, []Route{route}, t.timeNow().Sub(started))
@@ -453,5 +458,9 @@ func (t *Tunnel) browserStatus() *BrowserStatus {
 	if t.browserLn == nil {
 		return nil
 	}
-	return &BrowserStatus{Addr: t.BrowserAddr(), PAC: t.PACURL(), Hosts: len(t.sites.hosts), Open: t.siteOpen.Load(), Total: t.siteTotal.Load()}
+	b := &BrowserStatus{Addr: t.BrowserAddr(), PAC: t.PACURL(), Hosts: len(t.sites.hosts), Open: t.siteOpen.Load(), Total: t.siteTotal.Load()}
+	if n := t.siteLastOK.Load(); n != 0 {
+		b.LastOK = time.Unix(0, n).UTC()
+	}
+	return b
 }

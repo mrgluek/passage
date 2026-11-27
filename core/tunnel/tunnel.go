@@ -267,6 +267,7 @@ type Tunnel struct {
 	siteDiagLog  *siteLog
 	siteDiagOnce sync.Once
 	siteTotal    atomic.Int64
+	siteLastOK   atomic.Int64 // unix nanoseconds of the last site reply
 }
 
 type tracked struct {
@@ -2608,8 +2609,8 @@ func (t *Tunnel) statusLocked(n int) Status {
 	}
 	s.Events = t.log.last(n)
 	s.Started = t.started.UTC()
-	s.Health = t.healthLocked(health(s, t.timeNow()), t.timeNow())
 	s.Browser = t.browserStatus()
+	s.Health = t.healthLocked(health(s, t.timeNow()), t.timeNow())
 	return s
 }
 

@@ -588,12 +588,10 @@ func (a *App) viewLocked() (view, bool) {
 		v.WhatsAppStatus = formatWhatsAppStatus(a.t, st.Forwards)
 		v.WhatsAppStatus.Hint = s.WhatsApp && !v.WhatsAppStatus.Connected && time.Since(a.whatsappStarted) >= 30*time.Second
 		full = fullStatus(a.t, st)
-		var conns int64
 		for _, r := range st.Stats {
-			conns += r.Conns
 			v.Traffic += r.Up + r.Down
 		}
-		if conns > 0 && !a.settings.AppSeen {
+		if appUsed(st) && !a.settings.AppSeen {
 			a.settings.AppSeen, v.AppSeen = true, true
 			a.saveSettings()
 		}
@@ -1103,4 +1101,15 @@ func (a *App) call(method string, arg json.RawMessage) (any, error) {
 		return nil, fmt.Errorf("unknown call %q", method)
 	}
 	return nil, nil
+}
+
+// appUsed: an app has sent traffic through the proxy, or a browser site
+// answered through the browser port.
+func appUsed(st tunnel.Status) bool {
+	for _, r := range st.Stats {
+		if r.Conns > 0 {
+			return true
+		}
+	}
+	return st.Browser != nil && !st.Browser.LastOK.IsZero()
 }

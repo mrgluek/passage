@@ -7,8 +7,10 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	links "github.com/mrgluek/passage-link/link"
+	"github.com/mrgluek/passage/core/tunnel"
 )
 
 // fakeProxy is the system's proxy settings in memory. With mac set, turning
@@ -546,5 +548,14 @@ func TestConnectDoneUsesTheAppliedState(t *testing.T) {
 	a.settings.SystemPAC = true
 	if a.view().ConnectDone {
 		t.Fatal("the wish alone finished the step")
+	}
+}
+
+func TestBrowserSiteReplyCountsAsAppUse(t *testing.T) {
+	if appUsed(tunnel.Status{Browser: &tunnel.BrowserStatus{Total: 3}}) {
+		t.Fatal("connections without a reply counted")
+	}
+	if !appUsed(tunnel.Status{Browser: &tunnel.BrowserStatus{Total: 33, LastOK: time.Now()}}) {
+		t.Fatal("answered site connections ignored")
 	}
 }
