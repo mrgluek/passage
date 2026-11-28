@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"net"
 	"os"
+	"runtime"
 	"slices"
 	"strings"
 	"sync"
@@ -361,17 +362,24 @@ func appStrategies(all []strategy) []strategy {
 	return out
 }
 
+// oobUsable: macOS sends the urgent byte so that servers reject the hello,
+// so the urgent-byte strategy is not offered there.
+func oobUsable(goos string) bool { return goos != "darwin" }
+
 // smartStrategies lists the strategies in the order sites try them.
-func smartStrategies() []strategy {
+func smartStrategies() []strategy { return smartStrategiesFor(runtime.GOOS) }
+
+func smartStrategiesFor(goos string) []strategy {
 	base := &transport.TCPDialer{Dialer: net.Dialer{Timeout: directDialTimeout}}
 	out := []strategy{}
 	if d, err := tlsfrag.NewFixedLenStreamDialer(base, 1); err == nil {
 		out = append(out, strategy{"tlsfrag:1", streamDial(d)})
 	}
-	out = append(out,
-		strategy{"split:sni", partDial(splitSNIPlan)},
-		strategy{"oob:sni", partDial(oobSNIPlan)},
-		strategy{"disorder:sni", partDial(disorderSNIPlan)})
+	out = append(out, strategy{"split:sni", partDial(splitSNIPlan)})
+	if oobUsable(goos) {
+		out = append(out, strategy{"oob:sni", partDial(oobSNIPlan)})
+	}
+	out = append(out, strategy{"disorder:sni", partDial(disorderSNIPlan)})
 	if d, err := split.NewStreamDialer(base, split.NewFixedSplitIterator(2)); err == nil {
 		out = append(out, strategy{"split:2", streamDial(d)})
 	}
