@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.9.9
+
+- Desktop: browsers can use Passage for the sites your subscription lists.
+
 ## 0.9.8
 
 - An HTTP or WSS route with a fixed server address tries the host's other

@@ -218,6 +218,17 @@ func (f *fakePlatform) device() map[string]any  { return map[string]any{"os": "t
 func TestAppLinkFile(t *testing.T) {
 	dir := t.TempDir()
 	a := newApp(dir, "test", "", "en", &fakePlatform{})
+	// Saving a link starts the router; it must stop before the folder is
+	// removed (Windows refuses to delete files still being written).
+	t.Cleanup(func() {
+		a.mu.Lock()
+		defer a.mu.Unlock()
+		if a.tun != nil {
+			a.tun.Close()
+			a.tun = nil
+		}
+		a.closeBrowserPortLocked()
+	})
 	if _, err := os.Stat(filepath.Join(dir, iniName)); err != nil {
 		t.Fatal("passage.ini not written:", err)
 	}
@@ -549,7 +560,7 @@ func TestHomeTitleAndWindowCaption(t *testing.T) {
 
 func TestHomeAppPanes(t *testing.T) {
 	for _, want := range []string{
-		`const names = ["tab_delta", "tab_tg", "whatsapp", "tab_other"]`,
+		`const names = v.tabs`,
 		`download(DOWNLOADS.delta));
     pane.append(para(t("tab_velta_text"))`,
 		`v.velta_link`, `call("openVelta")`,

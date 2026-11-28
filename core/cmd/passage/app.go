@@ -26,6 +26,8 @@ const (
 	siteURL   = "https://passage.gluek.info"
 	sourceURL = "https://github.com/mrgluek/passage"
 	tickEvery = 5 * time.Second
+	// quitRestoreLimit bounds how long quitting waits for the system proxy restore.
+	quitRestoreLimit = 10 * time.Second
 )
 
 // platform is what the app needs from the desktop it runs on.
@@ -61,6 +63,8 @@ type App struct {
 	settings               Settings
 	tun                    *tunnel.Tunnel
 	lastErr                string
+	lastTest               tunnel.Diagnosis // the last network test, for the details
+	browserPort            *tunnel.BrowserPort
 	linkStamp              fileStamp
 	linkCfg                tunnel.Config
 	linkErr                string
@@ -76,10 +80,15 @@ type App struct {
 	subscriptionResults    map[string]string
 	subscriptionNotice     string
 	subscriptionFetcher    subscriptionFetcher
+	sysProxy               systemProxy // nil: no system switch on this platform
+	sysNotice, sysError    string
+	sysMu                  sync.Mutex // held while the system proxy settings change
+	portFree               func(int) bool
 }
 
 func newApp(dir, version, iroh, lang string, os platform) *App {
-	a := &App{dir: dir, version: version, iroh: iroh, lang: lang, systemLang: lang, t: table(lang), os: os, changed: func() {}}
+	a := &App{dir: dir, version: version, iroh: iroh, lang: lang, systemLang: lang, t: table(lang), os: os, changed: func() {},
+		sysProxy: newSystemProxy(), portFree: localPortBindable}
 	a.log = openLog(a.path(logName), version)
 	a.event("app start")
 	s, existed, err := loadSettings(a.path(iniName))
@@ -218,6 +227,7 @@ func (a *App) routerConfigLocked() (tunnel.Config, networkState) {
 	}
 	cfg.Mode = a.mode()
 	cfg.My = s.My
+	a.browserConfigLocked(&cfg)
 	state, _ := readNetwork()
 	cfg.SystemResolvers = state.dns
 	cfg.IrohBinary = a.iroh
@@ -245,6 +255,7 @@ func (a *App) startLocked(why string) {
 	if err != nil {
 		a.lastErr = fmt.Sprintf("%s failed: %v", why, err)
 		a.event("%s", a.lastErr)
+		a.closeBrowserPortLocked() // no router to answer: browsers go direct
 		return
 	}
 	a.lastErr = ""
@@ -272,6 +283,7 @@ func (a *App) tick() {
 	case reload:
 		a.startLocked("restart on link change")
 	case a.networkChanged(time.Now()):
+		go a.extendSystemPAC("network change")
 		a.startLocked("restart on network change")
 	default:
 		if a.subscriptionRefreshing {
@@ -292,12 +304,15 @@ func (a *App) tick() {
 }
 
 func (a *App) run(ctx context.Context) {
+	a.sweepSystemPAC() // before anything is written again
+	a.recoverSystemPAC()
 	a.mu.Lock()
 	if a.settings.Running {
 		a.runningSince = time.Now()
 		a.startLocked("app start")
 	}
 	a.mu.Unlock()
+	a.applySystemPACAtStart() // the browser port is listening now
 	a.changed()
 	tk := time.NewTicker(tickEvery)
 	defer tk.Stop()
@@ -306,12 +321,14 @@ func (a *App) run(ctx context.Context) {
 		case <-ctx.Done():
 			a.cancelUpdate()
 			a.event("app quit")
+			a.restoreOnQuit(quitRestoreLimit)
 			a.mu.Lock()
 			if a.tun != nil {
 				a.tun.Close()
 				a.log.copyStalls(a.tun.Status(500).Events)
 				a.tun = nil
 			}
+			a.closeBrowserPortLocked()
 			a.mu.Unlock()
 			return
 		case <-tk.C:
@@ -342,6 +359,7 @@ func (a *App) setRunning(on bool) {
 			a.log.copyStalls(a.tun.Status(500).Events)
 			a.tun = nil
 		}
+		a.closeBrowserPortLocked() // stopped: browsers go direct at once
 		a.lastErr = ""
 	}
 	a.mu.Unlock()
@@ -484,19 +502,22 @@ type view struct {
 	Head               string            `json:"head"`
 	Line               string            `json:"line"`
 	Full               string            `json:"full"`
-	StartHint          string            `json:"start_hint"`
-	HasLink            bool              `json:"has_link"`
-	Mode               string            `json:"mode"`
-	Routes             []routeChoice     `json:"routes"`
-	My                 bool              `json:"my"`
-	Auth               bool              `json:"auth"`
-	Host               string            `json:"host"`
-	Port               int               `json:"port"`
-	User               string            `json:"user"`
-	Pass               string            `json:"pass"`
-	ProxyLink          string            `json:"proxy_link"` // socks5://
-	TgLink             string            `json:"tg_link"`    // tg://socks
-	VeltaLink          string            `json:"velta_link"` // velta://proxy/2
+	// LocalTest is the last network test with site names: shown in the
+	// window, never copied or sent (Full is what "copy" takes).
+	LocalTest string        `json:"local_test,omitempty"`
+	StartHint string        `json:"start_hint"`
+	HasLink   bool          `json:"has_link"`
+	Mode      string        `json:"mode"`
+	Routes    []routeChoice `json:"routes"`
+	My        bool          `json:"my"`
+	Auth      bool          `json:"auth"`
+	Host      string        `json:"host"`
+	Port      int           `json:"port"`
+	User      string        `json:"user"`
+	Pass      string        `json:"pass"`
+	ProxyLink string        `json:"proxy_link"` // socks5://
+	TgLink    string        `json:"tg_link"`    // tg://socks
+	VeltaLink string        `json:"velta_link"` // velta://proxy/2
 	// Traffic grows while the proxy carries bytes; the window pulses on it.
 	Traffic int64 `json:"traffic"`
 	// AppSeen is true once a chat app has used the proxy.
@@ -513,6 +534,10 @@ type view struct {
 	WhatsAppError     string                 `json:"whatsapp_error"`
 	Forwards          []tunnel.ForwardStatus `json:"forwards"`
 	WhatsAppStatus    whatsappStatus         `json:"whatsapp_status"`
+	Browser           browserView            `json:"browser"`
+	Tabs              []string               `json:"tabs"`
+	// ConnectDone: the home screen's connect step is done (app or browser).
+	ConnectDone bool `json:"connect_done"`
 }
 
 // startHint asks to start the proxy when routes exist but it is not running.
@@ -569,12 +594,10 @@ func (a *App) viewLocked() (view, bool) {
 		v.WhatsAppStatus = formatWhatsAppStatus(a.t, st.Forwards)
 		v.WhatsAppStatus.Hint = s.WhatsApp && !v.WhatsAppStatus.Connected && time.Since(a.whatsappStarted) >= 30*time.Second
 		full = fullStatus(a.t, st)
-		var conns int64
 		for _, r := range st.Stats {
-			conns += r.Conns
 			v.Traffic += r.Up + r.Down
 		}
-		if conns > 0 && !a.settings.AppSeen {
+		if appUsed(st) && !a.settings.AppSeen {
 			a.settings.AppSeen, v.AppSeen = true, true
 			a.saveSettings()
 		}
@@ -587,6 +610,9 @@ func (a *App) viewLocked() (view, bool) {
 	if a.linkErr != "" {
 		full = "⚠ " + a.t.f("link_error", a.linkErr) + "\n\n" + full
 	}
+	if !a.lastTest.Time.IsZero() {
+		v.LocalTest = a.t.f("test_last") + "\n" + diagnosisLocal(a.t, a.lastTest)
+	}
 	if events := a.log.text(32); events != "" {
 		full += "\n" + a.t.f("app_events") + "\n" + events
 	}
@@ -598,6 +624,9 @@ func (a *App) viewLocked() (view, bool) {
 	if a.subscriptionNotice != "" {
 		v.SubscriptionNotice = a.subscriptionNotice
 	}
+	v.Browser = a.browserViewLocked()
+	v.Tabs = homeTabs(v.Browser.Sites > 0)
+	v.ConnectDone = connectDone(v.AppSeen, v.Browser.Sites > 0, v.Browser.On, v.Browser.Confirmed)
 	v.Update = a.updateViewLocked()
 	v.Full = full
 	return v, s.Running && !s.AutostartDismissed
@@ -883,13 +912,17 @@ func (a *App) report() string {
 	a.mu.Unlock()
 	var test []string
 	if t != nil {
-		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+		// Listed sites are checked way by way: about (2 + strategies) * 6 s.
+		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 		d := t.Diagnose(ctx)
 		cancel()
 		a.mu.Lock()
 		a.event("network test: %s", diagnosisSummary(d))
 		a.mu.Unlock()
 		test = strings.Split(strings.TrimRight(diagnosis(text, d), "\n"), "\n")
+		a.mu.Lock()
+		a.lastTest = d // shown by name in the details, never in the report
+		a.mu.Unlock()
 	}
 	a.mu.Lock()
 	defer a.mu.Unlock()
@@ -1028,6 +1061,10 @@ func (a *App) call(method string, arg json.RawMessage) (any, error) {
 		a.mu.Unlock()
 	case "setWhatsApp":
 		return nil, a.setWhatsApp(flag())
+	case "confirmBrowser":
+		a.confirmBrowser(flag())
+	case "setSystemPAC":
+		return nil, a.setSystemPAC(flag())
 	case "setAuth":
 		a.setAuth(flag())
 	case "newAccess":
@@ -1077,4 +1114,15 @@ func (a *App) call(method string, arg json.RawMessage) (any, error) {
 		return nil, fmt.Errorf("unknown call %q", method)
 	}
 	return nil, nil
+}
+
+// appUsed: an app has sent traffic through the proxy, or a browser site
+// answered through the browser port.
+func appUsed(st tunnel.Status) bool {
+	for _, r := range st.Stats {
+		if r.Conns > 0 {
+			return true
+		}
+	}
+	return st.Browser != nil && !st.Browser.LastOK.IsZero()
 }

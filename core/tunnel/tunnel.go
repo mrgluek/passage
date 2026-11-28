@@ -252,6 +252,24 @@ type Tunnel struct {
 	// hours, so totals taken at close would show nothing for them.
 	upBytes   [numRoutes]atomic.Int64
 	downBytes [numRoutes]atomic.Int64
+
+	// Browser listener (browser.go).
+	sites          *siteSet
+	browserLn      net.Listener
+	pac            []byte
+	browserOpen    atomic.Int64 // browser sockets, handshake included
+	siteOpen       atomic.Int64
+	siteRemotes    map[net.Conn]struct{}                                                       // guarded by mu
+	siteDNS        *siteDNS                                                                    // set in tests; else made on first use
+	siteDataProbe  func(ctx context.Context, dial dialFunc, hostport, sni string) (int, error) // replaces probeData in tests
+	siteOtherProbe func(ctx context.Context, dial dialFunc, addr, name string) error           // replaces probeOtherName in tests
+	siteDNSOnce    sync.Once
+	// siteAfter replaces the tunnel's head-start timer of site dials in tests.
+	siteAfter    func(time.Duration) (<-chan time.Time, func())
+	siteDiagLog  *siteLog
+	siteDiagOnce sync.Once
+	siteTotal    atomic.Int64
+	siteLastOK   atomic.Int64 // unix nanoseconds of the last site reply
 }
 
 type tracked struct {
@@ -341,6 +359,8 @@ func Start(cfg Config) (*Tunnel, error) {
 		mode:   mode,
 		conns:  map[*tracked]struct{}{},
 		relays: map[string]*group{},
+
+		siteRemotes: map[net.Conn]struct{}{},
 	}
 	t.log.now = t.timeNow
 	t.telegram = t.newGroup("telegram", kindTelegram, initialRoute(mode))
@@ -471,6 +491,7 @@ func Start(cfg Config) (*Tunnel, error) {
 		}
 	}
 	t.startForwards()
+	t.startBrowser()
 	t.warmTunnel()
 	t.settleHealth()
 	t.wg.Add(3)
@@ -706,6 +727,9 @@ func (t *Tunnel) Addr() string { return t.ln.Addr().String() }
 func (t *Tunnel) Close() {
 	t.cancel()
 	t.ln.Close()
+	if t.browserLn != nil {
+		t.browserLn.Close()
+	}
 	t.mu.Lock()
 	for i := range t.forwards {
 		f := &t.forwards[i]
@@ -721,6 +745,9 @@ func (t *Tunnel) Close() {
 	var all []*tracked
 	for c := range t.conns {
 		all = append(all, c)
+	}
+	for c := range t.siteRemotes {
+		locals = append(locals, c)
 	}
 	t.mu.Unlock()
 	for _, c := range locals {
@@ -836,6 +863,7 @@ func (t *Tunnel) Recheck() {
 // platforms report spurious changes, and a real network switch restarts the
 // tunnel anyway.
 func (t *Tunnel) NetworkChanged() {
+	t.sites.resetMemory()
 	t.dropVerdict()
 	t.kickProbe()
 }
@@ -2423,6 +2451,8 @@ type Status struct {
 	// Started is when the router started; Health is the plain verdict for the windows.
 	Started time.Time `json:"started"`
 	Health  Health    `json:"health"`
+	// Browser is set while the browser listener runs; it counts sites, never names them.
+	Browser *BrowserStatus `json:"browser,omitempty"`
 }
 
 // GroupStatus is one group's part of Status.
@@ -2581,6 +2611,7 @@ func (t *Tunnel) statusLocked(n int) Status {
 	}
 	s.Events = t.log.last(n)
 	s.Started = t.started.UTC()
+	s.Browser = t.browserStatus()
 	s.Health = t.healthLocked(health(s, t.timeNow()), t.timeNow())
 	return s
 }

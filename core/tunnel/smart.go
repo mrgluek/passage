@@ -10,7 +10,6 @@ import (
 	"slices"
 	"strings"
 	"sync"
-	"syscall"
 	"time"
 
 	"golang.getoutline.org/sdk/transport"
@@ -349,13 +348,30 @@ type strategy struct {
 	dial dialFunc
 }
 
-// smartStrategies lists the strategies in the order they are tried.
+// appStrategies are the strategies the apps' search tries: those that cut
+// the server name are for sites only. They leave other data as it is, and
+// each one would add a probe timeout to every search that finds nothing.
+func appStrategies(all []strategy) []strategy {
+	var out []strategy
+	for _, s := range all {
+		if !strings.HasSuffix(s.name, ":sni") {
+			out = append(out, s)
+		}
+	}
+	return out
+}
+
+// smartStrategies lists the strategies in the order sites try them.
 func smartStrategies() []strategy {
 	base := &transport.TCPDialer{Dialer: net.Dialer{Timeout: directDialTimeout}}
 	out := []strategy{}
 	if d, err := tlsfrag.NewFixedLenStreamDialer(base, 1); err == nil {
 		out = append(out, strategy{"tlsfrag:1", streamDial(d)})
 	}
+	out = append(out,
+		strategy{"split:sni", partDial(splitSNIPlan)},
+		strategy{"oob:sni", partDial(oobSNIPlan)},
+		strategy{"disorder:sni", partDial(disorderSNIPlan)})
 	if d, err := split.NewStreamDialer(base, split.NewFixedSplitIterator(2)); err == nil {
 		out = append(out, strategy{"split:2", streamDial(d)})
 	}
@@ -369,8 +385,18 @@ func streamDial(d transport.StreamDialer) dialFunc {
 	}
 }
 
-// disorderDial sends the first n bytes separately from the rest.
+// disorderDial sends the first n bytes with TTL 1, then the rest.
 func disorderDial(n int) dialFunc {
+	return partDial(func(rec []byte) []part {
+		if len(rec) <= n {
+			return nil
+		}
+		return []part{{b: rec[:n], lowTTL: true}, {b: rec[n:]}}
+	})
+}
+
+// partDial dials TCP and sends the first record by plan.
+func partDial(plan func([]byte) []part) dialFunc {
 	return func(ctx context.Context, network, addr string) (net.Conn, error) {
 		d := &net.Dialer{Timeout: directDialTimeout}
 		c, err := d.DialContext(ctx, network, addr)
@@ -381,64 +407,8 @@ func disorderDial(n int) dialFunc {
 		if !ok {
 			return c, nil
 		}
-		return &disorderConn{TCPConn: tc, n: n}, nil
+		return newPartConn(tc, plan), nil
 	}
-}
-
-type disorderConn struct {
-	*net.TCPConn
-	once sync.Once
-	n    int
-}
-
-func (c *disorderConn) Write(b []byte) (int, error) {
-	if len(b) <= c.n {
-		return c.TCPConn.Write(b)
-	}
-	first := false
-	c.once.Do(func() { first = true })
-	if !first {
-		return c.TCPConn.Write(b)
-	}
-	restore, err := c.lowTTL()
-	if err != nil {
-		return c.TCPConn.Write(b)
-	}
-	n, err := c.TCPConn.Write(b[:c.n])
-	restore()
-	if err != nil {
-		return n, err
-	}
-	m, err := c.TCPConn.Write(b[c.n:])
-	return n + m, err
-}
-
-// lowTTL temporarily adjusts a socket option and returns a restore function.
-func (c *disorderConn) lowTTL() (func(), error) {
-	raw, err := c.TCPConn.SyscallConn()
-	if err != nil {
-		return nil, err
-	}
-	level, opt := syscall.IPPROTO_IP, syscall.IP_TTL
-	if a, ok := c.TCPConn.RemoteAddr().(*net.TCPAddr); ok && a.IP.To4() == nil {
-		level, opt = syscall.IPPROTO_IPV6, syscall.IPV6_UNICAST_HOPS
-	}
-	old := 64
-	var serr error
-	if err := raw.Control(func(fd uintptr) {
-		if v, err := syscall.GetsockoptInt(sockfd(fd), level, opt); err == nil && v > 0 {
-			old = v
-		}
-		serr = syscall.SetsockoptInt(sockfd(fd), level, opt, 1)
-	}); err != nil {
-		return nil, err
-	}
-	if serr != nil {
-		return nil, serr
-	}
-	return func() {
-		raw.Control(func(fd uintptr) { syscall.SetsockoptInt(sockfd(fd), level, opt, old) })
-	}, nil
 }
 
 // findStrategy returns the first of list that completes a TLS handshake
@@ -484,7 +454,7 @@ func (t *Tunnel) smartCheck(hosts []string) bool {
 		return true
 	}
 	start := time.Now()
-	found := t.findStrategy(t.strategies, hosts)
+	found := t.findStrategy(appStrategies(t.strategies), hosts)
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	if found == nil {

@@ -1,6 +1,7 @@
 package tunnel
 
 import (
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -159,5 +160,40 @@ func TestStatusDoesNotSettleHealth(t *testing.T) {
 	tt.settleHealth()
 	if !tt.healthGood.Equal(now) {
 		t.Fatal("explicit settle did not advance health")
+	}
+}
+
+// Browser site connections count as an app using Passage.
+func TestHealthCountsAnsweredSiteConnections(t *testing.T) {
+	now := time.Unix(1_000_000, 0)
+	base := Status{Started: now.Add(-time.Hour), State: "ok"}
+	if h := health(base, now); h.Reason != "waiting_app" {
+		t.Fatalf("baseline %+v", h)
+	}
+	s := base
+	s.Browser = &BrowserStatus{Total: 33, LastOK: now.Add(-10 * time.Second)}
+	if h := health(s, now); h.State != "working" {
+		t.Fatalf("site connections ignored: %+v", h)
+	}
+	s.Browser.LastOK = now.Add(-healthRecent - time.Minute)
+	if h := health(s, now); h.Reason != "waiting_app" {
+		t.Fatalf("an old site reply still counts: %+v", h)
+	}
+}
+
+func TestSiteReplySetsLastOK(t *testing.T) {
+	var d atomic.Int32
+	tt := newBrowserTunnel(t, testSites, echoDialer("d:", &d), echoDialer("t:", new(atomic.Int32)))
+	c, rep := browserSocks(t, tt, "example.org", nil)
+	if rep != 0 || roundTrip(t, c) != "d:hi" {
+		t.Fatal(rep)
+	}
+	waitFor(t, func() bool { b := tt.Status(0).Browser; return b != nil && !b.LastOK.IsZero() })
+	tt.mu.Lock()
+	defer tt.mu.Unlock()
+	for _, g := range []*group{tt.telegram, tt.other} {
+		if !g.lastConn.IsZero() {
+			t.Fatal("a site connection reached a group")
+		}
 	}
 }

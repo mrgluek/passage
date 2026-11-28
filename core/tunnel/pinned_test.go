@@ -90,7 +90,7 @@ func TestPinnedWorkingNoLookup(t *testing.T) {
 
 func TestPinnedRefusalDoesNotFallBack(t *testing.T) {
 	client, lookups, _ := pinnedFixture(t, func(w http.ResponseWriter, r *http.Request) { http.Error(w, "no", http.StatusForbidden) })
-	if _, err := client.dialHTTPSession(context.Background()); err == nil || err.Error() != "HTTP request refused" {
+	if _, err := client.dialHTTPSession(context.Background()); !errors.Is(err, errHTTPRefused) || err.Error() != "HTTP request refused (HTTP 403)" {
 		t.Fatalf("err=%v", err)
 	}
 	if lookups.Load() != 0 {

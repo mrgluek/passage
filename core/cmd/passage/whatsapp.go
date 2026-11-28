@@ -39,7 +39,7 @@ func localPortBindable(port int) bool {
 }
 
 func (s *Settings) ensureWhatsAppPorts(bindable func(int) bool) error {
-	valid := func(p int) bool { return p >= minPort && p < maxPort && p != s.Port }
+	valid := func(p int) bool { return p >= minPort && p < maxPort && p != s.Port && p != s.BrowserPort }
 	chat, media := s.WhatsAppChatPort, s.WhatsAppMediaPort
 	if !valid(chat) {
 		chat = 0
@@ -56,13 +56,13 @@ func (s *Settings) ensureWhatsAppPorts(bindable func(int) bool) error {
 	}
 	var err error
 	if chat == 0 {
-		chat, err = pick([]int{s.Port, media})
+		chat, err = pick([]int{s.Port, s.BrowserPort, media})
 		if err != nil {
 			return err
 		}
 	}
 	if media == 0 {
-		media, err = pick([]int{s.Port, chat})
+		media, err = pick([]int{s.Port, s.BrowserPort, chat})
 		if err != nil {
 			return err
 		}

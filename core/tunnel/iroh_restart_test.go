@@ -272,3 +272,32 @@ func TestIrohRestartBudget(t *testing.T) {
 		t.Fatalf("restarts=%d, want 12 (3 per 30 minutes over 2 hours; 20 without the budget)", restarts)
 	}
 }
+
+// Site dials for browsers are quiet: their timeouts neither mark the iroh
+// route down nor restart the helper that the apps' connections use.
+func TestIrohQuietSiteDialsDoNotRestart(t *testing.T) {
+	now := time.Unix(1000, 0)
+	restarts, stops := 0, 0
+	c := &irohClient{dir: t.TempDir(), now: func() time.Time { return now }, onRestart: func(time.Time) { restarts++ }}
+	defer c.Close()
+	c.start = func(life context.Context) (dialFunc, func(), error) {
+		done := make(chan struct{})
+		go func() { defer close(done); <-life.Done() }()
+		return func(ctx context.Context, _, _ string) (net.Conn, error) {
+			<-ctx.Done()
+			return nil, context.DeadlineExceeded
+		}, func() { <-done; stops++ }, nil
+	}
+	c.ready.Store(true)
+	for range 5 {
+		ctx, cancel := context.WithDeadline(context.WithValue(context.Background(), quietDialKey{}, true), time.Unix(1, 0))
+		c.DialContext(ctx, "tcp", "example.org:443")
+		cancel()
+	}
+	c.mu.Lock()
+	failures := c.failures
+	c.mu.Unlock()
+	if restarts != 0 || stops != 0 || failures != 0 || !c.ready.Load() {
+		t.Fatalf("restarts %d, stops %d, failures %d, ready %v", restarts, stops, failures, c.ready.Load())
+	}
+}

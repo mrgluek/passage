@@ -9,6 +9,8 @@
 // first among the tunnel's resolver paths; -system-dns=false turns that off.
 // iroh routes run the passage-iroh helper from next to this binary, or -iroh.
 // -my adds your own SOCKS5 proxy as the "my" route, tried before the link's.
+// -browser-listen 127.0.0.1:18001 serves a proxy.pac for the sites a
+// subscription lists; point a browser's auto-config at the printed address.
 // -test runs the network test once, prints it as JSON and exits.
 package main
 
@@ -41,6 +43,7 @@ func main() {
 	mode := flag.String("mode", tunnel.ModeAuto, "auto, always, off, route:<id>, or a route type (my, http, wss, turn, iroh, soar)")
 	my := flag.String("my", "", "your own SOCKS5 proxy as a route: [user:pass@]host:port, a socks5:// URL or a t.me/socks link")
 	listen := flag.String("listen", "127.0.0.1:18000", "SOCKS5 listen address")
+	browserListen := flag.String("browser-listen", "", "loopback address for browsers (off by default): serves /proxy.pac and a login-free SOCKS5 for the sites a subscription lists")
 	user := flag.String("user", "", "SOCKS5 username (empty = no auth)")
 	var forwards []tunnel.Forward
 	flag.Func("forward", "lab TCP forward listen=target (repeatable)", func(value string) error {
@@ -94,6 +97,7 @@ func main() {
 	}
 	cfg.Mode, cfg.Listen, cfg.User, cfg.Pass = *mode, *listen, *user, *pass
 	cfg.Forwards = forwards
+	cfg.BrowserListen = *browserListen
 	cfg.Operator = *operator
 	cfg.My = *my
 	cfg.IrohBinary = irohHelper(*iroh)
@@ -141,8 +145,15 @@ func main() {
 	fmt.Fprintf(os.Stderr, "Passage %s: SOCKS5 on %s, mode %s, %d resolvers (%d system, %d from the link)\n",
 		version, t.Addr(), cfg.Mode, len(cfg.Effective()), len(cfg.SystemResolvers), len(cfg.Resolvers))
 
+	if *browserListen != "" {
+		if url := t.PACURL(); url != "" {
+			fmt.Fprintf(os.Stderr, "Browser PAC: %s (%d sites)\n", url, len(cfg.SiteGroups()))
+		} else {
+			fmt.Fprintln(os.Stderr, "passage-cli: -browser-listen needs a loopback address that is free")
+		}
+	}
 	if *test {
-		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 		defer cancel()
 		out := json.NewEncoder(os.Stdout)
 		out.SetIndent("", "  ")
@@ -179,6 +190,9 @@ func main() {
 			if update.Changed {
 				cfg = update.Config
 				cfg.Listen = t.Addr()
+				if addr := t.BrowserAddr(); addr != "" {
+					cfg.BrowserListen = addr
+				}
 				t.Close()
 				t, err = tunnel.Start(cfg)
 				if err != nil {

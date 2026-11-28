@@ -193,7 +193,31 @@ func (p *routePool) maintenanceDialContext(ctx context.Context, network, address
 	return p.dialContext(ctx, network, address, false, false)
 }
 
+type quietDialKey struct{}
+
+// preferRouteKey names a route (by ID) to try first in this dial only. It
+// changes the order and nothing else.
+type preferRouteKey struct{}
+
+// routeIDOf names the pool route that carries c, or "".
+func routeIDOf(c net.Conn) string {
+	if v, ok := c.(viaConn); ok {
+		c = v.Conn
+	}
+	if pc, ok := c.(*poolConn); ok && pc.index < len(pc.pool.ids) {
+		return pc.pool.ids[pc.index]
+	}
+	return ""
+}
+
+// siteDialContext dials for a browser connection. A failure is returned to
+// the caller only: no cooldown, no route statistics, no subscription refresh.
+func (p *routePool) siteDialContext(ctx context.Context, network, address string) (net.Conn, error) {
+	return p.dialContext(context.WithValue(ctx, quietDialKey{}, true), network, address, false, false)
+}
+
 func (p *routePool) dialContext(ctx context.Context, network, address string, background, recordStats bool) (net.Conn, error) {
+	quiet := ctx.Value(quietDialKey{}) != nil
 	p.tick(p.clock())
 	host, _, _ := net.SplitHostPort(address)
 	order := p.order(net.ParseIP(host))
@@ -206,6 +230,11 @@ func (p *routePool) dialContext(ctx context.Context, network, address string, ba
 		return nil, errDestinationRefused
 	}
 	order = asked
+	if id, _ := ctx.Value(preferRouteKey{}).(string); id != "" {
+		if n := slices.IndexFunc(order, func(i int) bool { return i < len(p.ids) && p.ids[i] == id }); n > 0 {
+			order = append([]int{order[n]}, slices.Delete(slices.Clone(order), n, n+1)...)
+		}
+	}
 	refusals := 0
 	race, stop := context.WithCancel(ctx)
 	defer stop()
@@ -306,7 +335,7 @@ func (p *routePool) dialContext(ctx context.Context, network, address string, ba
 			if err != nil {
 				waited = time.Since(start)
 			}
-			if err != nil && !errors.Is(err, errIrohSleeping) && !errors.Is(err, context.Canceled) && !errors.Is(err, errDestinationRefused) {
+			if err != nil && !errors.Is(err, errIrohSleeping) && !errors.Is(err, context.Canceled) && !errors.Is(err, errDestinationRefused) && !quiet {
 				p.mark(i, true)
 			}
 			cancel()
@@ -392,6 +421,9 @@ func (p *routePool) dialContext(ctx context.Context, network, address string, ba
 	}
 	if refusals == started-skipped && (refusals > 0 || len(order) < len(available)) {
 		return nil, errDestinationRefused
+	}
+	if quiet {
+		return nil, errors.New("all configured routes failed")
 	}
 	p.established.Store(false)
 	if p.onFailure != nil {
@@ -752,18 +784,20 @@ func (c *irohClient) dialContext(ctx context.Context, n, a string, mode irohDial
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if c.generation == generation && c.dial != nil && !c.closed {
-		// A network test dial is a check, not traffic: its outcome neither
-		// marks the route up or down nor clears the real failures.
-		if mode != irohDiagnosis {
+		// A network test dial is a check, not traffic, and a site dial for a
+		// browser stays with that connection: their outcome neither marks
+		// the route up or down nor counts toward a restart.
+		counts := mode != irohDiagnosis && ctx.Value(quietDialKey{}) == nil
+		if counts {
 			c.ready.Store(err == nil)
 		}
 		restart := false
 		now := c.clock()
 		if err == nil {
-			if mode != irohDiagnosis {
+			if counts {
 				c.failures = 0
 			}
-		} else if mode != irohDiagnosis && !errors.Is(err, errDestinationRefused) && !errors.Is(err, context.Canceled) {
+		} else if counts && !errors.Is(err, errDestinationRefused) && !errors.Is(err, context.Canceled) {
 			c.failures++
 			c.restarts = slices.DeleteFunc(c.restarts, func(at time.Time) bool { return now.Sub(at) >= irohRestartWindow })
 			restart = c.failures >= 3 && len(c.restarts) < irohRestartBudget && (c.lastRestart.IsZero() || now.Sub(c.lastRestart) >= 5*time.Minute)

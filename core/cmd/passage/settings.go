@@ -52,6 +52,18 @@ type Settings struct {
 	AppSeen bool
 	// Lang is "en" or "ru" when chosen in the settings; empty follows the system.
 	Lang string
+	// BrowserPort is the loopback port of the browser listener; it stays the
+	// same so the auto-config address does not change.
+	BrowserPort int
+	// SystemPAC is the wish to use Passage in the system proxy settings
+	// (Windows, macOS); SysBackup is kept while the system address is ours.
+	SystemPAC bool
+	// BrowserConfirmed: the user said the browser is set up by hand.
+	BrowserConfirmed bool
+	SysBackup        sysBackup
+	// SysPending: system proxy settings were being written; a start that
+	// finds it set looks for what an interrupted write left.
+	SysPending bool
 	// Edits are local changes to the link's routes, by route ID.
 	Edits map[string]tunnel.RouteEdit
 }
@@ -67,7 +79,7 @@ func defaultSettings() Settings {
 func (s *Settings) newAccess() {
 	n, _ := rand.Int(rand.Reader, big.NewInt(maxPort-minPort))
 	s.Port = minPort + int(n.Int64())
-	for s.Port == s.WhatsAppChatPort || s.Port == s.WhatsAppMediaPort {
+	for s.Port == s.WhatsAppChatPort || s.Port == s.WhatsAppMediaPort || s.Port == s.BrowserPort {
 		s.Port = minPort + (s.Port-minPort+1)%(maxPort-minPort)
 	}
 	s.User = randomHex(4)
@@ -129,6 +141,14 @@ func loadSettings(path string) (Settings, bool, error) {
 	}
 	defer f.Close()
 	sawAppSeen := false
+	win := -1 // index of the unnamed (Windows) service in the backup
+	winBackup := func() *serviceBackup {
+		if win < 0 {
+			win = len(s.SysBackup.Services)
+			s.SysBackup.Services = append(s.SysBackup.Services, serviceBackup{})
+		}
+		return &s.SysBackup.Services[win]
+	}
 	sc := bufio.NewScanner(f)
 	for sc.Scan() {
 		line := strings.TrimSpace(sc.Text())
@@ -188,6 +208,30 @@ func loadSettings(path string) (Settings, bool, error) {
 			if v == "en" || v == "ru" {
 				s.Lang = v
 			}
+		case "browser_port":
+			if n, err := strconv.Atoi(v); err == nil && n > 0 && n < 65536 {
+				s.BrowserPort = n
+			}
+		case "system_pac":
+			s.SystemPAC = v == "true" || v == "1"
+		case "browser_confirmed":
+			s.BrowserConfirmed = v == "true" || v == "1"
+		case "sys_pending":
+			s.SysPending = v == "true" || v == "1"
+		case "sys_backup_ours":
+			s.SysBackup.Ours = v
+		case "sys_backup_prev":
+			winBackup().PrevURL = v
+		case "sys_backup_enable":
+			winBackup().ProxyEnable = v == "true" || v == "1"
+		case "sys_backup_server":
+			winBackup().ProxyServer = v
+		case "sys_backup_detect":
+			winBackup().AutoDetect = v == "true" || v == "1"
+		case "sys_backup_service":
+			if sb, ok := parseServiceBackup(v); ok {
+				s.SysBackup.Services = append(s.SysBackup.Services, sb)
+			}
 		}
 	}
 	// Settings written before this key existed: a proxy that was running was in use.
@@ -200,6 +244,10 @@ func loadSettings(path string) (Settings, bool, error) {
 	}
 	if s.User == "" || s.Pass == "" {
 		s.User, s.Pass = fresh.User, fresh.Pass
+	}
+	s.SysBackup.Active = s.SysBackup.Ours != ""
+	if s.SysBackup.Active && s.SysBackup.Services == nil {
+		winBackup() // a Windows backup that had nothing to note but the address
 	}
 	if s.Mode == "" {
 		s.Mode = tunnel.ModeAuto
@@ -266,9 +314,45 @@ autostart_dismissed=%t
 routes_notice=%s
 app_seen=%t
 lang=%s
-`, s.Port, s.User, s.Pass, s.Auth, s.WhatsApp, s.WhatsAppChatPort, s.WhatsAppMediaPort, s.Mode, s.My, s.Running, s.AutoUpdate, s.NextUpdate.Format(time.RFC3339), s.DismissedUpdate, s.AutostartDismissed, s.RoutesNotice, s.AppSeen, s.Lang)
+browser_port=%d
+system_pac=%t
+browser_confirmed=%t
+`, s.Port, s.User, s.Pass, s.Auth, s.WhatsApp, s.WhatsAppChatPort, s.WhatsAppMediaPort, s.Mode, s.My, s.Running, s.AutoUpdate, s.NextUpdate.Format(time.RFC3339), s.DismissedUpdate, s.AutostartDismissed, s.RoutesNotice, s.AppSeen, s.Lang, s.BrowserPort, s.SystemPAC, s.BrowserConfirmed)
+	if s.SysPending {
+		text += "sys_pending=true\n"
+	}
+	if b := s.SysBackup; b.Active {
+		text += fmt.Sprintf("sys_backup_ours=%s\n", oneLineValue(b.Ours))
+		for _, sb := range b.Services {
+			if sb.Name == "" {
+				text += fmt.Sprintf("sys_backup_prev=%s\nsys_backup_enable=%t\nsys_backup_server=%s\nsys_backup_detect=%t\n", oneLineValue(sb.PrevURL), sb.ProxyEnable, oneLineValue(sb.ProxyServer), sb.AutoDetect)
+			} else {
+				text += "sys_backup_service=" + strconv.Quote(sb.Name) + " " + strconv.Quote(sb.PrevURL) + "\n"
+			}
+		}
+	}
 	text += s.editLines()
 	return writeFile(path, []byte(text))
+}
+
+// oneLineValue keeps a registry value from breaking the ini format.
+func oneLineValue(v string) string { return strings.NewReplacer("\r", "", "\n", "").Replace(v) }
+
+// parseServiceBackup reads a sys_backup_service value: the service's name
+// and the address before, each a quoted string, so names keep their spaces
+// and tabs exactly. The older form, name and address split by a tab, is
+// still read.
+func parseServiceBackup(v string) (serviceBackup, bool) {
+	if q, err := strconv.QuotedPrefix(v); err == nil {
+		name, _ := strconv.Unquote(q)
+		prev, err := strconv.Unquote(strings.TrimSpace(v[len(q):]))
+		if err != nil {
+			prev = ""
+		}
+		return serviceBackup{Name: name, PrevURL: prev}, name != ""
+	}
+	name, prev, _ := strings.Cut(v, "\t")
+	return serviceBackup{Name: name, PrevURL: prev}, name != ""
 }
 
 // writeFile replaces path through a temporary file, so a crash never

@@ -93,6 +93,13 @@ type Config struct {
 	// also takes socks5:// URLs and t.me/socks links), added as the
 	// "my" route at myPriority. It comes from the app's settings, never from a link.
 	My string `json:"my,omitempty"`
+	// Sites are extra site groups for browsers (subscriptions bring their own).
+	Sites []links.SiteGroup `json:"sites,omitempty"`
+	// BrowserListen is a loopback address for the browser listener; empty is off.
+	BrowserListen string `json:"browser_listen,omitempty"`
+	// BrowserPort, when set, is used instead of opening BrowserListen: the
+	// caller keeps it open across router restarts.
+	BrowserPort *BrowserPort `json:"-"`
 }
 
 // LinkHost and LinkPath give the web form of links:

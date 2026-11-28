@@ -75,6 +75,7 @@ func runDesktop(dir string, autostart bool) {
 		icon := macTrayIcon()
 		systray.SetTemplateIcon(icon, icon)
 		d.update()
+		quitOnSignal(func() { macQuit() })
 		go func() { a.run(ctx); close(done) }()
 		go func() {
 			for {

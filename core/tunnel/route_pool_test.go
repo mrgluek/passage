@@ -237,3 +237,21 @@ func TestPinnedRouteDialHealth(t *testing.T) {
 		})
 	}
 }
+
+// A browser connection that times out on every exit changes nothing in the pool.
+func TestSiteDialFailureLeavesPoolStateAlone(t *testing.T) {
+	timeout := func(context.Context, string, string) (net.Conn, error) { return nil, errors.New("i/o timeout") }
+	failures := 0
+	pool := &routePool{clients: []soarClient{&poolFixture{dial: timeout}, &poolFixture{dial: timeout}}, ipv6: []bool{false, false}, onFailure: func() { failures++ }}
+	pool.established.Store(true)
+	if _, err := pool.siteDialContext(context.Background(), "tcp", "example.org:443"); err == nil {
+		t.Fatal("connected")
+	}
+	if len(pool.failedUntil) != 0 || failures != 0 || !pool.established.Load() {
+		t.Fatalf("site failure moved pool state: cooldown %v, refreshes %d", pool.failedUntil, failures)
+	}
+	// The same failure from an app connection still counts.
+	if _, err := pool.DialContext(context.Background(), "tcp", "example.org:443"); err == nil || len(pool.failedUntil) == 0 || failures != 1 {
+		t.Fatalf("app failure not recorded: %v %d", pool.failedUntil, failures)
+	}
+}

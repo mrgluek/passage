@@ -60,8 +60,12 @@ func health(s Status, now time.Time) Health {
 			tunnelUp = true
 		}
 	}
+	// A browser site that answered is an app using Passage too. It counts
+	// only here: site connections never join the groups.
+	siteOK := s.Browser != nil && recent(s.Browser.LastOK)
+	anyActivity = anyActivity || siteOK
 	allStalled := withConn > 0 && stalled == withConn
-	evidence := !allStalled && (okConns > 0 || probeOK || tunnelUp)
+	evidence := !allStalled && (okConns > 0 || probeOK || tunnelUp || siteOK)
 	age := now.Sub(s.Started)
 	switch {
 	case s.State == "offline" && s.LastResult.CanaryChecked:
