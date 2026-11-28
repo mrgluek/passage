@@ -1,6 +1,9 @@
 package main
 
-import "strings"
+import (
+	"encoding/xml"
+	"strings"
+)
 
 // macService is one entry of `networksetup -listnetworkserviceorder`.
 type macService struct {
@@ -81,34 +84,38 @@ func parseManualProxy(out string) (bool, string) {
 	return f["Enabled"] == "Yes", server
 }
 
-// managedProxyKeys are names that appear in a configuration profile or a
-// managed preference file when it sets proxies. They are stored as plain
-// text in both XML and binary property lists.
-var managedProxyKeys = []string{
-	"com.apple.proxy.http.global",
-	"ProxyAutoConfigURLString",
-	"ProxyAutoConfigEnable",
-	"ProxyPACURL",
-	"ProxyType",
-	"ProxyServer",
-	"HTTPProxy",
-	"HTTPSProxy",
-	"SOCKSProxy",
-}
-
-// managedProxy names the first proxy key found in data, or "". In XML
-// only whole keys and strings count, so a longer name does not match.
+// managedProxy names the setting in a property list (XML) that manages
+// proxies, or "": a ProxyType other than None (network payloads write None
+// when they leave proxies alone), or the global proxy payload.
 func managedProxy(data []byte) string {
-	text := string(data)
-	xml := strings.HasPrefix(strings.TrimSpace(text), "<?xml")
-	for _, k := range managedProxyKeys {
-		needle := k
-		if xml {
-			needle = ">" + k + "<"
+	d := xml.NewDecoder(strings.NewReader(string(data)))
+	d.Strict = false
+	key := ""
+	for {
+		tok, err := d.Token()
+		if err != nil {
+			return ""
 		}
-		if strings.Contains(text, needle) {
-			return k
+		el, ok := tok.(xml.StartElement)
+		if !ok {
+			continue
 		}
+		var text string
+		if el.Name.Local == "key" || el.Name.Local == "string" {
+			if d.DecodeElement(&text, &el) != nil {
+				return ""
+			}
+			text = strings.TrimSpace(text)
+		}
+		switch {
+		case el.Name.Local == "key":
+			key = text
+			continue
+		case el.Name.Local == "string" && key == "ProxyType" && text != "" && !strings.EqualFold(text, "None"):
+			return "ProxyType"
+		case el.Name.Local == "string" && key == "PayloadType" && text == "com.apple.proxy.http.global":
+			return text
+		}
+		key = ""
 	}
-	return ""
 }

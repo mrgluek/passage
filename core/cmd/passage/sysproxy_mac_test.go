@@ -205,8 +205,12 @@ func TestManagedProxyKeys(t *testing.T) {
 		{xml(`<key>ProxyTypeName</key><string>x</string>`), ""},
 		{xml(`<key>PayloadType</key><string>com.apple.proxy.http.global</string>`), "com.apple.proxy.http.global"},
 		{xml(`<key>ProxyType</key><string>Auto</string>`), "ProxyType"},
-		{[]byte("bplist00\xd1\x01\x02_\x10\x18ProxyAutoConfigURLString"), "ProxyAutoConfigURLString"},
-		{[]byte("bplist00\xd1\x01\x02_DNSSettings"), ""},
+		{xml(`<key>ProxyType</key><string>Manual</string><key>ProxyServer</key><string>example.org</string>`), "ProxyType"},
+		// A network profile that leaves proxies alone says None.
+		{xml(`<key>PayloadType</key><string>com.apple.wifi.managed</string><key>SSID_STR</key><string>x</string><key>ProxyType</key><string>None</string>`), ""},
+		// Proxy keys without a type (as in a VPN payload) do not count alone.
+		{xml(`<key>HTTPProxy</key><string>example.org</string><key>ProxyServer</key><string>example.org</string>`), ""},
+		{[]byte("bplist00\xd1\x01\x02_DNSSettings"), ""}, // binary lists are converted to XML first
 	} {
 		if got := managedProxy(tc.data); got != tc.want {
 			t.Errorf("%q: %q", strings.TrimSpace(string(tc.data)), got)
