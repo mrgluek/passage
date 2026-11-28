@@ -2,32 +2,31 @@
 
 ## 0.9.10
 
-- Desktop: closing a connection no longer waits on a stalled upload, and a
-  site name with no usable address fails cleanly.
-- Desktop: a site that did not reply to a plain request is no longer tried
-  first next time.
+- Desktop: fewer freezes. Closing a connection no longer waits on a stalled
+  upload, the iroh helper's exit no longer waits on pipes a child holds open,
+  the browser port pauses after repeated accept errors, and a step that runs
+  over 30 seconds writes the program's stacks to `passage-stall.txt` next to
+  the log.
+- Desktop, macOS: the window no longer waits on the app's state from the main
+  thread, and Quit ends the app after 15 seconds even if it is stuck.
+- Desktop: a site name with no usable address fails cleanly, and a site that
+  did not reply to a plain request is no longer tried first next time.
+- Desktop: the system proxy switch shows the real state after a refusal, and
+  the home steps update when an app connects.
 - Desktop, macOS: the system proxy switch copes with network services that
   cannot be read at start, a failed write after a network change, and a
   backup with no services.
-- Desktop: the system proxy switch shows the real state after a refusal, and
-  the home steps update when an app connects.
-- Desktop, macOS: the window no longer waits on the app's state from the main
-  thread, and Quit ends the app after 15 seconds even if it is stuck.
-- Desktop: a step that runs over 30 seconds writes the program's stacks to
-  `passage-stall.txt` next to the log, for diagnosing freezes.
-- The iroh helper's exit no longer waits on pipes a child holds open, and the
-  browser port pauses after repeated accept errors.
-- Desktop: with a pinned route, the update check and download also try a direct connection and the other routes when that route refuses them, and Settings says so.
-- Desktop and `passage-cli` count listed sites, not groups.
-- Site numbers in reports follow the stored order: smart sites, then tunnel
-  sites, each sorted.
-- Missed in the 0.9.9 notes: the desktop network test also checks the listed
-  sites, takes up to a minute instead of 20 seconds, and names them in copied
-  reports as `site #N`; `passage-cli` has `-browser-listen`, and its `-test`
-  waits up to 60 seconds; HTTP and WSS route failures name the stage (name
-  lookup, connect, TLS, timeout, reset or HTTP status); the desktop home
+- Desktop: with a pinned route, the update check and download also try a
+  direct connection and the other routes when that route refuses them, and
+  Settings says so.
+- Desktop and `passage-cli` count listed sites, not groups; site numbers in
+  reports follow the stored order (smart sites, then tunnel sites, each
+  sorted).
+- Also from 0.9.9: the desktop network test checks the listed sites, takes up
+  to a minute, and names them in copied reports as `site #N`; `passage-cli`
+  has `-browser-listen`; HTTP and WSS route failures name the stage; the home
   screen shows a Browser tab when the subscription lists sites; macOS puts
-  the system proxy settings back when it is stopped by a signal.
+  the system proxy settings back when a signal stops the app.
 
 ## 0.9.9
 
