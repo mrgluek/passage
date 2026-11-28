@@ -144,24 +144,25 @@ func TestSiteNeverSwitchesAfterTheFirstByte(t *testing.T) {
 	c.Close()
 }
 
-// A tunnel site goes through the strategies, then the tunnel, each with the replay.
-func TestTunnelSiteSwitchChainEndsInTheTunnel(t *testing.T) {
+// A tunnel site whose first way gets no reply goes to the tunnel next,
+// not through the other strategies first.
+func TestTunnelSiteGoesToTheTunnelAfterNoReply(t *testing.T) {
 	switchWait(t, 50*time.Millisecond)
 	var d, s atomic.Int32
 	tun := &recordingEcho{}
 	tt := newBrowserTunnel(t, testSites, silentServer(&d), tun.dial("t:"))
-	tt.strategies = []strategy{{"split", silentServer(&s)}}
+	tt.strategies = []strategy{{"split", silentServer(&s)}, {"other", silentServer(&s)}}
 	useFakeSiteTimer(tt) // the dial race is not what is tested here
 	c, rep := browserSocks(t, tt, "example.net", nil)
 	if rep != 0 {
 		t.Fatal(rep)
 	}
-	if got := roundTrip(t, c); got != "t:hi" || s.Load() == 0 {
-		t.Fatalf("%q, strategy dials %d", got, s.Load())
+	start := time.Now()
+	if got := roundTrip(t, c); got != "t:hi" || time.Since(start) > time.Second {
+		t.Fatalf("%q after %v", got, time.Since(start))
 	}
-	e := tt.sites.match("example.net")
-	if !e.strategyBadUntil("split").After(time.Now()) {
-		t.Fatal("the silent strategy was not marked")
+	if s.Load() > 1 {
+		t.Fatalf("%d strategy dials before the tunnel", s.Load())
 	}
 }
 
@@ -338,6 +339,15 @@ func TestTunnelSiteGoesToTheTunnelAfterAnEarlyStall(t *testing.T) {
 	if strings.Contains(line, "not marked") {
 		t.Fatal(line)
 	}
+	e := tt.sites.match("example.net")
+	if e.tunnelOnlyNow(time.Unix(0, now.Load())) {
+		t.Fatal("one stall was enough for 24 h")
+	}
+	// A second early stall soon after: now the tunnel only.
+	e.mu.Lock()
+	e.badStrategy = nil
+	e.mu.Unlock()
+	stallAgain(t, tt, "example.net", 20<<10)
 	waitFor(t, func() bool {
 		for _, e := range tt.log.last(50) {
 			if strings.Contains(e.Msg, "site #2 (tunnel) uses the tunnel for 24 h after a stall on smart:tlsfrag:1") {
@@ -392,5 +402,89 @@ func TestSmartSiteStallKeepsTodaysRule(t *testing.T) {
 		if strings.Contains(l.Msg, "uses the tunnel") {
 			t.Fatal(l.Msg)
 		}
+	}
+}
+
+// stallAgain is stallAfter for a later connection: it waits for a new stall line.
+func stallAgain(t *testing.T, tt *Tunnel, host string, n int) {
+	t.Helper()
+	// The line limit allows one stall line a minute per site: wait for the mark instead.
+	c, rep := browserSocks(t, tt, host, nil)
+	if rep != 0 {
+		t.Fatal(rep)
+	}
+	t.Cleanup(func() { c.Close() })
+	c.Write([]byte("GET / first"))
+	if _, err := io.ReadFull(c, make([]byte, n)); err != nil {
+		t.Fatal(err)
+	}
+	c.Write(make([]byte, 200))
+	e := tt.sites.match(host)
+	waitFor(t, func() bool {
+		e.mu.Lock()
+		defer e.mu.Unlock()
+		return len(e.badStrategy) > 0
+	})
+}
+
+// slowServer answers each first read after delay.
+func slowServer(delay time.Duration) dialFunc {
+	return func(context.Context, string, string) (net.Conn, error) {
+		a, b := net.Pipe()
+		go func() {
+			buf := make([]byte, 64<<10)
+			n, _ := b.Read(buf)
+			for m := n; m > 0 && m == len(buf); m, _ = b.Read(buf) {
+			}
+			time.Sleep(delay)
+			b.Write([]byte("late"))
+			b.Close()
+		}()
+		return a, nil
+	}
+}
+
+// A slow site with nowhere to switch to is waited for, not cut, not marked.
+func TestSlowSiteWithNoOtherWayIsWaitedFor(t *testing.T) {
+	switchWait(t, 30*time.Millisecond)
+	tt := newBrowserTunnel(t, testSites, slowServer(200*time.Millisecond), echoDialer("t:", new(atomic.Int32)))
+	c, _ := browserSocks(t, tt, "example.org", nil)
+	if got := roundTrip(t, c); got != "late" {
+		t.Fatalf("%q", got)
+	}
+	if tt.sites.match("example.org").badUntil(RouteDirect).After(time.Now()) {
+		t.Fatal("a slow site marked its only way")
+	}
+}
+
+// More than the replay buffer before the reply: no switch, no mark, the reply comes.
+func TestBigFirstFlightIsNotSwitched(t *testing.T) {
+	switchWait(t, 30*time.Millisecond)
+	var s atomic.Int32
+	tt := newBrowserTunnel(t, testSites, slowServer(200*time.Millisecond), echoDialer("t:", new(atomic.Int32)))
+	tt.strategies = []strategy{{"split", silentServer(&s)}}
+	c, _ := browserSocks(t, tt, "example.org", nil)
+	c.Write(make([]byte, siteReplayMax+1000))
+	got, _ := io.ReadAll(c)
+	if string(got) != "late" || s.Load() != 0 || tt.sites.match("example.org").badUntil(RouteDirect).After(time.Now()) {
+		t.Fatalf("%q, strategy dials %d", got, s.Load())
+	}
+}
+
+// Small writes after the reply do not add up to a waiting request.
+func TestSmallWritesAfterTheReplyAreNoStall(t *testing.T) {
+	stallWait(t, 30*time.Millisecond)
+	tt := newBrowserTunnel(t, testSites, answerN(3000), echoDialer("t:", new(atomic.Int32)))
+	c, _ := browserSocks(t, tt, "example.org", nil)
+	defer c.Close()
+	c.Write([]byte("GET / first"))
+	io.ReadFull(c, make([]byte, 3000))
+	for range 4 {
+		c.Write(make([]byte, 30))
+		time.Sleep(5 * time.Millisecond)
+	}
+	time.Sleep(150 * time.Millisecond)
+	if tt.sites.match("example.org").badUntil(RouteDirect).After(time.Now()) || stallLines(tt) != 0 {
+		t.Fatal("small writes counted as a request")
 	}
 }

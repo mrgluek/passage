@@ -120,6 +120,24 @@ func (t *Tunnel) siteFailed(entry *siteEntry, host, what string, tried []Route, 
 	t.log.add("%s failed: %s; tried %s; %d ms%s", entry.label(), what, strings.Join(names, ","), took.Milliseconds(), suffix(n))
 }
 
+// siteNote writes a line about a site through the same limits as the
+// failure lines: one per site and kind a minute, siteLogMaxLines in all.
+func (t *Tunnel) siteNote(entry *siteEntry, kind, format string, args ...any) {
+	l := t.siteDiag()
+	l.mu.Lock()
+	ok, n := l.allow(entry.name+":"+kind, t.timeNow())
+	if ok && l.lines >= siteLogMaxLines {
+		ok = false
+		l.held++
+	} else if ok {
+		l.lines++
+	}
+	l.mu.Unlock()
+	if ok {
+		t.log.add(format+"%s", append(args, suffix(n))...)
+	}
+}
+
 func (t *Tunnel) siteSucceeded() {
 	l := t.siteDiag()
 	l.mu.Lock()

@@ -64,11 +64,12 @@ func (t *Tunnel) siteNextWays(entry *siteEntry, first siteWay) []siteWay {
 			}
 		}
 	}
-	out := append(good, late...)
-	if tunnelOK {
-		out = append(out, siteWay{route: RouteTunnel})
+	if tunnelOK && entry.tunnel {
+		// A tunnel site goes to the tunnel next, as at dial time: trying the
+		// strategies first would keep it waiting several times over.
+		return []siteWay{{route: RouteTunnel}}
 	}
-	return out
+	return append(good, late...)
 }
 
 // dialWay dials one way of a chain.
@@ -127,12 +128,12 @@ type siteRelay struct {
 	started          time.Time
 	lastUp, lastDown time.Time
 	downTotal        int64
-	upPending        int // client bytes since the site's last byte
+	requestWaiting   bool // a write of a request size since the site's last byte
 }
 
-// siteRequestMin: fewer client bytes since the site's last byte are taken
-// for protocol upkeep (HTTP/2 acknowledgements and window updates fit in one
-// small TLS record), not a request that waits for an answer.
+// siteRequestMin: a smaller client write is taken for protocol upkeep (an
+// acknowledgement or window update fits in one small record), not a request
+// that waits for an answer; several of them do not add up to one.
 const siteRequestMin = 64
 
 type relayEvent struct {
@@ -142,6 +143,9 @@ type relayEvent struct {
 
 func (r *siteRelay) setRemote(c net.Conn, w siteWay) int {
 	r.t.mu.Lock()
+	if r.t.ctx.Err() != nil {
+		c.Close() // the router is closing: Close has already dropped the others
+	}
 	if r.t.siteRemotes == nil {
 		r.t.siteRemotes = map[net.Conn]struct{}{}
 	}
@@ -180,9 +184,9 @@ func (r *siteRelay) up() {
 				}
 			}
 			cur, way, hold := r.cur, r.way, r.switching
-			if r.answered {
+			if r.answered && n >= siteRequestMin {
 				r.lastUp = time.Now()
-				r.upPending += n
+				r.requestWaiting = true
 			}
 			r.mu.Unlock()
 			if !hold {
@@ -235,7 +239,7 @@ func (r *siteRelay) down(c net.Conn, gen int, w siteWay) {
 			r.mu.Lock()
 			r.lastDown = time.Now()
 			r.downTotal += int64(n)
-			r.upPending = 0
+			r.requestWaiting = false
 			r.mu.Unlock()
 			if _, werr := r.browser.Write(b[:n]); werr != nil {
 				break
@@ -335,10 +339,16 @@ func (t *Tunnel) connectSite(c bufferedConn, entry *siteEntry, host, addr string
 	case <-upDone:
 		return // the browser left before sending anything
 	}
-	timer := time.NewTimer(siteSwitchWait)
+	wait := siteSwitchWait
+	if entry.tunnel {
+		wait = min(wait, siteTunnelDelay)
+	}
+	timer := time.NewTimer(wait)
 	defer timer.Stop()
+	timerC := timer.C
 	upEnded := false
 	for {
+		closed := false
 		select {
 		case ev := <-r.events:
 			if _, _, gen := r.current(); ev.gen != gen {
@@ -362,24 +372,38 @@ func (t *Tunnel) connectSite(c bufferedConn, entry *siteEntry, host, addr string
 				<-r.finished
 				return
 			}
-			// Closed or failed before a reply: the next way at once.
-		case <-timer.C:
+			closed = true // closed or failed before a reply: the next way at once
+		case <-timerC:
 		case <-upDone:
 			upDone, upEnded = nil, true
 			continue
+		case <-t.ctx.Done():
+			return
 		}
 		r.mu.Lock()
 		if r.answered {
 			r.mu.Unlock()
 			continue // its event is on the way
 		}
+		if r.overflow || len(next) == 0 {
+			r.mu.Unlock()
+			if closed {
+				t.siteFailed(entry, host, siteNoReply, nil, t.timeNow().Sub(started), names...)
+				return
+			}
+			// Nowhere to switch to, or too much sent to replay: a slow site
+			// is still a site, so keep waiting on this way.
+			timerC = nil
+			continue
+		}
 		r.switching = true
-		cur, w, overflow := r.cur, r.way, r.overflow
+		r.gen++ // the old remote can no longer answer into this connection
+		cur, w := r.cur, r.way
 		r.mu.Unlock()
 		t.markWayBad(entry, w)
 		r.dropRemote(cur)
 		var nc net.Conn
-		for !overflow && len(next) > 0 && nc == nil {
+		for len(next) > 0 && nc == nil {
 			nw := next[0]
 			next = next[1:]
 			names = append(names, nw.String())
@@ -401,7 +425,8 @@ func (t *Tunnel) connectSite(c bufferedConn, entry *siteEntry, host, addr string
 			t.siteFailed(entry, host, siteNoReply, nil, t.timeNow().Sub(started), names...)
 			return
 		}
-		timer.Reset(siteSwitchWait)
+		timer.Reset(wait)
+		timerC = timer.C
 	}
 }
 
@@ -424,7 +449,7 @@ func (r *siteRelay) watchStall(entry *siteEntry, w siteWay) {
 		case <-tick.C:
 		}
 		r.mu.Lock()
-		waiting := r.lastUp.After(r.lastDown) && r.upPending >= siteRequestMin
+		waiting := r.requestWaiting
 		stalled := waiting && time.Since(r.lastUp) >= wait
 		got := r.downTotal
 		r.mu.Unlock()
@@ -433,14 +458,16 @@ func (r *siteRelay) watchStall(entry *siteEntry, w siteWay) {
 			// is noted only, or the next connections would go back to the
 			// blocked ways.
 			early := got < siteStallEarlyBytes && time.Since(r.started) < siteStallEarlyAge
+			now := r.t.timeNow()
 			if w.route != RouteTunnel && early {
 				r.t.markWayBad(entry, w)
-				r.t.log.add("%s stalled on %s after %d KB", entry.label(), w, got/1024)
-				if entry.tunnel && entry.useTunnelOnly(r.t.timeNow()) {
+				r.t.siteNote(entry, "stall", "%s stalled on %s after %d KB", entry.label(), w, got/1024)
+				// One stall can be a slow reply; a second one soon after is not.
+				if entry.tunnel && entry.noteEarlyStall(now) && entry.useTunnelOnly(now) {
 					r.t.log.add("%s uses the tunnel for 24 h after a stall on %s", entry.label(), w)
 				}
 			} else {
-				r.t.log.add("%s stalled on %s after %d KB (not marked)", entry.label(), w, got/1024)
+				r.t.siteNote(entry, "stall", "%s stalled on %s after %d KB (not marked)", entry.label(), w, got/1024)
 			}
 			return
 		}

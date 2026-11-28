@@ -110,6 +110,17 @@ type siteEntry struct {
 	// tunnelOnly: a tunnel site whose direct or smart way stalled goes
 	// straight to the tunnel until then.
 	tunnelOnly time.Time
+	lastStall  time.Time // the last early stall on direct or smart
+}
+
+// noteEarlyStall records an early stall and reports whether another one
+// came less than siteBadFor before it.
+func (e *siteEntry) noteEarlyStall(now time.Time) bool {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	again := !e.lastStall.IsZero() && now.Sub(e.lastStall) < siteBadFor
+	e.lastStall = now
+	return again
 }
 
 // siteTunnelOnlyFor is how long a tunnel site skips direct and smart after
@@ -232,7 +243,7 @@ func (s *siteSet) resetMemory() {
 	}
 	for _, e := range s.entries {
 		e.mu.Lock()
-		e.win, e.bad, e.badStrategy, e.tunnelOnly = siteWin{}, [numRoutes]time.Time{}, nil, time.Time{}
+		e.win, e.bad, e.badStrategy, e.tunnelOnly, e.lastStall = siteWin{}, [numRoutes]time.Time{}, nil, time.Time{}, time.Time{}
 		e.mu.Unlock()
 	}
 }
