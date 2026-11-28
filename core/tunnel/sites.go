@@ -80,12 +80,12 @@ func (s *siteSet) numberSites(ordered []SiteGroup) {
 		e.num = 0
 	}
 	n := 0
-	for _, g := range ordered {
+	for gi, g := range ordered {
 		for _, h := range g.Hosts {
 			h = strings.ToLower(strings.TrimSuffix(h, "."))
 			if e := s.entries[h]; e != nil && e.num == 0 {
 				n++
-				e.num = n
+				e.num, e.group = n, gi
 			}
 		}
 	}
@@ -101,6 +101,7 @@ func (e *siteEntry) label() string {
 type siteEntry struct {
 	name   string // the listed host
 	num    int    // 1-based place in the merged list, in subscription order
+	group  int    // the subscription group the host is first listed in
 	tunnel bool
 	mu     sync.Mutex
 	bad    [numRoutes]time.Time

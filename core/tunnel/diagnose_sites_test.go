@@ -201,3 +201,76 @@ func TestNetworkTestTriesWWWThenSaysNoAddress(t *testing.T) {
 		}
 	}
 }
+
+func siteRows(d Diagnosis) (rows []DiagRow) {
+	for _, r := range d.Rows {
+		if r.Kind == "site" {
+			rows = append(rows, r)
+		}
+	}
+	return
+}
+
+func quietDiag(t *testing.T, tt *Tunnel) {
+	t.Helper()
+	tt.cfg.Canaries, tt.cfg.References = nil, nil
+	saved := diagTelegramDCs
+	diagTelegramDCs = nil
+	t.Cleanup(func() { diagTelegramDCs = saved })
+	tt.siteDataProbe = func(context.Context, dialFunc, string, string) (int, error) { return 1, nil }
+	tt.siteOtherProbe = func(context.Context, dialFunc, string, string) error { return nil }
+}
+
+// Every group gets a row even when the first group alone fills the cap.
+func TestNetworkTestCoversEveryGroup(t *testing.T) {
+	var big []string
+	for i := range 30 {
+		big = append(big, fmt.Sprintf("s%02d.example.org", i))
+	}
+	groups := []SiteGroup{{Via: "smart", Hosts: big}, {Via: "tunnel", Hosts: []string{"t1.example.net", "t2.example.net"}}, {Via: "smart", Hosts: []string{"last.example.com"}}}
+	tt := newBrowserTunnel(t, groups, nil, nil)
+	quietDiag(t, tt)
+	d := tt.Diagnose(context.Background())
+	got := map[string]bool{}
+	for _, r := range siteRows(d) {
+		got[r.Host] = true
+	}
+	if len(siteRows(d)) != diagSiteRows || !got["s00.example.org"] || !got["t1.example.net"] || !got["last.example.com"] {
+		t.Fatalf("%d rows: %v", len(siteRows(d)), got)
+	}
+	if d.SitesNotTested != 33-diagSiteRows {
+		t.Fatalf("not tested %d", d.SitesNotTested)
+	}
+}
+
+// Names without any address get their row but do not use up the cap.
+func TestNoAddressSitesDoNotUseTheCap(t *testing.T) {
+	var hosts []string
+	for i := range 5 {
+		hosts = append(hosts, fmt.Sprintf("gone%d.example.org", i))
+	}
+	for i := range 20 {
+		hosts = append(hosts, fmt.Sprintf("s%02d.example.org", i))
+	}
+	tt := newBrowserTunnel(t, []SiteGroup{{Via: "smart", Hosts: hosts}}, nil, nil)
+	quietDiag(t, tt)
+	notFound := &net.DNSError{Err: "no such host", IsNotFound: true}
+	tt.siteDNS = fakeSiteDNS(func(_ context.Context, h string) ([]string, error) {
+		if strings.Contains(h, "gone") {
+			return nil, notFound
+		}
+		return []string{"192.0.2.1"}, nil
+	}, func(context.Context, string) ([]string, error) { return nil, notFound })
+	d := tt.Diagnose(context.Background())
+	withAddr, without := 0, 0
+	for _, r := range siteRows(d) {
+		if r.Results[0].Error == "no address" {
+			without++
+		} else {
+			withAddr++
+		}
+	}
+	if withAddr != diagSiteRows || without != 5 || d.SitesNotTested != 25-5-diagSiteRows {
+		t.Fatalf("%d with an address, %d without, %d not tested", withAddr, without, d.SitesNotTested)
+	}
+}

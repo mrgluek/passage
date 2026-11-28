@@ -84,14 +84,7 @@ func (t *Tunnel) Diagnose(ctx context.Context) Diagnosis {
 	for _, dc := range diagTelegramDCs {
 		targets = append(targets, target{addr: dc, kind: "telegram"})
 	}
-	sites := t.diagSitesLocked()
-	notTested := 0
-	if len(sites) > diagSiteRows {
-		sites, notTested = sites[:diagSiteRows], len(sites)-diagSiteRows
-	}
-	for _, e := range sites {
-		targets = append(targets, target{addr: e.label(), kind: "site", site: e})
-	}
+	sites := diagSiteOrder(t.diagSitesLocked())
 	strategies := t.strategies
 	var tunnels []tunnelWay
 	if p, ok := t.client.(*routePool); ok {
@@ -107,6 +100,12 @@ func (t *Tunnel) Diagnose(ctx context.Context) Diagnosis {
 	}
 	routes := t.routes()
 	t.mu.Unlock()
+
+	picked, siteAddrs, notTested := t.diagPickSites(sites)
+	sites = picked
+	for _, e := range sites {
+		targets = append(targets, target{addr: e.label(), kind: "site", site: e})
+	}
 
 	d := Diagnosis{Time: time.Now().UTC(), Ways: []string{"direct"}, Routes: routes, SitesNotTested: notTested}
 	for _, s := range strategies {
@@ -144,7 +143,7 @@ func (t *Tunnel) Diagnose(ctx context.Context) Diagnosis {
 			}()
 		}
 		if tg.site != nil {
-			t.diagSite(ctx, &d.Rows[i], tg.site, strategies, tunnels, tunnelCol, otherCol, otherName, directDial, &wg, check)
+			t.diagSite(ctx, &d.Rows[i], tg.site, siteAddrs[tg.site], strategies, tunnels, tunnelCol, otherCol, otherName, directDial, &wg, check)
 			continue
 		}
 		if otherCol >= 0 {
@@ -272,7 +271,7 @@ func (t *Tunnel) diagSitesLocked() []*siteEntry {
 // handshake. A bare name without an address is tried with "www.". The
 // network's own ways run one after another, so a site does not get a burst
 // of hellos at once; the tunnel routes run beside them.
-func (t *Tunnel) diagSite(ctx context.Context, row *DiagRow, e *siteEntry, strategies []strategy, tunnels []tunnelWay, tunnelCol, otherCol int, otherName string,
+func (t *Tunnel) diagSite(ctx context.Context, row *DiagRow, e *siteEntry, pre siteAddr, strategies []strategy, tunnels []tunnelWay, tunnelCol, otherCol int, otherName string,
 	directDial dialFunc, wg *sync.WaitGroup, check func(int, time.Duration, func(context.Context) error)) {
 	probe := t.siteDataProbe
 	if probe == nil {
@@ -286,8 +285,8 @@ func (t *Tunnel) diagSite(ctx context.Context, row *DiagRow, e *siteEntry, strat
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		host, addr, err := t.diagSiteAddr(e)
-		if err != nil && noAddress(err) {
+		host, addr, err := pre.host, pre.addr, pre.err
+		if pre.noAddress() {
 			row.Host = e.name
 			res[0] = DiagResult{Error: "no address"}
 			for i := 1; i < len(res); i++ {
@@ -397,6 +396,65 @@ func probeOtherName(ctx context.Context, dial dialFunc, addr, name string) error
 		return errors.New("silent")
 	}
 	return err
+}
+
+// siteAddr is a listed site's name and address as the test resolved them.
+type siteAddr struct {
+	host, addr string
+	err        error
+}
+
+func (a siteAddr) noAddress() bool { return a.err != nil && noAddress(a.err) }
+
+// diagSiteOrder puts the first host of every subscription group first, in
+// group order, then the other hosts by number, so that every group gets
+// a row before any group gets a second one.
+func diagSiteOrder(all []*siteEntry) []*siteEntry {
+	seen := map[int]bool{}
+	var first, rest []*siteEntry
+	for _, e := range all { // all is in number order
+		if !seen[e.group] {
+			seen[e.group] = true
+			first = append(first, e)
+		} else {
+			rest = append(rest, e)
+		}
+	}
+	slices.SortStableFunc(first, func(a, b *siteEntry) int { return a.group - b.group })
+	return append(first, rest...)
+}
+
+// diagPickSites resolves the sites in order and picks up to diagSiteRows
+// that have an address. A site with no address at all gets its row but
+// does not use up the cap; at most diagSiteRows of those are looked at
+// beyond it. notTested counts the sites left out.
+func (t *Tunnel) diagPickSites(order []*siteEntry) (picked []*siteEntry, addrs map[*siteEntry]siteAddr, notTested int) {
+	cand := order[:min(len(order), 2*diagSiteRows)]
+	res := make([]siteAddr, len(cand))
+	var wg sync.WaitGroup
+	for i, e := range cand {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			h, a, err := t.diagSiteAddr(e)
+			res[i] = siteAddr{h, a, err}
+		}()
+	}
+	wg.Wait()
+	addrs = map[*siteEntry]siteAddr{}
+	counted, used := 0, 0
+	for i, e := range cand {
+		if counted == diagSiteRows {
+			break
+		}
+		used = i + 1
+		picked = append(picked, e)
+		addrs[e] = res[i]
+		if !res[i].noAddress() {
+			counted++
+		}
+	}
+	return picked, addrs, len(order) - used
 }
 
 // diagSiteAddr resolves a listed site for the test, with "www." when the
