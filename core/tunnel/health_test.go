@@ -58,6 +58,16 @@ func TestHealth(t *testing.T) {
 			Stats: map[string]routeStats{"tunnel": {Conns: 2}}, Groups: map[string]GroupStatus{"a": conn("stall", "r1", time.Minute)}}, "problem", "no_route"},
 		{"later stalls outrank probes", Status{Started: now.Add(-time.Hour), Groups: map[string]GroupStatus{
 			"a": conn("later", "direct", time.Minute), "b": {LastProbe: *ago(time.Minute), LastResult: probeResult{RelayOK: 1}}}}, "problem", "no_route"},
+		{"refused on one route while others answer", Status{Started: now.Add(-time.Hour), State: "blocked", RouteCount: 13,
+			Stats:   map[string]routeStats{"tunnel": {Conns: 50}},
+			Tunnels: []RouteState{{ID: "br", State: routeFailed}, {ID: "berry", State: routeUp, Recent: &RouteRecentStats{Won: 25, Lost: 25}}, {ID: "dns", State: routeUp, Recent: &RouteRecentStats{Won: 25}}},
+			Groups:  map[string]GroupStatus{"telegram": conn("refused", "br", time.Minute)}}, "working", ""},
+		{"refused on the only answering route", Status{Started: now.Add(-time.Hour), RouteCount: 2,
+			Tunnels: []RouteState{{ID: "berry", State: routeUp, Recent: &RouteRecentStats{Won: 25}}, {ID: "br", State: routeFailed}},
+			Groups:  map[string]GroupStatus{"telegram": conn("refused", "berry", time.Minute)}}, "problem", "no_route"},
+		{"refused with up routes that won nothing", Status{Started: now.Add(-time.Hour), RouteCount: 2,
+			Tunnels: []RouteState{{ID: "berry", State: routeUp, Recent: &RouteRecentStats{Lost: 5}}},
+			Groups:  map[string]GroupStatus{"telegram": conn("refused", "br", time.Minute)}}, "problem", "no_route"},
 		{"stalls too early", Status{Started: now.Add(-100 * time.Second), Groups: map[string]GroupStatus{
 			"a": conn("stall", "direct", time.Minute)}}, "starting", ""},
 		{"slow", Status{Started: now.Add(-time.Hour), Groups: map[string]GroupStatus{
