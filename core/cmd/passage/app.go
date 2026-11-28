@@ -104,6 +104,11 @@ func newApp(dir, version, iroh, lang string, os platform) *App {
 	if !existed {
 		a.saveSettings()
 	}
+	if strings.Count(a.settings.RoutesNotice, ",") == 1 {
+		// an old notice without a time can never expire
+		a.settings.RoutesNotice = ""
+		a.saveSettings()
+	}
 	a.loadLink()
 	return a
 }
@@ -624,7 +629,7 @@ func (a *App) viewLocked() (view, bool) {
 	if len(v.Subscriptions) == 0 {
 		v.SubscriptionsEmpty = a.t.f("subscriptions_empty")
 	}
-	v.SubscriptionNotice = noticeText(a.t, a.settings.RoutesNotice)
+	v.SubscriptionNotice = noticeText(a.t, a.settings.RoutesNotice, time.Now())
 	if a.subscriptionNotice != "" {
 		v.SubscriptionNotice = a.subscriptionNotice
 	}

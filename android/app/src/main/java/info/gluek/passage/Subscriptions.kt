@@ -46,6 +46,8 @@ object Subscriptions {
     }
 
     data class Notice(val added: Int, val removed: Int, val time: Long? = null) {
+        /** A notice without a time can't age out, so it counts as stale. */
+        fun stale(now: Long): Boolean = time == null || now - time > 24L * 60 * 60 * 1000
         fun encode(): String = "$added,$removed" + (time?.let { ",$it" } ?: "")
         fun clock(): String? = time?.let {
             java.text.SimpleDateFormat("HH:mm", java.util.Locale.ROOT).format(java.util.Date(it))

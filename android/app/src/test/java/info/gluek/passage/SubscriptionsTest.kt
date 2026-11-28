@@ -33,6 +33,9 @@ class SubscriptionsTest {
         assertEquals(Subscriptions.Notice(1, 3), Subscriptions.decodeNotice("1,3"))
         assertEquals("1,3", Subscriptions.Notice(1, 3).encode())
         assertNull(Subscriptions.decodeNotice("1,3")!!.clock())
+        assertTrue(Subscriptions.decodeNotice("1,3")!!.stale(0L))
+        assertFalse(Subscriptions.Notice(1, 3, 1000L).stale(1000L + 23L * 3600_000))
+        assertTrue(Subscriptions.Notice(1, 3, 1000L).stale(1000L + 25L * 3600_000))
         for (value in listOf("", "1", "-1,0", "a,1", "0,0,bad", "1,2,0", "1,2,3,4")) {
             assertNull(value, Subscriptions.decodeNotice(value))
         }

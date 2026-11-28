@@ -313,7 +313,10 @@ func refreshNotice(before, after tunnel.Config, now time.Time) string {
 	return fmt.Sprintf("%d,%d,%d", added, removed, now.UnixMilli())
 }
 
-func noticeText(t tr, value string) string {
+// noticeLife is how long a routes notice stays on screen.
+const noticeLife = 24 * time.Hour
+
+func noticeText(t tr, value string, now time.Time) string {
 	parts := strings.Split(value, ",")
 	if len(parts) != 2 && len(parts) != 3 {
 		return ""
@@ -333,7 +336,11 @@ func noticeText(t tr, value string) string {
 	if err != nil || millis <= 0 {
 		return ""
 	}
-	return t.f("sub_routes_timed", added, removed, time.UnixMilli(millis).Local().Format("15:04"))
+	at := time.UnixMilli(millis)
+	if now.Sub(at) > noticeLife {
+		return ""
+	}
+	return t.f("sub_routes_timed", added, removed, at.Local().Format("15:04"))
 }
 
 func (a *App) applySubscriptionRefreshLocked(cfg tunnel.Config, restart bool) error {
