@@ -154,3 +154,25 @@ func TestSiteAddressesIPv4First(t *testing.T) {
 		t.Fatal(got)
 	}
 }
+
+// A first address that never answers leaves time for the next one.
+func TestSiteDialTriesTheNextAddressInTime(t *testing.T) {
+	tt := newBrowserTunnel(t, testSites, nil, nil)
+	tt.siteDNS = fakeSiteDNS(func(context.Context, string) ([]string, error) { return []string{"192.0.2.1", "192.0.2.2"}, nil }, nil)
+	dial := func(ctx context.Context, _, addr string) (net.Conn, error) {
+		if addr == "192.0.2.1:443" {
+			<-ctx.Done()
+			return nil, ctx.Err()
+		}
+		a, _ := net.Pipe()
+		return a, nil
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Second)
+	defer cancel()
+	start := time.Now()
+	c, err := tt.resolvedSiteDial(dial, true)(ctx, "tcp", "example.org:443")
+	if err != nil || time.Since(start) > 3*time.Second {
+		t.Fatalf("%v after %v", err, time.Since(start))
+	}
+	c.Close()
+}

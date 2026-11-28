@@ -18,6 +18,9 @@ const (
 	siteDNSMax     = 512
 )
 
+// siteAddrMin is the least time one of several addresses gets.
+const siteAddrMin = time.Second
+
 // errSiteDoT: DoT gave no answer for a listed site.
 var errSiteDoT = errors.New("DoT lookup failed")
 
@@ -138,8 +141,16 @@ func (t *Tunnel) resolvedSiteDial(dial dialFunc, fallback bool) dialFunc {
 			return nil, err
 		}
 		var last error
-		for _, ip := range addrsIPv4First(addrs) {
-			c, err := dial(ctx, network, net.JoinHostPort(ip, port))
+		list := addrsIPv4First(addrs)
+		for i, ip := range list {
+			// Each address gets its share of the time left, so one that
+			// never answers does not use it all; the last gets the rest.
+			actx, cancel := ctx, context.CancelFunc(func() {})
+			if dl, ok := ctx.Deadline(); ok && i < len(list)-1 {
+				actx, cancel = context.WithTimeout(ctx, max(time.Until(dl)/time.Duration(len(list)-i), siteAddrMin))
+			}
+			c, err := dial(actx, network, net.JoinHostPort(ip, port))
+			cancel()
 			if err == nil {
 				return c, nil
 			}
