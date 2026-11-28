@@ -48,6 +48,10 @@ func (t *Tunnel) recordFailedDial(g *group, route string, err error, waited time
 	if g.kind == kindTelegram && route == RouteDirect.String() && errors.Is(err, context.Canceled) {
 		return
 	}
+	if routeGone(err) {
+		// a route that no longer exists says nothing about the group
+		return
+	}
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	if isDialTimeout(err) {

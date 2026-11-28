@@ -24,6 +24,7 @@ import (
 // connections don't each wait on it before the backup.
 const (
 	routeCooldown       = 30 * time.Second
+	routeGoneCooldown   = 10 * time.Minute
 	routeAttemptTimeout = 8 * time.Second
 )
 
@@ -346,7 +347,11 @@ func (p *routePool) dialContext(ctx context.Context, network, address string, ba
 				waited = time.Since(start)
 			}
 			if err != nil && !errors.Is(err, errIrohSleeping) && !errors.Is(err, context.Canceled) && !errors.Is(err, errDestinationRefused) && !quiet {
-				p.mark(i, true)
+				cooldown := routeCooldown
+				if routeGone(err) {
+					cooldown = routeGoneCooldown
+				}
+				p.markFor(i, true, cooldown)
 			}
 			cancel()
 			results <- result{i, conn, err, connect, waited}
@@ -535,7 +540,9 @@ func (p *routePool) restrict(selection string) bool {
 	return true
 }
 
-func (p *routePool) mark(i int, failed bool) {
+func (p *routePool) mark(i int, failed bool) { p.markFor(i, failed, routeCooldown) }
+
+func (p *routePool) markFor(i int, failed bool, cooldown time.Duration) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	if !failed {
@@ -545,7 +552,7 @@ func (p *routePool) mark(i int, failed bool) {
 	if p.failedUntil == nil {
 		p.failedUntil = map[int]time.Time{}
 	}
-	p.failedUntil[i] = p.clock().Add(routeCooldown)
+	p.failedUntil[i] = p.clock().Add(cooldown)
 }
 
 // Route states in Status.Tunnels.

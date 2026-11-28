@@ -59,3 +59,10 @@ func transportStage(err error) string {
 	}
 	return "network"
 }
+
+// routeGone reports an upgrade answered with 404 or 410: the endpoint no
+// longer serves this route, so retrying it soon is wasted work.
+func routeGone(err error) bool {
+	var f *routeFailure
+	return errors.As(err, &f) && errors.Is(f.base, errWSSUpgrade) && (f.stage == "HTTP 404" || f.stage == "HTTP 410")
+}
