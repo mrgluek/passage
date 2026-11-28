@@ -60,10 +60,9 @@ func TestFailedSiteLineIsMaskedAndHasTheFacts(t *testing.T) {
 			t.Errorf("line lacks %q: %s", want, fail)
 		}
 	}
-	// The same host gets the same label; the SOCKS error is logged without a name.
-	if !strings.Contains(strings.Join(siteLines(tt), "\n"), "SOCKS error reply 0x04") {
-		t.Fatal("SOCKS error reply not logged")
-	}
+	// The same host gets the same label; the SOCKS error is logged without a
+	// name (just after the reply is sent, so wait for it).
+	waitFor(t, func() bool { return strings.Contains(strings.Join(siteLines(tt), "\n"), "SOCKS error reply 0x04") })
 }
 
 func TestSiteFailureLinesAreRateLimitedPerHost(t *testing.T) {

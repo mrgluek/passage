@@ -430,6 +430,10 @@ func (t *Tunnel) connectSite(c bufferedConn, entry *siteEntry, host, addr string
 		cur, w := r.cur, r.way
 		r.mu.Unlock()
 		t.markWayBad(entry, w)
+		// No reply counts like an early stall for the tunnel-only rule.
+		if now := t.timeNow(); entry.tunnel && w.route != RouteTunnel && entry.noteEarlyStall(now) && entry.useTunnelOnly(now) {
+			t.log.add("%s uses the tunnel for 24 h after no reply on %s", entry.label(), w)
+		}
 		r.dropRemote(cur)
 		var nc net.Conn
 		for len(next) > 0 && nc == nil {

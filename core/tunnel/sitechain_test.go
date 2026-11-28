@@ -561,3 +561,25 @@ func TestPlainDataIsNotReplayed(t *testing.T) {
 		t.Fatal("a plain request was sent again on another way")
 	}
 }
+
+// Two connections without a reply on the direct way put a tunnel site on
+// the tunnel only, like two early stalls.
+func TestNoReplyTwiceGoesToTheTunnelOnly(t *testing.T) {
+	switchWait(t, 30*time.Millisecond)
+	var d atomic.Int32
+	tun := &recordingEcho{}
+	tt := newBrowserTunnel(t, testSites, silentServer(&d), tun.dial("t:"))
+	useFakeSiteTimer(tt)
+	for range 2 {
+		c, _ := browserSocks(t, tt, "example.net", nil)
+		if got := tlsRoundTrip(t, c); got != "t:"+string(helloHi) {
+			t.Fatalf("%q", got)
+		}
+		e := tt.sites.match("example.net")
+		e.clear(RouteDirect)
+		e.forget() // else the next connection starts on the tunnel it remembers
+	}
+	if !tt.sites.match("example.net").tunnelOnlyNow(time.Now()) {
+		t.Fatal("not tunnel only after two connections without a reply")
+	}
+}
