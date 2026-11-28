@@ -48,8 +48,8 @@ func (t *Tunnel) recordFailedDial(g *group, route string, err error, waited time
 	if g.kind == kindTelegram && route == RouteDirect.String() && errors.Is(err, context.Canceled) {
 		return
 	}
-	if routeGone(err) {
-		// a route that no longer exists says nothing about the group
+	if routeGone(err) || errors.Is(err, errDestinationRefused) {
+		// a vanished route or an exit's policy answer says nothing about the group
 		return
 	}
 	t.mu.Lock()
@@ -68,6 +68,9 @@ func isDialTimeout(err error) bool {
 
 func (t *Tunnel) recordConnectionAfterLocked(g *group, outcome, route string, after time.Duration) {
 	g.lastConn = t.timeNow()
+	if outcome == "ok" {
+		g.lastConnOK = g.lastConn
+	}
 	g.lastConnResult = connectionResult{Outcome: outcome, Route: route, AfterSecs: int(after.Round(time.Second) / time.Second)}
 	if route == RouteDirect.String() || route == RouteSmart.String() {
 		g.lastDirectConn = g.lastConn

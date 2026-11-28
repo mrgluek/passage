@@ -15,6 +15,7 @@ const (
 	healthStarting  = 90 * time.Second
 	healthQuiet     = 5 * time.Second // an unused proxy shows "starting" only this long
 	healthSettle    = 120 * time.Second
+	healthOKHold    = 60 * time.Second // a failure this soon after a success does not flip the verdict
 	healthSlowStart = 180 * time.Second
 )
 
@@ -50,15 +51,16 @@ func health(s Status, now time.Time) Health {
 				if reserve[g.LastConnResult.Route] {
 					reserveOnly++
 				}
-			case "refused", "timeout":
-				// one route failing the dial is not a stall while another carries traffic
-				if answering(g.LastConnResult.Route) {
+			case "refused", "timeout", "stall", "later":
+				if g.LastConnOK != nil && now.Sub(*g.LastConnOK) < healthOKHold {
+					covered = true
+				} else if g.LastConnResult.Outcome == "stall" || g.LastConnResult.Outcome == "later" {
+					stalled++
+				} else if answering(g.LastConnResult.Route) {
 					covered = true
 				} else {
 					stalled++
 				}
-			case "stall", "later":
-				stalled++
 			}
 			anyActivity = true
 		}

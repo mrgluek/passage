@@ -68,6 +68,13 @@ func TestHealth(t *testing.T) {
 		{"refused with up routes that won nothing", Status{Started: now.Add(-time.Hour), RouteCount: 2,
 			Tunnels: []RouteState{{ID: "berry", State: routeUp, Recent: &RouteRecentStats{Lost: 5}}},
 			Groups:  map[string]GroupStatus{"telegram": conn("refused", "br", time.Minute)}}, "problem", "no_route"},
+		{"report 65: refused via one exit, two others win", Status{Started: now.Add(-time.Hour), State: "blocked", RouteCount: 10,
+			Tunnels: []RouteState{{ID: "berry-uk", State: routeUp}, {ID: "berry-de", State: routeUp, Recent: &RouteRecentStats{Won: 12, Lost: 12}}, {ID: "ya", State: routeUp, Recent: &RouteRecentStats{Won: 12}}},
+			Groups:  map[string]GroupStatus{"telegram": conn("refused", "berry-uk", time.Minute)}}, "working", ""},
+		{"failure right after a success does not flip", Status{Started: now.Add(-time.Hour), RouteCount: 1,
+			Groups: map[string]GroupStatus{"a": {LastConn: ago(time.Second), LastConnOK: ago(20 * time.Second), LastConnResult: &connectionResult{Outcome: "stall", Route: "direct"}}}}, "working", ""},
+		{"failure long after the last success", Status{Started: now.Add(-time.Hour), RouteCount: 1,
+			Groups: map[string]GroupStatus{"a": {LastConn: ago(time.Second), LastConnOK: ago(2 * time.Minute), LastConnResult: &connectionResult{Outcome: "stall", Route: "direct"}}}}, "problem", "no_route"},
 		{"stalls too early", Status{Started: now.Add(-100 * time.Second), Groups: map[string]GroupStatus{
 			"a": conn("stall", "direct", time.Minute)}}, "starting", ""},
 		{"slow", Status{Started: now.Add(-time.Hour), Groups: map[string]GroupStatus{

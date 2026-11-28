@@ -90,6 +90,7 @@ type group struct {
 	lastResult     probeResult
 	lastConn       time.Time
 	lastConnResult connectionResult
+	lastConnOK     time.Time
 	lastDisagree   time.Time
 
 	trial          *groupTrial
@@ -2495,6 +2496,8 @@ type GroupStatus struct {
 	LastResult     probeResult       `json:"last_result"`
 	LastConn       *time.Time        `json:"last_conn,omitempty"`
 	LastConnResult *connectionResult `json:"last_conn_result,omitempty"`
+	// LastConnOK is the last successful connection, kept so one later failure does not flip the verdict.
+	LastConnOK *time.Time `json:"last_conn_ok,omitempty"`
 	// DirectSlowUntil is set while the tunnel is preferred because direct connects are slow.
 	DirectSlowUntil *time.Time `json:"direct_slow_until,omitempty"`
 	Targets         []string   `json:"targets"` // what the next probe checks
@@ -2581,6 +2584,11 @@ func (t *Tunnel) statusLocked(n int) Status {
 			stamp, result := gs.lastConn.UTC(), gs.lastConnResult
 			lastConn, lastConnResult = &stamp, &result
 		}
+		var lastConnOK *time.Time
+		if !gs.lastConnOK.IsZero() {
+			stamp := gs.lastConnOK.UTC()
+			lastConnOK = &stamp
+		}
 		var slowUntil *time.Time
 		if gs.slow.active(t.timeNow()) {
 			stamp := gs.slow.until.UTC()
@@ -2599,6 +2607,7 @@ func (t *Tunnel) statusLocked(n int) Status {
 			LastResult:      gs.lastResult,
 			LastConn:        lastConn,
 			LastConnResult:  lastConnResult,
+			LastConnOK:      lastConnOK,
 			Targets:         append([]string{}, t.targetsLocked(gs)...),
 		}
 	}

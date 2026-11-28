@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/tls"
 	"errors"
+	"fmt"
 	"io"
 	"net"
 	"net/http"
@@ -98,5 +99,20 @@ func TestGoneRouteCoolsLongAndIsNoVerdict(t *testing.T) {
 	tt.recordFailedDial(g, "br", refusedWith(errWSSUpgrade, 403), 0)
 	if g.lastConnResult.Outcome != "refused" {
 		t.Fatal("other refusals still count", g.lastConnResult)
+	}
+}
+
+func TestDestinationRefusalIsNoGroupResult(t *testing.T) {
+	clock := time.Unix(1000, 0)
+	tt, g := evidenceTunnel(&clock)
+	tt.recordFailedDial(g, "berry-uk", fmt.Errorf("x: %w", errDestinationRefused), 0)
+	tt.recordFailedDial(g, "berry-uk", errDestinationUnreachable, 0)
+	if g.lastConnResult.Outcome != "" || !g.lastConn.IsZero() {
+		t.Fatal("policy refusal recorded", g.lastConnResult)
+	}
+	tt.recordConnection(g, "ok", "berry-de")
+	tt.recordFailedDial(g, "berry-uk", errors.New("reset"), 0)
+	if g.lastConnOK.IsZero() || g.lastConnResult.Outcome != "refused" {
+		t.Fatal("ok time or failure lost", g.lastConnOK, g.lastConnResult)
 	}
 }
