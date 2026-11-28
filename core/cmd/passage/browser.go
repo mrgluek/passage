@@ -52,11 +52,7 @@ func (a *App) confirmBrowser(on bool) {
 }
 
 func (a *App) siteCountLocked() int {
-	n := 0
-	for _, g := range a.linkCfg.SiteGroups() {
-		n += len(g.Hosts)
-	}
-	return n
+	return a.linkCfg.SiteCount()
 }
 
 // browserWantedLocked: the listener runs when there are sites to serve or
@@ -408,7 +404,7 @@ func (a *App) extendSystemPAC(why string) {
 	added, skipped, err := extendSystemPAC(sp, &b)
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	a.settings.SysPending = false
+	a.settings.SysPending = err != nil // a write that failed may have been applied
 	defer a.saveSettings()
 	if added > 0 && a.settings.SysBackup.Active && a.settings.SysBackup.Ours == b.Ours {
 		a.settings.SysBackup = b

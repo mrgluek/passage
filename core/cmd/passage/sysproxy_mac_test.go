@@ -416,3 +416,42 @@ func TestSecondEnableKeepsTheBackup(t *testing.T) {
 		t.Fatalf("the address before was lost: %+v", s)
 	}
 }
+
+func TestServiceListWithoutServicesHasNoEmptyName(t *testing.T) {
+	known := parseServiceNames("An asterisk (*) denotes that a network service is disabled.\nWi-Fi\n*Bridge\r\n\n")
+	if len(known) != 2 || !known["Wi-Fi"] || !known["Bridge"] || known[""] {
+		t.Fatalf("%v", known)
+	}
+	if known := parseServiceNames("An asterisk (*) denotes that a network service is disabled.\n"); len(known) != 0 {
+		t.Fatalf("%v", known)
+	}
+}
+
+// A start that cannot read any service does not call the address already set.
+func TestReapplyWithNothingReadableIsAnError(t *testing.T) {
+	f := macFake(proxyService{Name: "Wi-Fi"})
+	b, _ := enableSystemPAC(f, oursURL)
+	set, already, refusal, err := reapplySystemPAC(unreadable{f, []string{"Wi-Fi"}}, &b)
+	if !errors.Is(err, errSysUnreadable) || set != 0 || already != 0 || refusal != nil {
+		t.Fatalf("%d %d %v %v", set, already, refusal, err)
+	}
+}
+
+// A write that failed may still have been applied: the pending mark stays
+// for the next start to sweep.
+func TestFailedExtendKeepsThePendingMark(t *testing.T) {
+	f := macFake(proxyService{Name: "Wi-Fi"})
+	a, _ := browserApp(t, f, true)
+	if err := a.setSystemPAC(true); err != nil {
+		t.Fatal(err)
+	}
+	f.st.Services = append(f.st.Services, proxyService{Name: "USB Ethernet 2"})
+	f.failOn = "USB Ethernet 2"
+	a.extendSystemPAC("network change")
+	a.mu.Lock()
+	pending := a.settings.SysPending
+	a.mu.Unlock()
+	if !pending {
+		t.Fatal("pending mark cleared after a failed write")
+	}
+}
