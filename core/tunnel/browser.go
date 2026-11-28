@@ -342,8 +342,8 @@ func (t *Tunnel) pickSiteStrategy(entry *siteEntry, strategies []strategy, now t
 // route's ID, is tried first in the pool; the pool's state does not change.
 func (t *Tunnel) siteDial(entry *siteEntry, r Route, ways [numRoutes]way, exit string) dialFunc {
 	if r != RouteTunnel {
-		// A tunnel site never asks the network's resolver: without DoT the
-		// tunnel takes it. A smart site has no other way, so it may.
+		// A tunnel site resolves over DoT only; a smart site may fall back
+		// to the system resolver.
 		return t.resolvedSiteDial(ways[r].dial, !entry.tunnel)
 	}
 	if pool, ok := t.client.(*routePool); ok {

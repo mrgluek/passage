@@ -10,8 +10,7 @@ import (
 )
 
 // Listed sites' names are resolved over DNS-over-TLS for direct and smart
-// attempts, so the network's resolver neither sees them nor can answer with
-// a wrong address. The tunnel's exit resolves on its own.
+// attempts. The tunnel's exit resolves on its own.
 const (
 	siteDNSFor     = 2 * time.Minute  // a found answer (the TTL is not available here)
 	siteDNSFailFor = 30 * time.Second // no answer: the next connection does not wait again

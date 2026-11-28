@@ -447,8 +447,8 @@ func (e *dataStall) Error() string {
 // probeData opens TLS through dial, asks for "/" and reads: ok when
 // siteDataLimit arrives or the reply ends, a dataStall when it stops short.
 // It returns the bytes received. The request carries filler headers of
-// about 24 KB, so that the bytes sent count too; a server that refuses
-// large headers (any error status) is asked again with a long path instead.
+// about 24 KB; a server that refuses them (any error status, or a close
+// without a reply) is asked again with a long path instead.
 func probeData(ctx context.Context, dial dialFunc, hostport, sni string) (int, error) {
 	n, status, sent, err := fetchData(ctx, dial, hostport, sni, true)
 	// Some servers answer the filler with 431, 400 or 500, others close or

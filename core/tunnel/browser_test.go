@@ -182,8 +182,8 @@ func TestBrowserListenerOffByDefault(t *testing.T) {
 // Site hosts never become relay groups, probe targets or state.
 func TestSiteHostsStayOutOfTheGroups(t *testing.T) {
 	var calls atomic.Int32
-	tt := newBrowserTunnel(t, []SiteGroup{{Via: "tunnel", Hosts: []string{"web.telegram.org", "example.net"}}}, echoDialer("d:", &calls), echoDialer("t:", &calls))
-	for _, host := range []string{"web.telegram.org", "kws2.web.telegram.org", "example.net"} {
+	tt := newBrowserTunnel(t, []SiteGroup{{Via: "tunnel", Hosts: []string{"app.example.com", "example.net"}}}, echoDialer("d:", &calls), echoDialer("t:", &calls))
+	for _, host := range []string{"app.example.com", "ws2.app.example.com", "example.net"} {
 		c, rep := browserSocks(t, tt, host, nil)
 		if rep != 0 {
 			t.Fatal(host, rep)

@@ -490,9 +490,7 @@ func (r *siteRelay) watchStall(entry *siteEntry, w siteWay) {
 		got := r.downTotal
 		r.mu.Unlock()
 		if stalled {
-			// The tunnel is the last resort of a tunnel site: a stall there
-			// is noted only, or the next connections would go back to the
-			// blocked ways.
+			// A stall on the tunnel, or a late one, is noted only.
 			early := got < siteStallEarlyBytes && time.Since(r.started) < siteStallEarlyAge
 			now := r.t.timeNow()
 			if w.route != RouteTunnel && early {
