@@ -21,7 +21,6 @@ type Rule struct {
 }
 
 const (
-	nameLookupTimeout = 8 * time.Second
 	cidrLookupTimeout = 2 * time.Second
 	dialTimeout       = 8 * time.Second
 	cacheTTL          = 2 * time.Minute
