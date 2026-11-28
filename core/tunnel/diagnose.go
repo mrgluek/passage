@@ -116,7 +116,7 @@ func (t *Tunnel) Diagnose(ctx context.Context) Diagnosis {
 	for _, w := range tunnels {
 		d.Ways = append(d.Ways, w.name)
 	}
-	otherCol := -1
+	otherCol, otherName := -1, diagOtherName(t.cfg)
 	if len(sites) > 0 {
 		otherCol = len(d.Ways)
 		d.Ways = append(d.Ways, diagOtherNameCol)
@@ -144,7 +144,7 @@ func (t *Tunnel) Diagnose(ctx context.Context) Diagnosis {
 			}()
 		}
 		if tg.site != nil {
-			t.diagSite(ctx, &d.Rows[i], tg.site, strategies, tunnels, tunnelCol, otherCol, directDial, &wg, check)
+			t.diagSite(ctx, &d.Rows[i], tg.site, strategies, tunnels, tunnelCol, otherCol, otherName, directDial, &wg, check)
 			continue
 		}
 		if otherCol >= 0 {
@@ -272,7 +272,7 @@ func (t *Tunnel) diagSitesLocked() []*siteEntry {
 // handshake. A bare name without an address is tried with "www.". The
 // network's own ways run one after another, so a site does not get a burst
 // of hellos at once; the tunnel routes run beside them.
-func (t *Tunnel) diagSite(ctx context.Context, row *DiagRow, e *siteEntry, strategies []strategy, tunnels []tunnelWay, tunnelCol, otherCol int,
+func (t *Tunnel) diagSite(ctx context.Context, row *DiagRow, e *siteEntry, strategies []strategy, tunnels []tunnelWay, tunnelCol, otherCol int, otherName string,
 	directDial dialFunc, wg *sync.WaitGroup, check func(int, time.Duration, func(context.Context) error)) {
 	probe := t.siteDataProbe
 	if probe == nil {
@@ -330,7 +330,11 @@ func (t *Tunnel) diagSite(ctx context.Context, row *DiagRow, e *siteEntry, strat
 			}
 			one(col, func(c context.Context) (int, error) { return probe(c, s.dial, addr, host) })
 		}
-		one(otherCol, func(c context.Context) (int, error) { return 0, other(c, directDial, addr) })
+		if otherName == "" {
+			res[otherCol] = DiagResult{Skip: true}
+			return
+		}
+		one(otherCol, func(c context.Context) (int, error) { return 0, other(c, directDial, addr, otherName) })
 	}()
 }
 
@@ -342,16 +346,21 @@ var sitePerProbe = 6 * time.Second
 // diagOtherNameCol is the column of the other-name check.
 const diagOtherNameCol = "other name"
 
-// diagOtherNames are widely reachable names used for the other-name check:
-// a handshake with one of them to the site's address.
-var diagOtherNames = []string{"ya.ru", "vk.com"}
+// diagOtherName is the first reference or canary target's name, "" if none.
+func diagOtherName(cfg Config) string {
+	for _, hp := range append(slices.Clone(cfg.References), cfg.Canaries...) {
+		if h, _, err := net.SplitHostPort(hp); err == nil && net.ParseIP(h) == nil && h != "" {
+			return h
+		}
+	}
+	return ""
+}
 
-// probeOtherName asks the site's address for a handshake with a name that
-// is not blocked. Any answer from the server means its address is
-// reachable, so a failure with the site's own name is about the name;
-// silence means the address itself is blocked.
-func probeOtherName(ctx context.Context, dial dialFunc, addr string) error {
-	if dial == nil {
+// probeOtherName asks the site's address for a handshake with another
+// name, one of the configured reference or canary targets. Any answer from
+// the server counts; no answer is "silent".
+func probeOtherName(ctx context.Context, dial dialFunc, addr, name string) error {
+	if dial == nil || name == "" {
 		return errors.New("no direct way")
 	}
 	c, err := dial(ctx, "tcp", addr)
@@ -359,7 +368,7 @@ func probeOtherName(ctx context.Context, dial dialFunc, addr string) error {
 		return err
 	}
 	defer c.Close()
-	tc := tls.Client(c, &tls.Config{ServerName: diagOtherNames[0], InsecureSkipVerify: true, MinVersion: tls.VersionTLS12})
+	tc := tls.Client(c, &tls.Config{ServerName: name, InsecureSkipVerify: true, MinVersion: tls.VersionTLS12})
 	err = tc.HandshakeContext(ctx)
 	var alert tls.AlertError
 	if err == nil || errors.As(err, &alert) || strings.Contains(err.Error(), "remote error") {

@@ -9,9 +9,8 @@ import (
 	"time"
 )
 
-// Before a site's first reply, a connection can move to another way: DPI
-// often lets the TCP connection through and drops the TLS ClientHello, so
-// the dial succeeds and nothing ever comes back.
+// Before a site's first reply, a connection can move to another way: a
+// connection may be made and still get no reply.
 var siteSwitchWait = 3 * time.Second // without a reply, try the next way
 
 const siteReplayMax = 16 << 10 // client bytes kept for a replay
@@ -20,8 +19,8 @@ const siteReplayMax = 16 << 10 // client bytes kept for a replay
 // while a request of the browser waits has stalled on this way.
 var siteStallWait = 10 * time.Second
 
-// A stall marks a way only early in a connection, where throttling shows:
-// later quiet periods are WebSockets and long polls doing their job.
+// A stall marks a way only early in a connection: later quiet periods are
+// WebSockets and long polls doing their job.
 var siteStallEarlyAge = 60 * time.Second
 
 const siteStallEarlyBytes = 64 << 10

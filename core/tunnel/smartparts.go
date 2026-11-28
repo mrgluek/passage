@@ -13,8 +13,8 @@ import (
 // part is one piece of a connection's first record.
 type part struct {
 	b      []byte
-	lowTTL bool // sent with TTL 1: lost on the way, the kernel sends it again later
-	oob    bool // followed by one urgent byte, which the server's stack drops
+	lowTTL bool // sent with TTL 1
+	oob    bool // followed by one urgent byte
 }
 
 // partSender is what sending parts needs from a socket; tests fake it.
@@ -26,8 +26,7 @@ type partSender interface {
 }
 
 // sendParts sends parts in order. Each part leaves the socket before the
-// next is written, and a lowered TTL is restored only after its part left:
-// restored earlier, the part would go out with the normal TTL.
+// next is written, and a lowered TTL is restored only after its part left.
 func sendParts(s partSender, parts []part) (int, error) {
 	n := 0
 	for _, p := range parts {
@@ -260,8 +259,7 @@ func splitSNIPlan(rec []byte) []part {
 }
 
 // disorderSNIPlan cuts like splitSNIPlan and sends every other part with
-// TTL 1. Windows resends everything from a lost segment on, so there only
-// the second part goes with TTL 1, after a plain cut.
+// TTL 1; on Windows only the second part does.
 func disorderSNIPlan(rec []byte) []part {
 	parts := splitSNIPlan(rec)
 	for i := range parts {

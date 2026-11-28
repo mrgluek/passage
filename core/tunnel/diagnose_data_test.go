@@ -72,7 +72,7 @@ func TestDataProbeAsksAgainWithoutFillerWhenRefused(t *testing.T) {
 func TestOtherNameCheckTellsAnswerFromSilence(t *testing.T) {
 	addr := tlsSite(t, func(http.ResponseWriter, *http.Request) {}, 0)
 	var d net.Dialer
-	if err := probeOtherName(context.Background(), d.DialContext, addr); err != nil {
+	if err := probeOtherName(context.Background(), d.DialContext, addr, "example.com"); err != nil {
 		t.Fatalf("answering server: %v", err)
 	}
 	ln, _ := net.Listen("tcp", "127.0.0.1:0")
@@ -88,7 +88,7 @@ func TestOtherNameCheckTellsAnswerFromSilence(t *testing.T) {
 	}()
 	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
 	defer cancel()
-	if err := probeOtherName(ctx, d.DialContext, ln.Addr().String()); err == nil || shortError(err) != "silent" {
+	if err := probeOtherName(ctx, d.DialContext, ln.Addr().String(), "example.com"); err == nil || shortError(err) != "silent" {
 		t.Fatalf("silent server: %v", err)
 	}
 }
@@ -112,12 +112,20 @@ func TestSiteChecksRunInTurn(t *testing.T) {
 		inFlight.Add(-1)
 	}
 	tt.siteDataProbe = func(context.Context, dialFunc, string, string) (int, error) { enter(); return 64 << 10, nil }
-	tt.siteOtherProbe = func(context.Context, dialFunc, string) error { enter(); return errors.New("silent") }
+	tt.siteOtherProbe = func(context.Context, dialFunc, string, string) error { enter(); return errors.New("silent") }
+	tt.cfg.References = []string{"ref.example.com:443"}
+	tt.probeTLS = func(context.Context, string, string) error { return nil }
+	tt.smartProbe = func(context.Context, dialFunc, string, string) error { return nil }
 	d := tt.Diagnose(context.Background())
 	if most.Load() != 1 {
 		t.Fatalf("%d checks at once", most.Load())
 	}
-	row := d.Rows[len(d.Rows)-1]
+	var row DiagRow
+	for _, r := range d.Rows {
+		if r.Kind == "site" {
+			row = r
+		}
+	}
 	if row.Kind != "site" || row.Results[0].KB != 64 || d.Ways[len(d.Ways)-1] != diagOtherNameCol || row.Results[len(row.Results)-1].Error != "silent" {
 		t.Fatalf("%v %+v", d.Ways, row)
 	}

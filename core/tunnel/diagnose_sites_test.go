@@ -41,7 +41,7 @@ func TestNetworkTestChecksListedSitesUnderLabels(t *testing.T) {
 		mu.Unlock()
 		return 64 << 10, nil
 	}
-	tt.siteOtherProbe = func(context.Context, dialFunc, string) error { return nil }
+	tt.siteOtherProbe = func(context.Context, dialFunc, string, string) error { return nil }
 	tt.ways[RouteDirect] = way{echoDialer("d:", new(atomic.Int32)), time.Second}
 	d := tt.Diagnose(context.Background())
 	var sites []DiagRow
@@ -110,7 +110,7 @@ func TestNetworkTestCapsTheSiteRows(t *testing.T) {
 	diagTelegramDCs = nil
 	defer func() { diagTelegramDCs = saved }()
 	tt.siteDataProbe = func(context.Context, dialFunc, string, string) (int, error) { return 1, nil }
-	tt.siteOtherProbe = func(context.Context, dialFunc, string) error { return nil }
+	tt.siteOtherProbe = func(context.Context, dialFunc, string, string) error { return nil }
 	d := tt.Diagnose(context.Background())
 	n := 0
 	for _, r := range d.Rows {
@@ -180,7 +180,7 @@ func TestNetworkTestTriesWWWThenSaysNoAddress(t *testing.T) {
 		mu.Unlock()
 		return 1, nil
 	}
-	tt.siteOtherProbe = func(context.Context, dialFunc, string) error { return nil }
+	tt.siteOtherProbe = func(context.Context, dialFunc, string, string) error { return nil }
 	d := tt.Diagnose(context.Background())
 	byHost := map[string]DiagRow{}
 	for _, r := range d.Rows {

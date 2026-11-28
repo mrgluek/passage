@@ -262,7 +262,7 @@ type Tunnel struct {
 	siteRemotes    map[net.Conn]struct{}                                                       // guarded by mu
 	siteDNS        *siteDNS                                                                    // set in tests; else made on first use
 	siteDataProbe  func(ctx context.Context, dial dialFunc, hostport, sni string) (int, error) // replaces probeData in tests
-	siteOtherProbe func(ctx context.Context, dial dialFunc, addr string) error                 // replaces probeOtherName in tests
+	siteOtherProbe func(ctx context.Context, dial dialFunc, addr, name string) error           // replaces probeOtherName in tests
 	siteDNSOnce    sync.Once
 	// siteAfter replaces the tunnel's head-start timer of site dials in tests.
 	siteAfter    func(time.Duration) (<-chan time.Time, func())
