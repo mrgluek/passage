@@ -348,19 +348,17 @@ type strategy struct {
 	dial dialFunc
 }
 
-// appStrategies is the order the apps' search tries: the strategies that
-// cut the server name come last, since they leave data that is not a TLS
-// hello with a name as it is, and app traffic often is such data.
+// appStrategies are the strategies the apps' search tries: those that cut
+// the server name are for sites only. They leave other data as it is, and
+// each one would add a probe timeout to every search that finds nothing.
 func appStrategies(all []strategy) []strategy {
-	var first, last []strategy
+	var out []strategy
 	for _, s := range all {
-		if strings.HasSuffix(s.name, ":sni") {
-			last = append(last, s)
-		} else {
-			first = append(first, s)
+		if !strings.HasSuffix(s.name, ":sni") {
+			out = append(out, s)
 		}
 	}
-	return append(first, last...)
+	return out
 }
 
 // smartStrategies lists the strategies in the order sites try them.
