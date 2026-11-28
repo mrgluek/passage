@@ -57,7 +57,10 @@ func runDesktop(dir string, autostart bool) {
 	stop := func() {
 		stopOnce.Do(func() {
 			cancel()
-			<-done
+			// A stuck app must not keep Quit from working.
+			if !waitDone(done, quitWaitLimit) {
+				a.event("app quit: stop did not finish in %s", quitWaitLimit)
+			}
 		})
 	}
 	defer stop()
@@ -168,9 +171,12 @@ func showMacWindow() {
 	defer C.free(unsafe.Pointer(html))
 	C.passageShowWindow(html)
 	if macApp != nil {
-		title := C.CString(macApp.view().Caption)
-		C.passageSetTitle(title)
-		C.free(unsafe.Pointer(title))
+		// view() takes a.mu: never on the main thread, which may call this.
+		go func() {
+			title := C.CString(macApp.view().Caption)
+			C.passageSetTitle(title)
+			C.free(unsafe.Pointer(title))
+		}()
 	}
 }
 

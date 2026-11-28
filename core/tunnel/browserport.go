@@ -4,6 +4,7 @@ import (
 	"errors"
 	"net"
 	"sync"
+	"time"
 )
 
 // BrowserPort is a browser listener that outlives a router: the app keeps
@@ -32,17 +33,26 @@ func ListenBrowserPort(addr string) (*BrowserPort, error) {
 	return p, nil
 }
 
+// acceptBackoff is the pause after a failed Accept, doubled up to the limit.
+const (
+	acceptBackoffMin = 10 * time.Millisecond
+	acceptBackoffMax = time.Second
+)
+
 func (p *BrowserPort) accept() {
+	pause := acceptBackoffMin
 	for {
 		c, err := p.ln.Accept()
 		if err != nil {
 			select {
 			case <-p.done:
 				return
-			default:
-				continue
+			case <-time.After(pause):
 			}
+			pause = min(pause*2, acceptBackoffMax)
+			continue
 		}
+		pause = acceptBackoffMin
 		select {
 		case p.conns <- c:
 		case <-p.done:
