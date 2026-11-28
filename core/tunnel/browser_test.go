@@ -308,8 +308,8 @@ func TestSiteStallPrefersAnotherRoute(t *testing.T) {
 	if rep != 0 {
 		t.Fatal(rep)
 	}
-	c.Write([]byte("hi"))
-	io.Copy(io.Discard, c) // the stall closes it
+	c.Write(helloHi)
+	io.Copy(io.Discard, c) // no reply: the connection moves to the tunnel
 	c2, rep := browserSocks(t, tt, "example.net", nil)
 	if rep != 0 || roundTrip(t, c2) != "t:hi" {
 		t.Fatalf("second connection did not use the tunnel (reply %d)", rep)

@@ -132,6 +132,14 @@ type siteRelay struct {
 	lastUp, lastDown time.Time
 	downTotal        int64
 	requestWaiting   bool // a write of a request size since the site's last byte
+	canSwitch        bool // connectSite has another way to try
+}
+
+// tlsFlightLocked: the kept client bytes start a TLS handshake. Only such
+// a first flight is replayed on another way: plain data may already have
+// done something on the server.
+func (r *siteRelay) tlsFlightLocked() bool {
+	return len(r.buf) > 0 && r.buf[0] == 0x16 && !r.overflow
 }
 
 // siteRequestMin: a smaller client write is taken for protocol upkeep (an
@@ -222,7 +230,9 @@ func (r *siteRelay) down(c net.Conn, gen int, w siteWay) {
 		r.mu.Unlock()
 		return
 	}
-	if n == 0 {
+	// An alert in answer to a TLS hello is this way failing, not the
+	// site's reply, as long as there is another way to try.
+	if n == 0 || b[0] == 0x15 && r.canSwitch && r.tlsFlightLocked() {
 		r.mu.Unlock()
 		r.events <- relayEvent{gen: gen}
 		return
@@ -336,6 +346,9 @@ func (t *Tunnel) connectSite(c bufferedConn, entry *siteEntry, host, addr string
 	}
 	names = append(names, first.String())
 	next := t.siteNextWays(entry, first)
+	r.mu.Lock()
+	r.canSwitch = len(next) > 0
+	r.mu.Unlock()
 
 	select {
 	case <-r.wrote:
@@ -398,7 +411,7 @@ func (t *Tunnel) connectSite(c bufferedConn, entry *siteEntry, host, addr string
 			r.mu.Unlock()
 			continue // its event is on the way
 		}
-		if r.overflow || len(next) == 0 {
+		if len(next) == 0 || !r.tlsFlightLocked() {
 			r.mu.Unlock()
 			if closed {
 				t.siteFailed(entry, host, siteNoReply, nil, t.timeNow().Sub(started), names...)
@@ -422,6 +435,9 @@ func (t *Tunnel) connectSite(c bufferedConn, entry *siteEntry, host, addr string
 		for len(next) > 0 && nc == nil {
 			nw := next[0]
 			next = next[1:]
+			r.mu.Lock()
+			r.canSwitch = len(next) > 0
+			r.mu.Unlock()
 			names = append(names, nw.String())
 			conn, err := t.dialWay(entry, nw, addr)
 			if err != nil {

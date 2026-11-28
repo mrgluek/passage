@@ -72,14 +72,14 @@ func TestSiteSwitchesToAStrategyWhenDirectNeverAnswers(t *testing.T) {
 		t.Fatal(rep)
 	}
 	start := time.Now()
-	if got := roundTrip(t, c); got != "s:hi" {
+	if got := tlsRoundTrip(t, c); got != "s:"+string(helloHi) {
 		t.Fatalf("%q", got)
 	}
 	if took := time.Since(start); took < 100*time.Millisecond || took > 2*time.Second {
 		t.Fatalf("switched after %v", took)
 	}
 	smart.mu.Lock()
-	if string(smart.got) != "hi" {
+	if string(smart.got) != string(helloHi) {
 		t.Fatalf("replayed %q", smart.got)
 	}
 	smart.mu.Unlock()
@@ -158,7 +158,7 @@ func TestTunnelSiteGoesToTheTunnelAfterNoReply(t *testing.T) {
 		t.Fatal(rep)
 	}
 	start := time.Now()
-	if got := roundTrip(t, c); got != "t:hi" || time.Since(start) > time.Second {
+	if got := tlsRoundTrip(t, c); got != "t:"+string(helloHi) || time.Since(start) > time.Second {
 		t.Fatalf("%q after %v", got, time.Since(start))
 	}
 	if s.Load() > 1 {
@@ -505,5 +505,59 @@ func TestBrowserLeavingBeforeAReplyEndsTheConnection(t *testing.T) {
 	e := tt.sites.match("example.org")
 	if e.badUntil(RouteDirect).After(time.Now()) {
 		t.Fatal("a way was marked for a browser that left")
+	}
+}
+
+// helloHi is a tiny TLS handshake record: kept bytes are replayed on another
+// way only when they start one.
+var helloHi = []byte{0x16, 3, 1, 0, 2, 'h', 'i'}
+
+func tlsRoundTrip(t *testing.T, c net.Conn) string {
+	t.Helper()
+	c.Write(helloHi)
+	b, _ := io.ReadAll(c)
+	return string(b)
+}
+
+// alertServer answers the first record with a TLS alert.
+func alertServer(context.Context, string, string) (net.Conn, error) {
+	a, b := net.Pipe()
+	go func() {
+		b.Read(make([]byte, 4096))
+		b.Write([]byte{0x15, 3, 3, 0, 2, 2, 40})
+		io.Copy(io.Discard, b)
+	}()
+	return a, nil
+}
+
+// An alert in answer to a hello is the way failing: the connection moves on
+// and the way is marked, instead of the alert counting as the site's reply.
+func TestAlertReplyMovesToTheNextWay(t *testing.T) {
+	switchWait(t, time.Second)
+	smart := &recordingEcho{}
+	tt := newBrowserTunnel(t, testSites, alertServer, echoDialer("t:", new(atomic.Int32)))
+	tt.strategies = []strategy{{"tlsfrag", smart.dial("s:")}}
+	c, _ := browserSocks(t, tt, "example.org", nil)
+	if got := tlsRoundTrip(t, c); got != "s:"+string(helloHi) {
+		t.Fatalf("%q", got)
+	}
+	if !tt.sites.match("example.org").badUntil(RouteDirect).After(time.Now()) {
+		t.Fatal("the way that answered with an alert was not marked")
+	}
+}
+
+// Plain data is not sent again on another way: the first server may have
+// acted on it already.
+func TestPlainDataIsNotReplayed(t *testing.T) {
+	switchWait(t, 30*time.Millisecond)
+	var s atomic.Int32
+	tt := newBrowserTunnel(t, testSites, silentServer(new(atomic.Int32)), echoDialer("t:", new(atomic.Int32)))
+	tt.strategies = []strategy{{"tlsfrag", silentServer(&s)}}
+	c, _ := browserSocks(t, tt, "example.org", nil)
+	defer c.Close()
+	c.Write([]byte("POST /form HTTP/1.1\r\n\r\n"))
+	time.Sleep(200 * time.Millisecond)
+	if s.Load() != 0 {
+		t.Fatal("a plain request was sent again on another way")
 	}
 }
