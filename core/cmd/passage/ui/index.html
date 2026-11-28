@@ -736,6 +736,7 @@ function browserSetup(pane, b, keepOpen = () => {}) {
     toggle.onchange = () => { keepOpen(); call("setSystemPAC", toggle.checked).then(redraw, e => { redraw(); fail(e); }); };
     label.append(toggle, t("browser_system")); pane.append(label);
     para(t("browser_system_help"));
+    if (b.wsl) para(t("browser_wsl"));
     if (b.notice) para(b.notice, true);
   }
   para(t(b.system ? "browser_manual_system" : "browser_manual_only"));

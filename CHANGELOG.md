@@ -29,6 +29,8 @@
   route is up. A refusal by an exit's address policy does not count against a
   group, and a failure within a minute of a success does not change the
   status.
+- Desktop, Windows: with WSL installed, the system proxy switch notes that WSL
+  asks to restart after the change.
 - Also from 0.9.9: the desktop network test checks the listed sites, takes up
   to a minute, and names them in copied reports as `site #N`; `passage-cli`
   has `-browser-listen`; HTTP and WSS route failures name the stage; the home

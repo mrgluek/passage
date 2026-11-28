@@ -84,12 +84,15 @@ type App struct {
 	sysNotice, sysError    string
 	sysMu                  sync.Mutex // held while the system proxy settings change
 	portFree               func(int) bool
+	wslFn                  func() bool // WSL detector; read once
+	wslOnce                sync.Once
+	wslSeen                bool
 	stall                  *stallGuard
 }
 
 func newApp(dir, version, iroh, lang string, os platform) *App {
 	a := &App{dir: dir, version: version, iroh: iroh, lang: lang, systemLang: lang, t: table(lang), os: os, changed: func() {},
-		sysProxy: newSystemProxy(), portFree: localPortBindable}
+		sysProxy: newSystemProxy(), portFree: localPortBindable, wslFn: wslInstalled}
 	a.log = openLog(a.path(logName), version)
 	a.stall = &stallGuard{limit: stallLimit, path: a.path(stallName), note: a.log.add}
 	a.event("app start")

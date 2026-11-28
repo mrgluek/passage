@@ -22,6 +22,7 @@ type browserView struct {
 	// Confirmed: the user set the address by hand.
 	Confirmed bool   `json:"confirmed"`
 	Notice    string `json:"notice,omitempty"` // why the switch was refused
+	WSL       bool   `json:"wsl,omitempty"`    // show the WSL restart note under the switch
 }
 
 // homeTabs lists the home screen's setup tabs, four at most. With sites the
@@ -92,6 +93,10 @@ func (a *App) browserViewLocked() browserView {
 	if v.Show {
 		a.ensureBrowserPortLocked()
 		v.PAC = a.pacURLLocked()
+	}
+	if v.System && a.wslFn != nil {
+		a.wslOnce.Do(func() { a.wslSeen = a.wslFn() })
+		v.WSL = a.wslSeen
 	}
 	v.On = a.settings.SysBackup.Active
 	v.Confirmed = a.settings.BrowserConfirmed
