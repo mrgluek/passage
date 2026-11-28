@@ -305,16 +305,14 @@ func (a *App) tick() {
 
 func (a *App) run(ctx context.Context) {
 	a.sweepSystemPAC() // before anything is written again
-	extend := a.recoverSystemPAC()
+	a.recoverSystemPAC()
 	a.mu.Lock()
 	if a.settings.Running {
 		a.runningSince = time.Now()
 		a.startLocked("app start")
 	}
 	a.mu.Unlock()
-	if extend {
-		a.extendSystemPAC("start")
-	}
+	a.applySystemPACAtStart() // the browser port is listening now
 	a.changed()
 	tk := time.NewTicker(tickEvery)
 	defer tk.Stop()

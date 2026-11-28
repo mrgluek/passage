@@ -281,69 +281,87 @@ func (a *App) markPendingLocked(writing bool) {
 	}
 }
 
-// recoverSystemPAC runs at start, outside a.mu. A backup left by a crashed
-// run is either continued (the user still wants it) or undone; without a
-// backup, a wish for the switch is applied again. extend asks the caller to
-// run extendSystemPAC.
-func (a *App) recoverSystemPAC() (extend bool) {
+// recoverSystemPAC runs at start, before the router, outside a.mu: a
+// backup left by a crashed run with the switch off is undone.
+func (a *App) recoverSystemPAC() {
 	a.sysMu.Lock()
 	defer a.sysMu.Unlock()
 	a.mu.Lock()
 	sp, s := a.sysProxy, a.settings
-	if sp == nil {
-		a.mu.Unlock()
-		return false
-	}
-	url := ""
-	if s.SystemPAC {
-		a.ensureBrowserPortLocked()
-		url = a.pacURLLocked()
-		a.markPendingLocked(true)
-	}
 	a.mu.Unlock()
-	switch {
-	case s.SysBackup.Active && !s.SystemPAC:
-		res, err := restoreServices(sp, s.SysBackup)
-		a.mu.Lock()
-		defer a.mu.Unlock()
-		if err != nil {
-			a.event("system proxy: restore failed (crash recovery): %v", err)
-			a.keepUnrestoredLocked(res)
-			return false
-		}
-		a.noteRestoreLocked(res, "crash recovery")
-		a.settings.SysBackup = sysBackup{}
-		a.saveSettings()
-	case s.SysBackup.Active:
-		st, err := sp.Read()
-		a.mu.Lock()
-		defer a.mu.Unlock()
-		a.settings.SysPending = false
-		// Only a full read may say none is ours: services that could not be
-		// read (right after login, say) may still be.
-		if err == nil && st.Unread == 0 && !st.anyOurs(s.SysBackup.Ours) {
-			a.settings.SysBackup = sysBackup{} // changed meanwhile: not ours to restore
-			a.settings.SystemPAC = false       // and the wish no longer matches the system
-			a.saveSettings()
-			return false
-		}
-		a.saveSettings()
-		return true
-	case s.SystemPAC:
-		b, err := enableSystemPAC(sp, url)
-		a.mu.Lock()
-		defer a.mu.Unlock()
-		a.settings.SysPending = false
-		if err != nil {
-			a.settings.SystemPAC = false
-			a.sysNotice, a.sysError = noticeKey(err), noticeArg(err)
-			a.event("system proxy: not set at start (%s)", a.sysNotice)
-		} else {
-			a.settings.SysBackup = b
-		}
-		a.saveSettings()
+	if sp == nil || !s.SysBackup.Active || s.SystemPAC {
+		return
 	}
-	return false
+	res, err := restoreServices(sp, s.SysBackup)
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if err != nil {
+		a.event("system proxy: restore failed (crash recovery): %v", err)
+		a.keepUnrestoredLocked(res)
+		return
+	}
+	a.noteRestoreLocked(res, "crash recovery")
+	a.settings.SysBackup = sysBackup{}
+	a.saveSettings()
+}
+
+// applySystemPACAtStart runs once the router (and with it the browser port)
+// is up, outside a.mu: with the switch on, the address is set again where it
+// is missing, or confirmed where it is still there, and the log says which.
+// Services with their own settings are left alone.
+func (a *App) applySystemPACAtStart() {
+	a.sysMu.Lock()
+	defer a.sysMu.Unlock()
+	a.mu.Lock()
+	sp, s := a.sysProxy, a.settings
+	if sp == nil || !s.SystemPAC {
+		a.mu.Unlock()
+		return
+	}
+	a.ensureBrowserPortLocked()
+	url := a.pacURLLocked()
+	a.markPendingLocked(true)
+	a.mu.Unlock()
+
+	var b sysBackup
+	var set, already int
+	var refusal, err error
+	if s.SysBackup.Active && s.SysBackup.Ours == url {
+		b = s.SysBackup
+		b.Services = slices.Clone(s.SysBackup.Services)
+		set, already, refusal, err = reapplySystemPAC(sp, &b)
+	} else {
+		if s.SysBackup.Active { // an older address of ours (another port)
+			restoreServices(sp, s.SysBackup)
+		}
+		b, err = enableSystemPAC(sp, url)
+		set = len(b.Services)
+		if err != nil && (errors.Is(err, errSysForeignPAC) || errors.Is(err, errSysManualProxy) || errors.Is(err, errSysPolicy)) {
+			refusal, err = err, nil
+		}
+	}
+
+	a.mu.Lock()
+	defer a.changedAfter()
+	defer a.mu.Unlock()
+	a.settings.SysPending = err != nil // a write that failed may have been applied
+	switch {
+	case err != nil:
+		// Not readable or not writable right now: the wish stays, the next
+		// start or network change tries again.
+		a.event("system proxy: not set at start: %v", err)
+	case set == 0 && already == 0 && refusal != nil:
+		a.settings.SystemPAC, a.settings.SysBackup = false, sysBackup{}
+		a.sysNotice, a.sysError = noticeKey(refusal), noticeArg(refusal)
+		a.event("system proxy: not set at start (%s)", a.sysNotice)
+	case set > 0:
+		a.settings.SysBackup = b
+		a.event("system proxy: auto-config set at start on %d network service(s), %d already set", set, already)
+	default:
+		a.settings.SysBackup = b
+		a.event("system proxy: auto-config already set (start)")
+	}
+	a.saveSettings()
 }
 
 // sweepSystemPAC runs at start, outside a.mu: see sweepLeftovers.

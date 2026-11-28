@@ -232,6 +232,7 @@ func TestQuitRestoresAndNextStartAppliesAgain(t *testing.T) {
 	b := newApp(dir, "test", "", "en", &fakePlatform{})
 	b.sysProxy, b.portFree = f, func(int) bool { return true }
 	b.recoverSystemPAC()
+	b.applySystemPACAtStart()
 	if f.url() == "" || !reload(t, dir).SysBackup.Active {
 		t.Fatal("the next start did not apply the switch again")
 	}
@@ -253,6 +254,7 @@ func TestCrashRecovery(t *testing.T) {
 	b := newApp(dir, "test", "", "en", &fakePlatform{})
 	b.sysProxy = f
 	b.recoverSystemPAC()
+	b.applySystemPACAtStart()
 	if f.url() != "" || reload(t, dir).SysBackup.Active {
 		t.Fatal("crash left the address behind")
 	}
@@ -264,6 +266,7 @@ func TestCrashRecovery(t *testing.T) {
 	c := newApp(dir, "test", "", "en", &fakePlatform{})
 	c.sysProxy = f
 	c.recoverSystemPAC()
+	c.applySystemPACAtStart()
 	if f.url() != ours || !reload(t, dir).SysBackup.Active {
 		t.Fatal("a wanted switch was dropped")
 	}
@@ -273,6 +276,7 @@ func TestCrashRecovery(t *testing.T) {
 	d := newApp(dir, "test", "", "en", &fakePlatform{})
 	d.sysProxy = f
 	d.recoverSystemPAC()
+	d.applySystemPACAtStart()
 	if f.url() != "http://example.org/user.pac" || reload(t, dir).SysBackup.Active {
 		t.Fatal("a foreign address was touched")
 	}
@@ -606,5 +610,36 @@ func TestBrowserPortIsKeptAcrossRestarts(t *testing.T) {
 	}
 	if _, err := net.Dial("tcp", c1.BrowserListen); err == nil {
 		t.Fatal("the closed port still accepts")
+	}
+}
+
+// A start with the switch on sets the address again when it is gone (the
+// system dropped it, a quit was cut short), or confirms it, and says so.
+func TestStartWithTheSwitchOnAppliesTheAddress(t *testing.T) {
+	f := winFake(proxyService{})
+	a, dir := browserApp(t, f, true)
+	a.setSystemPAC(true)
+	ours := f.url()
+	f.setURL("") // gone while Passage was not running; the backup is still there
+	b := newApp(dir, "test", "", "en", &fakePlatform{})
+	b.sysProxy = f
+	b.recoverSystemPAC()
+	b.applySystemPACAtStart()
+	if f.url() != ours {
+		t.Fatalf("not set again at start: %q", f.url())
+	}
+	if !strings.Contains(b.log.text(10), "auto-config set at start") {
+		t.Fatalf("not logged: %s", b.log.text(10))
+	}
+	if s := reload(t, dir); !s.SystemPAC || !s.SysBackup.Active || s.SysPending {
+		t.Fatalf("%+v", s)
+	}
+	// The next start finds it in place.
+	c := newApp(dir, "test", "", "en", &fakePlatform{})
+	c.sysProxy = f
+	c.recoverSystemPAC()
+	c.applySystemPACAtStart()
+	if f.url() != ours || !strings.Contains(c.log.text(10), "auto-config already set") {
+		t.Fatalf("%q %s", f.url(), c.log.text(10))
 	}
 }

@@ -267,6 +267,46 @@ func sweepLeftovers(sp systemProxy, url string, b sysBackup) (int, error) {
 	return n, first
 }
 
+// reapplySystemPAC points every readable service at b.Ours again: ours are
+// counted as already set, free ones are set (and added to b if new), and
+// services with their own settings are left alone and dropped from b.
+// refusal is the first such reason.
+func reapplySystemPAC(sp systemProxy, b *sysBackup) (set, already int, refusal, err error) {
+	st, err := sp.Read()
+	if err != nil {
+		return 0, 0, nil, err
+	}
+	if st.Policy != "" {
+		return 0, 0, &policyError{st.Policy}, nil
+	}
+	refused := map[string]bool{}
+	for _, s := range st.Services {
+		switch r := s.refusal(b.Ours); {
+		case s.ours(b.Ours):
+			already++
+		case r != nil:
+			refused[s.Name] = true
+			if refusal == nil {
+				refusal = r
+			}
+		default:
+			if err := sp.SetAutoConfig(s.Name, b.Ours, true); err != nil {
+				return set, already, refusal, err
+			}
+			if !b.has(s.Name) {
+				prev := s.AutoConfigURL
+				if prev == b.Ours {
+					prev = ""
+				}
+				b.Services = append(b.Services, serviceBackup{Name: s.Name, PrevURL: prev, ProxyEnable: s.ProxyEnable, ProxyServer: s.ProxyServer, AutoDetect: s.AutoDetect})
+			}
+			set++
+		}
+	}
+	b.Services = slices.DeleteFunc(b.Services, func(sb serviceBackup) bool { return refused[sb.Name] })
+	return set, already, refusal, nil
+}
+
 // anyOurs: some service uses url now.
 func (st proxyState) anyOurs(url string) bool {
 	for _, s := range st.Services {

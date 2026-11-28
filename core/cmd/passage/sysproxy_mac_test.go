@@ -135,6 +135,7 @@ func TestMacNewServiceIsAddedOnNetworkChange(t *testing.T) {
 	b := newApp(dir, "test", "", "en", &fakePlatform{})
 	b.sysProxy = f
 	b.recoverSystemPAC()
+	b.applySystemPACAtStart()
 	if f.st.anyOurs(ours) || reload(t, dir).SysBackup.Active {
 		t.Fatalf("crash recovery left ours on: %+v", f.st.Services)
 	}
@@ -369,6 +370,7 @@ func TestUnreadableServicesAtStartKeepTheBackup(t *testing.T) {
 	b := newApp(dir, "test", "", "en", &fakePlatform{})
 	b.sysProxy = unreadable{f, []string{"Wi-Fi"}}
 	b.recoverSystemPAC()
+	b.applySystemPACAtStart()
 	if s := reload(t, dir); !s.SysBackup.Active || !s.SystemPAC {
 		t.Fatalf("backup or wish dropped on a partial read: %+v", s.SysBackup)
 	}
