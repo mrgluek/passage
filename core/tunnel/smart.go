@@ -348,7 +348,22 @@ type strategy struct {
 	dial dialFunc
 }
 
-// smartStrategies lists the strategies in the order they are tried.
+// appStrategies is the order the apps' search tries: the strategies that
+// cut the server name come last, since they leave data that is not a TLS
+// hello with a name as it is, and app traffic often is such data.
+func appStrategies(all []strategy) []strategy {
+	var first, last []strategy
+	for _, s := range all {
+		if strings.HasSuffix(s.name, ":sni") {
+			last = append(last, s)
+		} else {
+			first = append(first, s)
+		}
+	}
+	return append(first, last...)
+}
+
+// smartStrategies lists the strategies in the order sites try them.
 func smartStrategies() []strategy {
 	base := &transport.TCPDialer{Dialer: net.Dialer{Timeout: directDialTimeout}}
 	out := []strategy{}
@@ -441,7 +456,7 @@ func (t *Tunnel) smartCheck(hosts []string) bool {
 		return true
 	}
 	start := time.Now()
-	found := t.findStrategy(t.strategies, hosts)
+	found := t.findStrategy(appStrategies(t.strategies), hosts)
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	if found == nil {

@@ -185,3 +185,14 @@ func TestRecordLength(t *testing.T) {
 		}
 	}
 }
+
+// The apps' search keeps its old order; the name cuts come after.
+func TestAppStrategyOrder(t *testing.T) {
+	var names []string
+	for _, s := range appStrategies(smartStrategies()) {
+		names = append(names, s.name)
+	}
+	if got := strings.Join(names, ","); got != "tlsfrag:1,split:2,disorder:1,split:sni,oob:sni,disorder:sni" {
+		t.Fatal(got)
+	}
+}
