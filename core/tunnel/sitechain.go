@@ -19,6 +19,9 @@ const siteReplayMax = 16 << 10 // client bytes kept for a replay
 // while a request of the browser waits has stalled on this way.
 var siteStallWait = 10 * time.Second
 
+// siteLastWayWait bounds the wait for a first reply on the last way.
+var siteLastWayWait = 60 * time.Second
+
 // A stall marks a way only early in a connection: later quiet periods are
 // WebSockets and long polls doing their job.
 var siteStallEarlyAge = 60 * time.Second
@@ -346,6 +349,7 @@ func (t *Tunnel) connectSite(c bufferedConn, entry *siteEntry, host, addr string
 	timer := time.NewTimer(wait)
 	defer timer.Stop()
 	timerC := timer.C
+	var lastWait <-chan time.Time // the bound on waiting when there is nowhere to switch
 	upEnded := false
 	for {
 		closed := false
@@ -375,8 +379,17 @@ func (t *Tunnel) connectSite(c bufferedConn, entry *siteEntry, host, addr string
 			closed = true // closed or failed before a reply: the next way at once
 		case <-timerC:
 		case <-upDone:
+			r.mu.Lock()
+			answered := r.answered
+			r.mu.Unlock()
+			if !answered {
+				return // the browser left before any reply: nobody to answer, nothing to mark
+			}
 			upDone, upEnded = nil, true
 			continue
+		case <-lastWait:
+			t.siteFailed(entry, host, siteNoReply, nil, t.timeNow().Sub(started), names...)
+			return
 		case <-t.ctx.Done():
 			return
 		}
@@ -392,8 +405,11 @@ func (t *Tunnel) connectSite(c bufferedConn, entry *siteEntry, host, addr string
 				return
 			}
 			// Nowhere to switch to, or too much sent to replay: a slow site
-			// is still a site, so keep waiting on this way.
+			// is still a site, so keep waiting on this way, for a while.
 			timerC = nil
+			if lastWait == nil {
+				lastWait = time.After(siteLastWayWait)
+			}
 			continue
 		}
 		r.switching = true

@@ -488,3 +488,22 @@ func TestSmallWritesAfterTheReplyAreNoStall(t *testing.T) {
 		t.Fatal("small writes counted as a request")
 	}
 }
+
+// A browser that leaves before any reply frees its connection at once and
+// marks nothing, even when the last way never answers.
+func TestBrowserLeavingBeforeAReplyEndsTheConnection(t *testing.T) {
+	switchWait(t, 30*time.Millisecond)
+	tt := newBrowserTunnel(t, testSites, silentServer(new(atomic.Int32)), echoDialer("t:", new(atomic.Int32)))
+	c, rep := browserSocks(t, tt, "example.org", nil)
+	if rep != 0 {
+		t.Fatal(rep)
+	}
+	c.Write([]byte("hello"))
+	time.Sleep(100 * time.Millisecond) // past the switch wait: waiting on the last way
+	c.Close()
+	waitFor(t, func() bool { return tt.siteOpen.Load() == 0 && tt.browserOpen.Load() == 0 })
+	e := tt.sites.match("example.org")
+	if e.badUntil(RouteDirect).After(time.Now()) {
+		t.Fatal("a way was marked for a browser that left")
+	}
+}
