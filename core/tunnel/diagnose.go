@@ -296,20 +296,39 @@ func (t *Tunnel) diagSite(ctx context.Context, row *DiagRow, e *siteEntry, strat
 			return
 		}
 		row.Host = host
+		ip, _, _ := net.SplitHostPort(addr)
+		// An error text may quote the name or address: the report gets neither.
+		masked := func(err error) string {
+			m := shortError(err)
+			for _, x := range []string{host, e.name, ip} {
+				if x != "" {
+					m = strings.ReplaceAll(m, x, "site")
+				}
+			}
+			return m
+		}
 		for k, w := range tunnels {
 			if !e.tunnel {
 				res[tunnelCol+k] = DiagResult{Skip: true}
 				continue
 			}
-			check(tunnelCol+k, 2*sitePerProbe, func(c context.Context) error {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				c, cancel := context.WithTimeout(ctx, 2*sitePerProbe)
+				defer cancel()
+				start := time.Now()
 				n, err := probe(c, w.dial, net.JoinHostPort(host, "443"), host)
-				res[tunnelCol+k].KB = n / 1024
-				return err
-			})
+				r := DiagResult{OK: err == nil, MS: time.Since(start).Milliseconds(), KB: n / 1024}
+				if err != nil {
+					r.MS, r.Error = 0, masked(err)
+				}
+				res[tunnelCol+k] = r
+			}()
 		}
 		one := func(col int, f func(context.Context) (int, error)) {
 			if err != nil {
-				res[col] = DiagResult{Error: shortError(err)}
+				res[col] = DiagResult{Error: masked(err)}
 				return
 			}
 			c, cancel := context.WithTimeout(ctx, sitePerProbe)
@@ -318,7 +337,7 @@ func (t *Tunnel) diagSite(ctx context.Context, row *DiagRow, e *siteEntry, strat
 			cancel()
 			r := DiagResult{OK: perr == nil, MS: time.Since(start).Milliseconds(), KB: n / 1024}
 			if perr != nil {
-				r.MS, r.Error = 0, shortError(perr)
+				r.MS, r.Error = 0, masked(perr)
 			}
 			res[col] = r
 		}
@@ -431,9 +450,13 @@ func (e *dataStall) Error() string {
 // about 24 KB, so that the bytes sent count too; a server that refuses
 // large headers (any error status) is asked again with a long path instead.
 func probeData(ctx context.Context, dial dialFunc, hostport, sni string) (int, error) {
-	n, status, err := fetchData(ctx, dial, hostport, sni, true)
-	if status >= 400 { // some servers answer the filler with 431, others with 400 or 500
-		n, _, err = fetchData(ctx, dial, hostport, sni, false)
+	n, status, sent, err := fetchData(ctx, dial, hostport, sni, true)
+	// Some servers answer the filler with 431, 400 or 500, others close or
+	// reset the connection without a word.
+	var ne net.Error
+	closed := sent && n == 0 && err != nil && !(errors.As(err, &ne) && ne.Timeout()) && !errors.As(err, new(*dataStall))
+	if status >= 400 || closed {
+		n, _, _, err = fetchData(ctx, dial, hostport, sni, false)
 	}
 	return n, err
 }
@@ -447,15 +470,17 @@ var fillerHeaders = func() string {
 	return b.String()
 }()
 
-func fetchData(ctx context.Context, dial dialFunc, hostport, sni string, filler bool) (int, int, error) {
+// fetchData reports the bytes, the HTTP status and whether the request
+// went out (the handshake worked).
+func fetchData(ctx context.Context, dial dialFunc, hostport, sni string, filler bool) (int, int, bool, error) {
 	c, err := dial(ctx, "tcp", hostport)
 	if err != nil {
-		return 0, 0, err
+		return 0, 0, false, err
 	}
 	defer c.Close()
 	tc := tls.Client(c, &tls.Config{ServerName: sni, MinVersion: tls.VersionTLS12, RootCAs: probeRoots, NextProtos: []string{"http/1.1"}})
 	if err := tc.HandshakeContext(ctx); err != nil {
-		return 0, 0, err
+		return 0, 0, false, err
 	}
 	deadline := time.Now().Add(siteDataWait)
 	if d, ok := ctx.Deadline(); ok && d.Before(deadline) {
@@ -467,9 +492,10 @@ func fetchData(ctx context.Context, dial dialFunc, hostport, sni string, filler 
 		path, extra = "/?"+strings.Repeat("a", 6000), ""
 	}
 	if _, err := fmt.Fprintf(tc, "GET %s HTTP/1.1\r\nHost: %s\r\nUser-Agent: Mozilla/5.0\r\nAccept: */*\r\n%sConnection: close\r\n\r\n", path, sni, extra); err != nil {
-		return 0, 0, err
+		return 0, 0, true, err
 	}
-	return readData(tc)
+	n, status, err := readData(tc)
+	return n, status, true, err
 }
 
 // readData reads until siteDataLimit or the end of the reply. It returns
