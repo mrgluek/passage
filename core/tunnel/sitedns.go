@@ -158,6 +158,9 @@ func (t *Tunnel) resolvedSiteDial(dial dialFunc, fallback bool) dialFunc {
 				break
 			}
 		}
+		if last == nil {
+			last = errNoAddress
+		}
 		return nil, last
 	}
 }

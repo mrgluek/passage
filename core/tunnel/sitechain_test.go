@@ -2,6 +2,7 @@ package tunnel
 
 import (
 	"context"
+	"errors"
 	"io"
 	"net"
 	"strings"
@@ -581,5 +582,62 @@ func TestNoReplyTwiceGoesToTheTunnelOnly(t *testing.T) {
 	}
 	if !tt.sites.match("example.net").tunnelOnlyNow(time.Now()) {
 		t.Fatal("not tunnel only after two connections without a reply")
+	}
+}
+
+// A plain request that ends without a reply cannot move to another way, but
+// the way it used is not remembered as the winner afterwards.
+func TestNoReplyOnPlainDataForgetsTheWay(t *testing.T) {
+	switchWait(t, 30*time.Millisecond)
+	closing := func(context.Context, string, string) (net.Conn, error) {
+		a, b := net.Pipe()
+		go func() {
+			b.Read(make([]byte, 64))
+			b.Close()
+		}()
+		return a, nil
+	}
+	tt := newBrowserTunnel(t, testSites, closing, echoDialer("t:", new(atomic.Int32)))
+	c, _ := browserSocks(t, tt, "example.org", nil)
+	defer c.Close()
+	c.Write([]byte("GET / HTTP/1.1\r\n\r\n"))
+	e := tt.sites.match("example.org")
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) && !e.badUntil(RouteDirect).After(time.Now()) {
+		time.Sleep(10 * time.Millisecond)
+	}
+	if _, ok := e.winner(time.Now()); ok || !e.badUntil(RouteDirect).After(time.Now()) {
+		t.Fatalf("the silent way is still remembered: %+v", e.win)
+	}
+}
+
+// The tunnel is never marked bad: a tunnel way that ends without a reply is
+// only forgotten as the winner.
+func TestNoReplyOnTheTunnelLeavesItUnmarked(t *testing.T) {
+	switchWait(t, 30*time.Millisecond)
+	refused := func(context.Context, string, string) (net.Conn, error) { return nil, errors.New("refused") }
+	closing := func(context.Context, string, string) (net.Conn, error) {
+		a, b := net.Pipe()
+		go func() {
+			b.Read(make([]byte, 64))
+			b.Close()
+		}()
+		return a, nil
+	}
+	tt := newBrowserTunnel(t, testSites, refused, closing)
+	c, _ := browserSocks(t, tt, "example.net", nil)
+	defer c.Close()
+	c.Write([]byte("GET / HTTP/1.1\r\n\r\n"))
+	e := tt.sites.match("example.net")
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if _, ok := e.winner(time.Now()); !ok {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	time.Sleep(100 * time.Millisecond)
+	if _, ok := e.winner(time.Now()); ok || e.badUntil(RouteTunnel).After(time.Now()) {
+		t.Fatalf("winner %+v, tunnel bad until %v", e.win, e.badUntil(RouteTunnel))
 	}
 }

@@ -147,7 +147,7 @@ func main() {
 
 	if *browserListen != "" {
 		if url := t.PACURL(); url != "" {
-			fmt.Fprintf(os.Stderr, "Browser PAC: %s (%d sites)\n", url, len(cfg.SiteGroups()))
+			fmt.Fprintf(os.Stderr, "Browser PAC: %s (%d sites)\n", url, cfg.SiteCount())
 		} else {
 			fmt.Fprintln(os.Stderr, "passage-cli: -browser-listen needs a loopback address that is free")
 		}

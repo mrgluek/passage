@@ -108,6 +108,19 @@ func (t *Tunnel) markWayBad(entry *siteEntry, w siteWay) {
 	entry.markBad(w.route, until)
 }
 
+// noReplyFinal is a connection that ended without a reply and cannot move to
+// another way: the way was remembered when it connected, so it is forgotten
+// and, unless it is the tunnel, marked bad; the next connection tries the
+// others first.
+func (t *Tunnel) noReplyFinal(entry *siteEntry, w siteWay) {
+	if w.route != RouteTunnel { // the tunnel is never marked bad
+		t.markWayBad(entry, w)
+	}
+	if win, ok := entry.winner(t.timeNow()); ok && win.route == w.route {
+		entry.forget()
+	}
+}
+
 // siteRelay carries one browser connection whose remote side may change
 // until the first byte from the site.
 type siteRelay struct {
@@ -401,6 +414,8 @@ func (t *Tunnel) connectSite(c bufferedConn, entry *siteEntry, host, addr string
 			upDone, upEnded = nil, true
 			continue
 		case <-lastWait:
+			_, w, _ := r.current()
+			t.noReplyFinal(entry, w)
 			t.siteFailed(entry, host, siteNoReply, nil, t.timeNow().Sub(started), names...)
 			return
 		case <-t.ctx.Done():
@@ -412,8 +427,10 @@ func (t *Tunnel) connectSite(c bufferedConn, entry *siteEntry, host, addr string
 			continue // its event is on the way
 		}
 		if len(next) == 0 || !r.tlsFlightLocked() {
+			w := r.way
 			r.mu.Unlock()
 			if closed {
+				t.noReplyFinal(entry, w)
 				t.siteFailed(entry, host, siteNoReply, nil, t.timeNow().Sub(started), names...)
 				return
 			}

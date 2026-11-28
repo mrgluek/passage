@@ -61,8 +61,17 @@ func (c Config) SiteGroups() []SiteGroup {
 	return cleanSites(c.siteGroupsInOrder())
 }
 
-// siteGroupsInOrder is the groups as the subscriptions list them, before
-// cleaning; the site numbers follow this order.
+// SiteCount is the number of listed hosts, each counted once.
+func (c Config) SiteCount() int {
+	n := 0
+	for _, g := range c.SiteGroups() {
+		n += len(g.Hosts)
+	}
+	return n
+}
+
+// siteGroupsInOrder is the groups as stored, before the merge across
+// subscriptions; the site numbers follow this order.
 func (c Config) siteGroupsInOrder() []SiteGroup {
 	all := slices.Clone(c.Sites)
 	for _, s := range c.Subscriptions {
@@ -71,8 +80,9 @@ func (c Config) siteGroupsInOrder() []SiteGroup {
 	return all
 }
 
-// numberSites gives each entry its place in the merged list in
-// subscription order, counting each host once. Reports and logs name a
+// numberSites gives each entry its place in the merged list, in the order
+// of the stored groups (a subscription's are smart, then tunnel, hosts
+// sorted), counting each host once. Reports and logs name a
 // site by this number, which the subscription's author can map back and
 // nobody else can.
 func (s *siteSet) numberSites(ordered []SiteGroup) {
@@ -100,7 +110,7 @@ func (e *siteEntry) label() string {
 // here only: site connections never touch the groups' route state.
 type siteEntry struct {
 	name   string // the listed host
-	num    int    // 1-based place in the merged list, in subscription order
+	num    int    // 1-based place in the merged list, in stored order
 	group  int    // the subscription group the host is first listed in
 	tunnel bool
 	mu     sync.Mutex

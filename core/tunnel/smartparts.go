@@ -94,13 +94,16 @@ func recordLen(p []byte) int {
 
 func (c *partConn) Write(b []byte) (int, error) {
 	c.mu.Lock()
-	defer c.mu.Unlock()
 	if c.done {
-		if c.err != nil {
-			return 0, c.err
+		err := c.err
+		c.mu.Unlock()
+		if err != nil {
+			return 0, err
 		}
+		// Not under the lock: a write blocked on the peer must not hold up Close.
 		return c.TCPConn.Write(b)
 	}
+	defer c.mu.Unlock()
 	c.pending = append(c.pending, b...)
 	if need := recordLen(c.pending); need > 0 && len(c.pending) < need {
 		if c.timer == nil {
