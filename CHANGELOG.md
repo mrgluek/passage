@@ -26,7 +26,9 @@
   cleared at start.
 - A route that answers its upgrade with HTTP 404 or 410 rests for ten minutes,
   and one refused or timed-out dial no longer reports "no route" while another
-  route is up.
+  route is up. A refusal by an exit's address policy does not count against a
+  group, and a failure within a minute of a success does not change the
+  status.
 - Also from 0.9.9: the desktop network test checks the listed sites, takes up
   to a minute, and names them in copied reports as `site #N`; `passage-cli`
   has `-browser-listen`; HTTP and WSS route failures name the stage; the home
