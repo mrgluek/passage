@@ -64,6 +64,7 @@ type App struct {
 	tun                    *tunnel.Tunnel
 	lastErr                string
 	lastTest               tunnel.Diagnosis // the last network test, for the details
+	browserPort            *tunnel.BrowserPort
 	linkStamp              fileStamp
 	linkCfg                tunnel.Config
 	linkErr                string
@@ -254,6 +255,7 @@ func (a *App) startLocked(why string) {
 	if err != nil {
 		a.lastErr = fmt.Sprintf("%s failed: %v", why, err)
 		a.event("%s", a.lastErr)
+		a.closeBrowserPortLocked() // no router to answer: browsers go direct
 		return
 	}
 	a.lastErr = ""
@@ -328,6 +330,7 @@ func (a *App) run(ctx context.Context) {
 				a.log.copyStalls(a.tun.Status(500).Events)
 				a.tun = nil
 			}
+			a.closeBrowserPortLocked()
 			a.mu.Unlock()
 			return
 		case <-tk.C:
@@ -358,6 +361,7 @@ func (a *App) setRunning(on bool) {
 			a.log.copyStalls(a.tun.Status(500).Events)
 			a.tun = nil
 		}
+		a.closeBrowserPortLocked() // stopped: browsers go direct at once
 		a.lastErr = ""
 	}
 	a.mu.Unlock()

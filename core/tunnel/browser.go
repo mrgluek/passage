@@ -56,18 +56,22 @@ func buildPAC(hosts []string, port int) []byte {
 func (t *Tunnel) startBrowser() {
 	t.sites = newSiteSet(t.cfg.SiteGroups())
 	t.sites.numberSites(t.cfg.siteGroupsInOrder())
-	if t.cfg.BrowserListen == "" {
+	var ln net.Listener
+	switch {
+	case t.cfg.BrowserPort != nil:
+		ln = t.cfg.BrowserPort.view()
+	case t.cfg.BrowserListen == "":
 		return
-	}
-	host, _, err := net.SplitHostPort(t.cfg.BrowserListen)
-	if ip := net.ParseIP(host); err != nil || ip == nil || !ip.Equal(net.IPv4(127, 0, 0, 1)) {
-		t.log.add("browser listener: the address must be 127.0.0.1 and a port")
-		return
-	}
-	ln, err := net.Listen("tcp", t.cfg.BrowserListen)
-	if err != nil {
-		t.log.add("browser listener: %v", err)
-		return
+	default:
+		host, _, err := net.SplitHostPort(t.cfg.BrowserListen)
+		if ip := net.ParseIP(host); err != nil || ip == nil || !ip.Equal(net.IPv4(127, 0, 0, 1)) {
+			t.log.add("browser listener: the address must be 127.0.0.1 and a port")
+			return
+		}
+		if ln, err = net.Listen("tcp", t.cfg.BrowserListen); err != nil {
+			t.log.add("browser listener: %v", err)
+			return
+		}
 	}
 	if ln.Addr().String() == t.ln.Addr().String() {
 		ln.Close()

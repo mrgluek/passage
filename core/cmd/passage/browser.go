@@ -401,8 +401,32 @@ func (a *App) extendSystemPAC(why string) {
 // browserConfigLocked adds the browser listener to the router's configuration.
 func (a *App) browserConfigLocked(cfg *tunnel.Config) {
 	if !a.browserWantedLocked() {
+		a.closeBrowserPortLocked()
 		return
 	}
 	a.ensureBrowserPortLocked()
 	cfg.BrowserListen = fmt.Sprintf("%s:%d", host, a.settings.BrowserPort)
+	// The port stays open across router restarts: a browser that connects
+	// meanwhile waits instead of being refused.
+	if a.browserPort != nil && a.browserPort.Addr().String() != cfg.BrowserListen {
+		a.closeBrowserPortLocked()
+	}
+	if a.browserPort == nil {
+		p, err := tunnel.ListenBrowserPort(cfg.BrowserListen)
+		if err != nil {
+			a.event("browser port: %v", err)
+			return // the router tries to open it itself and logs why not
+		}
+		a.browserPort = p
+	}
+	cfg.BrowserPort = a.browserPort
+}
+
+// closeBrowserPortLocked closes the browser port: the proxy stops, or the
+// port is no longer wanted.
+func (a *App) closeBrowserPortLocked() {
+	if a.browserPort != nil {
+		a.browserPort.Close()
+		a.browserPort = nil
+	}
 }

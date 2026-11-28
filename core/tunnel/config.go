@@ -97,6 +97,9 @@ type Config struct {
 	Sites []links.SiteGroup `json:"sites,omitempty"`
 	// BrowserListen is a loopback address for the browser listener; empty is off.
 	BrowserListen string `json:"browser_listen,omitempty"`
+	// BrowserPort, when set, is used instead of opening BrowserListen: the
+	// caller keeps it open across router restarts.
+	BrowserPort *BrowserPort `json:"-"`
 }
 
 // LinkHost and LinkPath give the web form of links:

@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"errors"
+	"net"
 	"os"
 	"path/filepath"
 	"slices"
@@ -584,5 +585,26 @@ func TestNetworkTestSitesByNumberInTheReportByNameLocally(t *testing.T) {
 	}
 	if strings.Contains(a.report(), "private-site") {
 		t.Fatal("the shared report names the site")
+	}
+}
+
+// The app keeps one browser port across router configurations and closes
+// it when the port is no longer wanted.
+func TestBrowserPortIsKeptAcrossRestarts(t *testing.T) {
+	a, _ := browserApp(t, winFake(proxyService{}), true)
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	c1, _ := a.routerConfigLocked()
+	c2, _ := a.routerConfigLocked()
+	if c1.BrowserPort == nil || c1.BrowserPort != c2.BrowserPort {
+		t.Fatal("a new port for each router")
+	}
+	a.linkCfg.Sites = nil
+	a.routerConfigLocked()
+	if a.browserPort != nil {
+		t.Fatal("the port stayed open without sites")
+	}
+	if _, err := net.Dial("tcp", c1.BrowserListen); err == nil {
+		t.Fatal("the closed port still accepts")
 	}
 }
