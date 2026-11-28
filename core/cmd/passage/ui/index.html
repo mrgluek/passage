@@ -459,7 +459,7 @@ function render(v) {
   renderHome(v);
   renderWhatsApp($("whatsappSettings"), v, false);
   renderBrowser(v);
-  $("status").textContent = v.full;
+  $("status").textContent = v.full + (v.local_test ? "\n" + v.local_test : "");
 }
 
 // ---- The home screen: status, setup steps with app tabs, help.

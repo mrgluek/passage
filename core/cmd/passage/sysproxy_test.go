@@ -582,8 +582,13 @@ func TestNetworkTestSitesByNumberInTheReportByNameLocally(t *testing.T) {
 	a.mu.Lock()
 	a.lastTest = d
 	a.mu.Unlock()
-	if v := a.view(); !strings.Contains(v.Full, "private-site.example.org") {
+	v := a.view()
+	if !strings.Contains(v.LocalTest, "private-site.example.org") {
 		t.Fatal("details do not show the site by name")
+	}
+	// "Copy state" copies Full: numbers only.
+	if strings.Contains(v.Full, "private-site") {
+		t.Fatal("the copied state names the site")
 	}
 	if strings.Contains(a.report(), "private-site") {
 		t.Fatal("the shared report names the site")

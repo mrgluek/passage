@@ -500,6 +500,9 @@ type view struct {
 	Head               string            `json:"head"`
 	Line               string            `json:"line"`
 	Full               string            `json:"full"`
+	// LocalTest is the last network test with site names: shown in the
+	// window, never copied or sent (Full is what "copy" takes).
+	LocalTest string `json:"local_test,omitempty"`
 	StartHint          string            `json:"start_hint"`
 	HasLink            bool              `json:"has_link"`
 	Mode               string            `json:"mode"`
@@ -606,7 +609,7 @@ func (a *App) viewLocked() (view, bool) {
 		full = "⚠ " + a.t.f("link_error", a.linkErr) + "\n\n" + full
 	}
 	if !a.lastTest.Time.IsZero() {
-		full += "\n" + a.t.f("test_last") + "\n" + diagnosisLocal(a.t, a.lastTest)
+		v.LocalTest = a.t.f("test_last") + "\n" + diagnosisLocal(a.t, a.lastTest)
 	}
 	if events := a.log.text(32); events != "" {
 		full += "\n" + a.t.f("app_events") + "\n" + events
