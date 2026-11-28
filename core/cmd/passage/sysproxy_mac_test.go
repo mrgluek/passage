@@ -402,3 +402,15 @@ func TestPanelStaysAfterAFailedUncheckWithoutSites(t *testing.T) {
 		t.Fatalf("%+v", v)
 	}
 }
+
+// Turning the switch on again while it is on keeps what the first time saved.
+func TestSecondEnableKeepsTheBackup(t *testing.T) {
+	f := macFake(proxyService{Name: "Wi-Fi", AutoConfigURL: oldPAC})
+	a, _ := browserApp(t, f, true)
+	a.setSystemPAC(true)
+	a.setSystemPAC(true)
+	a.setSystemPAC(false)
+	if s := f.st.Services[0]; s.AutoConfigURL != oldPAC || s.AutoConfigOn {
+		t.Fatalf("the address before was lost: %+v", s)
+	}
+}

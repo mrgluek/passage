@@ -152,9 +152,16 @@ func (a *App) setSystemPAC(on bool) error {
 	var nb sysBackup
 	var res restoreResult
 	var err error
-	if on {
+	switch {
+	case on && b.Active && b.Ours == url:
+		// Already ours: keep the backup (it knows what was there before) and
+		// only add services that have appeared since.
+		nb = b
+		nb.Services = slices.Clone(b.Services)
+		_, _, err = extendSystemPAC(sp, &nb)
+	case on:
 		nb, err = enableSystemPAC(sp, url)
-	} else {
+	default:
 		res, err = restoreServices(sp, b)
 	}
 
