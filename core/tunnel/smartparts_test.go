@@ -6,7 +6,6 @@ import (
 	"crypto/tls"
 	"io"
 	"net"
-	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -225,34 +224,5 @@ func TestPartConnCloseDuringABlockedWrite(t *testing.T) {
 	case <-wrote:
 	case <-time.After(3 * time.Second):
 		t.Fatal("write still blocked after Close")
-	}
-}
-
-func TestOOBStrategyNotOfferedOnDarwin(t *testing.T) {
-	has := func(goos string) bool {
-		for _, s := range smartStrategiesFor(goos) {
-			if s.name == "oob:sni" {
-				return true
-			}
-		}
-		return false
-	}
-	if has("darwin") {
-		t.Fatal("oob:sni offered on darwin")
-	}
-	for _, goos := range []string{"linux", "windows"} {
-		if !has(goos) {
-			t.Fatalf("oob:sni missing on %s", goos)
-		}
-	}
-	names := func(goos string) (out []string) {
-		for _, s := range smartStrategiesFor(goos) {
-			out = append(out, s.name)
-		}
-		return
-	}
-	want := []string{"tlsfrag:1", "split:sni", "disorder:sni", "split:2", "disorder:1"}
-	if got := names("darwin"); !slices.Equal(got, want) {
-		t.Fatalf("darwin order %v, want %v", got, want)
 	}
 }

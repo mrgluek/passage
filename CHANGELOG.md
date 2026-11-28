@@ -11,8 +11,6 @@
   backup with no services.
 - Desktop: the system proxy switch shows the real state after a refusal, and
   the home steps update when an app connects.
-- Desktop, macOS: the urgent-byte site strategy (`oob:sni`) is no longer
-  tried: servers rejected the hello it sent.
 - Desktop, macOS: the window no longer waits on the app's state from the main
   thread, and Quit ends the app after 15 seconds even if it is stuck.
 - Desktop: a step that runs over 30 seconds writes the program's stacks to
