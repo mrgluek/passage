@@ -413,3 +413,23 @@ func TestCloseDropsOpenSiteConnections(t *testing.T) {
 		t.Fatal("Close hangs on a site connection")
 	}
 }
+
+// The browser port opens web ports only, also for a listed host.
+func TestBrowserPortRefusesOtherDestinationPorts(t *testing.T) {
+	var d atomic.Int32
+	tt := newBrowserTunnel(t, testSites, echoDialer("d:", &d), nil)
+	c, err := net.Dial("tcp", tt.BrowserAddr())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close()
+	c.SetDeadline(time.Now().Add(5 * time.Second))
+	c.Write([]byte{5, 1, 0})
+	io.ReadFull(c, make([]byte, 2))
+	host := "example.org"
+	c.Write(append(append([]byte{5, 1, 0, 3, byte(len(host))}, host...), 0, 22))
+	rep := make([]byte, 10)
+	if _, err := io.ReadFull(c, rep); err != nil || rep[1] != repNotAllowed || d.Load() != 0 {
+		t.Fatalf("reply %v, dials %d, %v", rep, d.Load(), err)
+	}
+}

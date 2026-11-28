@@ -189,11 +189,16 @@ func (t *Tunnel) browserSOCKS(c bufferedConn) {
 		}
 		return
 	}
-	host, _, _ := net.SplitHostPort(addr)
+	host, port, _ := net.SplitHostPort(addr)
 	entry := t.sites.match(host)
 	if entry == nil || net.ParseIP(host) != nil {
 		socksReply(c, repNotAllowed)
 		t.siteSocksError(repNotAllowed, "host not listed")
+		return
+	}
+	if port != "443" && port != "80" { // the port is for web pages only
+		socksReply(c, repNotAllowed)
+		t.siteSocksError(repNotAllowed, "port not allowed")
 		return
 	}
 	c.SetDeadline(time.Time{})
@@ -217,6 +222,7 @@ func (t *Tunnel) dialSiteWay(entry *siteEntry, addr string) (net.Conn, Route, st
 	t.mu.Lock()
 	ways := t.ways
 	strategies := t.siteStrategiesLocked()
+	mode := t.mode
 	t.mu.Unlock()
 	now := t.timeNow()
 	// Smart for a site does not wait for the router to pick a strategy:
@@ -227,7 +233,6 @@ func (t *Tunnel) dialSiteWay(entry *siteEntry, addr string) (net.Conn, Route, st
 		ways[RouteSmart] = way{strat.dial, directDialTimeout}
 	}
 	var good, late []Route
-	mode := t.mode
 	tunnelOnly := entry.tunnel && mode != ModeOff && ways[RouteTunnel].dial != nil && entry.tunnelOnlyNow(now)
 	for _, r := range []Route{RouteDirect, RouteSmart, RouteTunnel} {
 		switch {
