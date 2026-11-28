@@ -61,6 +61,9 @@ type Settings struct {
 	// BrowserConfirmed: the user said the browser is set up by hand.
 	BrowserConfirmed bool
 	SysBackup        sysBackup
+	// SysPending: system proxy settings were being written; a start that
+	// finds it set looks for what an interrupted write left.
+	SysPending bool
 	// Edits are local changes to the link's routes, by route ID.
 	Edits map[string]tunnel.RouteEdit
 }
@@ -213,6 +216,8 @@ func loadSettings(path string) (Settings, bool, error) {
 			s.SystemPAC = v == "true" || v == "1"
 		case "browser_confirmed":
 			s.BrowserConfirmed = v == "true" || v == "1"
+		case "sys_pending":
+			s.SysPending = v == "true" || v == "1"
 		case "sys_backup_ours":
 			s.SysBackup.Ours = v
 		case "sys_backup_prev":
@@ -313,6 +318,9 @@ browser_port=%d
 system_pac=%t
 browser_confirmed=%t
 `, s.Port, s.User, s.Pass, s.Auth, s.WhatsApp, s.WhatsAppChatPort, s.WhatsAppMediaPort, s.Mode, s.My, s.Running, s.AutoUpdate, s.NextUpdate.Format(time.RFC3339), s.DismissedUpdate, s.AutostartDismissed, s.RoutesNotice, s.AppSeen, s.Lang, s.BrowserPort, s.SystemPAC, s.BrowserConfirmed)
+	if s.SysPending {
+		text += "sys_pending=true\n"
+	}
 	if b := s.SysBackup; b.Active {
 		text += fmt.Sprintf("sys_backup_ours=%s\n", oneLineValue(b.Ours))
 		for _, sb := range b.Services {

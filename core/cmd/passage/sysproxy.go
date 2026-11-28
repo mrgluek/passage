@@ -1,7 +1,9 @@
 package main
 
 import (
+	"cmp"
 	"errors"
+	"slices"
 	"strings"
 )
 
@@ -94,6 +96,7 @@ var (
 	errSysManualProxy = errors.New("a manual proxy is on")
 	errSysPolicy      = errors.New("the proxy settings are managed by a policy")
 	errSysUnsupported = errors.New("not supported on this system")
+	errSysUnreadable  = errors.New("the network services could not be read")
 )
 
 // enableSystemPAC points every service at url. It refuses, without changing
@@ -109,6 +112,9 @@ func enableSystemPAC(sp systemProxy, url string) (sysBackup, error) {
 	}
 	if st.Policy != "" {
 		return sysBackup{}, &policyError{st.Policy}
+	}
+	if len(st.Services) == 0 && st.Unread > 0 {
+		return sysBackup{}, errSysUnreadable
 	}
 	for _, s := range st.Services {
 		if err := s.refusal(url); err != nil {
@@ -178,11 +184,13 @@ func restoreSystemPAC(sp systemProxy, b sysBackup) (bool, error) {
 // restoreResult says what a restore did.
 type restoreResult struct {
 	changed bool
-	missing int // backed-up services the system no longer knows
+	missing int             // backed-up services the system no longer knows
+	left    []serviceBackup // not restored yet (unreadable or a failed write)
 }
 
 func restoreServices(sp systemProxy, b sysBackup) (restoreResult, error) {
 	var res restoreResult
+	var readErr error
 	if sp == nil || !b.Active {
 		return res, nil
 	}
@@ -193,10 +201,18 @@ func restoreServices(sp systemProxy, b sysBackup) (restoreResult, error) {
 			names = append(names, sb.Name)
 		}
 		found, missing, err := sr.ReadServices(names)
-		if err != nil {
+		if err != nil && len(found) == 0 {
 			return res, err
 		}
 		services, res.missing = found, len(missing)
+		// One service that cannot be read does not hold up the others: they
+		// are restored, it stays in the backup.
+		for _, sb := range b.Services {
+			if !slices.ContainsFunc(found, func(s proxyService) bool { return s.Name == sb.Name }) && !slices.Contains(missing, sb.Name) {
+				res.left = append(res.left, sb)
+			}
+		}
+		readErr = err
 	} else {
 		st, err := sp.Read()
 		if err != nil {
@@ -214,12 +230,13 @@ func restoreServices(sp systemProxy, b sysBackup) (restoreResult, error) {
 				if first == nil {
 					first = err
 				}
+				res.left = append(res.left, sb)
 				continue
 			}
 			res.changed = true
 		}
 	}
-	return res, first
+	return res, cmp.Or(first, readErr)
 }
 
 // sweepLeftovers turns off url on services that use it but are not in b: a

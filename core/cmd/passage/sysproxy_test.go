@@ -230,9 +230,7 @@ func TestQuitRestoresAndNextStartAppliesAgain(t *testing.T) {
 	}
 	b := newApp(dir, "test", "", "en", &fakePlatform{})
 	b.sysProxy, b.portFree = f, func(int) bool { return true }
-	b.mu.Lock()
-	b.recoverSystemPACLocked()
-	b.mu.Unlock()
+	b.recoverSystemPAC()
 	if f.url() == "" || !reload(t, dir).SysBackup.Active {
 		t.Fatal("the next start did not apply the switch again")
 	}
@@ -253,9 +251,7 @@ func TestCrashRecovery(t *testing.T) {
 	}
 	b := newApp(dir, "test", "", "en", &fakePlatform{})
 	b.sysProxy = f
-	b.mu.Lock()
-	b.recoverSystemPACLocked()
-	b.mu.Unlock()
+	b.recoverSystemPAC()
 	if f.url() != "" || reload(t, dir).SysBackup.Active {
 		t.Fatal("crash left the address behind")
 	}
@@ -266,9 +262,7 @@ func TestCrashRecovery(t *testing.T) {
 	s.save(filepath.Join(dir, iniName))
 	c := newApp(dir, "test", "", "en", &fakePlatform{})
 	c.sysProxy = f
-	c.mu.Lock()
-	c.recoverSystemPACLocked()
-	c.mu.Unlock()
+	c.recoverSystemPAC()
 	if f.url() != ours || !reload(t, dir).SysBackup.Active {
 		t.Fatal("a wanted switch was dropped")
 	}
@@ -277,9 +271,7 @@ func TestCrashRecovery(t *testing.T) {
 	f.setURL("http://example.org/user.pac")
 	d := newApp(dir, "test", "", "en", &fakePlatform{})
 	d.sysProxy = f
-	d.mu.Lock()
-	d.recoverSystemPACLocked()
-	d.mu.Unlock()
+	d.recoverSystemPAC()
 	if f.url() != "http://example.org/user.pac" || reload(t, dir).SysBackup.Active {
 		t.Fatal("a foreign address was touched")
 	}

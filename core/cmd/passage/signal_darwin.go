@@ -17,6 +17,7 @@ func quitOnSignal(quit func()) (stop func()) {
 	go func() {
 		select {
 		case <-ch:
+			signal.Stop(ch) // a second signal ends the process the usual way
 			quit()
 		case <-done:
 		}

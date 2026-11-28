@@ -28,7 +28,9 @@ const macCallTimeout = 5 * time.Second
 func networksetup(args ...string) (string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), macCallTimeout)
 	defer cancel()
-	out, err := exec.CommandContext(ctx, "/usr/sbin/networksetup", args...).CombinedOutput()
+	cmd := exec.CommandContext(ctx, "/usr/sbin/networksetup", args...)
+	cmd.WaitDelay = time.Second // a child holding the pipe does not extend the wait
+	out, err := cmd.CombinedOutput()
 	text := string(out)
 	if ctx.Err() != nil {
 		err = errors.New("timed out")

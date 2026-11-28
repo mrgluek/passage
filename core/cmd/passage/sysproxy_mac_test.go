@@ -134,9 +134,7 @@ func TestMacNewServiceIsAddedOnNetworkChange(t *testing.T) {
 	s.save(dir + "/" + iniName)
 	b := newApp(dir, "test", "", "en", &fakePlatform{})
 	b.sysProxy = f
-	b.mu.Lock()
-	b.recoverSystemPACLocked()
-	b.mu.Unlock()
+	b.recoverSystemPAC()
 	if f.st.anyOurs(ours) || reload(t, dir).SysBackup.Active {
 		t.Fatalf("crash recovery left ours on: %+v", f.st.Services)
 	}
@@ -311,11 +309,92 @@ func TestStartTurnsOffLeftoversOutsideTheBackup(t *testing.T) {
 	a.mu.Unlock()
 	s := reload(t, dir)
 	s.SystemPAC, s.SysBackup = true, sysBackup{Active: true, Ours: ours, Services: []serviceBackup{{Name: "Wi-Fi"}}}
+	s.SysPending = true // the write was cut short
 	s.save(dir + "/" + iniName)
 	b := newApp(dir, "test", "", "en", &fakePlatform{})
 	b.sysProxy = f
 	b.sweepSystemPAC()
 	if !f.st.Services[0].ours(ours) || f.st.Services[1].AutoConfigOn {
 		t.Fatalf("%+v", f.st.Services)
+	}
+}
+
+// The same address set by hand (no write of ours was cut short) stays.
+func TestStartLeavesAnAddressSetByHand(t *testing.T) {
+	f := macFake(proxyService{Name: "Wi-Fi"})
+	a, dir := browserApp(t, f, true)
+	a.mu.Lock()
+	a.ensureBrowserPortLocked()
+	ours := a.pacURLLocked()
+	a.mu.Unlock()
+	f.st.Services[0] = proxyService{Name: "Wi-Fi", AutoConfigURL: ours, AutoConfigOn: true} // by hand
+	b := newApp(dir, "test", "", "en", &fakePlatform{})
+	b.sysProxy = f
+	b.sweepSystemPAC()
+	if !f.st.Services[0].ours(ours) {
+		t.Fatal("an address set by hand was turned off")
+	}
+}
+
+// unreadable is a macOS system where some services cannot be read now.
+type unreadable struct {
+	*fakeProxy
+	unread []string
+}
+
+func (u unreadable) Read() (proxyState, error) {
+	st, err := u.fakeProxy.Read()
+	st.Services = slices.DeleteFunc(st.Services, func(s proxyService) bool { return slices.Contains(u.unread, s.Name) })
+	st.Unread = len(u.unread)
+	return st, err
+}
+
+func (u unreadable) ReadServices(names []string) ([]proxyService, []string, error) {
+	found, missing, _ := macReader{u.fakeProxy}.ReadServices(names)
+	found = slices.DeleteFunc(found, func(s proxyService) bool { return slices.Contains(u.unread, s.Name) })
+	if len(u.unread) > 0 {
+		return found, missing, errors.New("timed out")
+	}
+	return found, missing, nil
+}
+
+func TestUnreadableServicesAtStartKeepTheBackup(t *testing.T) {
+	f := macFake(proxyService{Name: "Wi-Fi"})
+	a, dir := browserApp(t, f, true)
+	a.setSystemPAC(true)
+	b := newApp(dir, "test", "", "en", &fakePlatform{})
+	b.sysProxy = unreadable{f, []string{"Wi-Fi"}}
+	b.recoverSystemPAC()
+	if s := reload(t, dir); !s.SysBackup.Active || !s.SystemPAC {
+		t.Fatalf("backup or wish dropped on a partial read: %+v", s.SysBackup)
+	}
+}
+
+func TestEnableWithNothingReadableIsRefused(t *testing.T) {
+	f := macFake(proxyService{Name: "Wi-Fi"})
+	if _, err := enableSystemPAC(unreadable{f, []string{"Wi-Fi"}}, oursURL); !errors.Is(err, errSysUnreadable) || len(f.writes) != 0 {
+		t.Fatal(err)
+	}
+}
+
+func TestOneUnreadableServiceDoesNotHoldUpTheOthers(t *testing.T) {
+	f := macFake(proxyService{Name: "Wi-Fi"}, proxyService{Name: "VPN-ish"})
+	b, _ := enableSystemPAC(f, oursURL)
+	res, err := restoreServices(unreadable{f, []string{"VPN-ish"}}, b)
+	if err == nil || f.st.Services[0].AutoConfigOn || len(res.left) != 1 || res.left[0].Name != "VPN-ish" {
+		t.Fatalf("%+v %v %+v", res, err, f.st.Services)
+	}
+}
+
+// After a failed uncheck the panel stays, even with no sites listed.
+func TestPanelStaysAfterAFailedUncheckWithoutSites(t *testing.T) {
+	f := winFake(proxyService{})
+	a, _ := browserApp(t, f, true)
+	a.setSystemPAC(true)
+	a.linkCfg.Sites = nil
+	f.setErr = errors.New("access denied")
+	a.setSystemPAC(false)
+	if v := a.view().Browser; !v.Show || !v.On || v.Notice == "" {
+		t.Fatalf("%+v", v)
 	}
 }

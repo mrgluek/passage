@@ -62,7 +62,7 @@ func (a *App) siteCountLocked() int {
 // browserWantedLocked: the listener runs when there are sites to serve or
 // the system points at its address.
 func (a *App) browserWantedLocked() bool {
-	return a.siteCountLocked() > 0 || a.settings.SystemPAC
+	return a.siteCountLocked() > 0 || a.settings.SystemPAC || a.settings.SysBackup.Active
 }
 
 func (a *App) pacURLLocked() string {
@@ -92,7 +92,7 @@ func (a *App) ensureBrowserPortLocked() {
 
 func (a *App) browserViewLocked() browserView {
 	v := browserView{Sites: a.siteCountLocked(), System: a.sysProxy != nil}
-	v.Show = v.Sites > 0 || a.settings.SystemPAC
+	v.Show = v.Sites > 0 || a.settings.SystemPAC || a.settings.SysBackup.Active
 	if v.Show {
 		a.ensureBrowserPortLocked()
 		v.PAC = a.pacURLLocked()
@@ -146,6 +146,7 @@ func (a *App) setSystemPAC(on bool) error {
 	a.sysNotice, a.sysError = "", ""
 	a.ensureBrowserPortLocked()
 	url, b := a.pacURLLocked(), a.settings.SysBackup
+	a.markPendingLocked(on)
 	a.mu.Unlock()
 
 	var nb sysBackup
@@ -160,11 +161,15 @@ func (a *App) setSystemPAC(on bool) error {
 	a.mu.Lock()
 	defer a.changedAfter()
 	defer a.mu.Unlock()
+	a.settings.SysPending = false
 	wanted := a.browserWantedLocked()
 	switch {
 	case on && err != nil:
 		a.sysNotice, a.sysError = noticeKey(err), noticeArg(err)
 		a.event("system proxy: not changed (%s)", a.sysNotice)
+		// A write that timed out may still have been applied: the next start looks.
+		a.settings.SysPending = !errors.Is(err, errSysForeignPAC) && !errors.Is(err, errSysManualProxy) && !errors.Is(err, errSysPolicy) && !errors.Is(err, errSysUnreadable)
+		a.saveSettings()
 		return nil
 	case on:
 		a.settings.SystemPAC, a.settings.SysBackup = true, nb
@@ -175,6 +180,7 @@ func (a *App) setSystemPAC(on bool) error {
 		a.settings.SystemPAC = false
 		a.sysNotice, a.sysError = "browser_restore_error", err.Error()
 		a.event("system proxy: restore failed (off): %v", err)
+		a.keepUnrestoredLocked(res)
 	default:
 		a.settings.SystemPAC = false
 		a.noteRestoreLocked(res, "off")
@@ -208,7 +214,8 @@ func (a *App) restoreSystemPACLocked(why string) {
 	res, err := restoreServices(a.sysProxy, b)
 	if err != nil {
 		a.event("system proxy: restore failed (%s): %v", why, err)
-		return // keep the backup: the next start tries again
+		a.keepUnrestoredLocked(res) // the next start tries again
+		return
 	}
 	a.noteRestoreLocked(res, why)
 	a.settings.SysBackup = sysBackup{}
@@ -234,6 +241,7 @@ func (a *App) restoreOnQuit(limit time.Duration) {
 		defer a.mu.Unlock()
 		if err != nil {
 			a.event("system proxy: restore failed (quit): %v", err)
+			a.keepUnrestoredLocked(res)
 			return
 		}
 		a.noteRestoreLocked(res, "quit")
@@ -249,36 +257,82 @@ func (a *App) restoreOnQuit(limit time.Duration) {
 	}
 }
 
-// recoverSystemPACLocked runs at start. A backup left by a crashed run is
-// either continued (the user still wants it) or undone; without a backup, a
-// wish for the switch is applied again. extend asks the caller to run
-// extendSystemPAC once a.mu is released.
-func (a *App) recoverSystemPACLocked() (extend bool) {
-	if a.sysProxy == nil {
+// keepUnrestoredLocked narrows the backup to what a failed restore left.
+func (a *App) keepUnrestoredLocked(res restoreResult) {
+	if len(res.left) > 0 {
+		a.settings.SysBackup.Services = res.left
+		a.saveSettings()
+	}
+}
+
+// markPendingLocked notes in passage.ini that system settings are about to
+// be written, so a start after a crash in the middle knows to look.
+func (a *App) markPendingLocked(writing bool) {
+	if writing {
+		a.settings.SysPending = true
+		a.saveSettings()
+	}
+}
+
+// recoverSystemPAC runs at start, outside a.mu. A backup left by a crashed
+// run is either continued (the user still wants it) or undone; without a
+// backup, a wish for the switch is applied again. extend asks the caller to
+// run extendSystemPAC.
+func (a *App) recoverSystemPAC() (extend bool) {
+	a.sysMu.Lock()
+	defer a.sysMu.Unlock()
+	a.mu.Lock()
+	sp, s := a.sysProxy, a.settings
+	if sp == nil {
+		a.mu.Unlock()
 		return false
 	}
-	s := &a.settings
+	url := ""
+	if s.SystemPAC {
+		a.ensureBrowserPortLocked()
+		url = a.pacURLLocked()
+		a.markPendingLocked(true)
+	}
+	a.mu.Unlock()
 	switch {
 	case s.SysBackup.Active && !s.SystemPAC:
-		a.restoreSystemPACLocked("crash recovery")
+		res, err := restoreServices(sp, s.SysBackup)
+		a.mu.Lock()
+		defer a.mu.Unlock()
+		if err != nil {
+			a.event("system proxy: restore failed (crash recovery): %v", err)
+			a.keepUnrestoredLocked(res)
+			return false
+		}
+		a.noteRestoreLocked(res, "crash recovery")
+		a.settings.SysBackup = sysBackup{}
+		a.saveSettings()
 	case s.SysBackup.Active:
-		st, err := a.sysProxy.Read()
-		if err == nil && !st.anyOurs(s.SysBackup.Ours) {
-			s.SysBackup = sysBackup{} // changed meanwhile: not ours to restore
-			s.SystemPAC = false       // and the wish no longer matches the system
+		st, err := sp.Read()
+		a.mu.Lock()
+		defer a.mu.Unlock()
+		a.settings.SysPending = false
+		// Only a full read may say none is ours: services that could not be
+		// read (right after login, say) may still be.
+		if err == nil && st.Unread == 0 && !st.anyOurs(s.SysBackup.Ours) {
+			a.settings.SysBackup = sysBackup{} // changed meanwhile: not ours to restore
+			a.settings.SystemPAC = false       // and the wish no longer matches the system
 			a.saveSettings()
 			return false
 		}
+		a.saveSettings()
 		return true
 	case s.SystemPAC:
-		a.ensureBrowserPortLocked()
-		b, err := enableSystemPAC(a.sysProxy, a.pacURLLocked())
+		b, err := enableSystemPAC(sp, url)
+		a.mu.Lock()
+		defer a.mu.Unlock()
+		a.settings.SysPending = false
 		if err != nil {
-			s.SystemPAC = false
+			a.settings.SystemPAC = false
 			a.sysNotice, a.sysError = noticeKey(err), noticeArg(err)
 			a.event("system proxy: not set at start (%s)", a.sysNotice)
 		} else {
-			s.SysBackup = b
+			a.settings.SysBackup = b
 		}
 		a.saveSettings()
 	}
@@ -291,13 +345,17 @@ func (a *App) sweepSystemPAC() {
 	defer a.sysMu.Unlock()
 	a.mu.Lock()
 	sp, b, url := a.sysProxy, a.settings.SysBackup, ""
-	if a.settings.BrowserPort != 0 {
-		url = a.pacURLLocked()
+	if a.settings.BrowserPort != 0 && a.settings.SysPending {
+		url = a.pacURLLocked() // only after a write was cut short: never an address set by hand
 	}
 	a.mu.Unlock()
 	n, err := sweepLeftovers(sp, url, b)
 	a.mu.Lock()
 	defer a.mu.Unlock()
+	if a.settings.SysPending {
+		a.settings.SysPending = false
+		a.saveSettings()
+	}
 	if n > 0 {
 		a.event("system proxy: turned off the address on %d network service(s) left by an interrupted change", n)
 	}
@@ -319,9 +377,14 @@ func (a *App) extendSystemPAC(why string) {
 		return
 	}
 	b.Services = slices.Clone(b.Services)
+	a.mu.Lock()
+	a.markPendingLocked(true)
+	a.mu.Unlock()
 	added, skipped, err := extendSystemPAC(sp, &b)
 	a.mu.Lock()
 	defer a.mu.Unlock()
+	a.settings.SysPending = false
+	defer a.saveSettings()
 	if added > 0 && a.settings.SysBackup.Active && a.settings.SysBackup.Ours == b.Ours {
 		a.settings.SysBackup = b
 		a.saveSettings()

@@ -302,14 +302,14 @@ func (a *App) tick() {
 }
 
 func (a *App) run(ctx context.Context) {
+	a.sweepSystemPAC() // before anything is written again
+	extend := a.recoverSystemPAC()
 	a.mu.Lock()
-	extend := a.recoverSystemPACLocked()
 	if a.settings.Running {
 		a.runningSince = time.Now()
 		a.startLocked("app start")
 	}
 	a.mu.Unlock()
-	a.sweepSystemPAC()
 	if extend {
 		a.extendSystemPAC("start")
 	}
@@ -502,20 +502,20 @@ type view struct {
 	Full               string            `json:"full"`
 	// LocalTest is the last network test with site names: shown in the
 	// window, never copied or sent (Full is what "copy" takes).
-	LocalTest string `json:"local_test,omitempty"`
-	StartHint          string            `json:"start_hint"`
-	HasLink            bool              `json:"has_link"`
-	Mode               string            `json:"mode"`
-	Routes             []routeChoice     `json:"routes"`
-	My                 bool              `json:"my"`
-	Auth               bool              `json:"auth"`
-	Host               string            `json:"host"`
-	Port               int               `json:"port"`
-	User               string            `json:"user"`
-	Pass               string            `json:"pass"`
-	ProxyLink          string            `json:"proxy_link"` // socks5://
-	TgLink             string            `json:"tg_link"`    // tg://socks
-	VeltaLink          string            `json:"velta_link"` // velta://proxy/2
+	LocalTest string        `json:"local_test,omitempty"`
+	StartHint string        `json:"start_hint"`
+	HasLink   bool          `json:"has_link"`
+	Mode      string        `json:"mode"`
+	Routes    []routeChoice `json:"routes"`
+	My        bool          `json:"my"`
+	Auth      bool          `json:"auth"`
+	Host      string        `json:"host"`
+	Port      int           `json:"port"`
+	User      string        `json:"user"`
+	Pass      string        `json:"pass"`
+	ProxyLink string        `json:"proxy_link"` // socks5://
+	TgLink    string        `json:"tg_link"`    // tg://socks
+	VeltaLink string        `json:"velta_link"` // velta://proxy/2
 	// Traffic grows while the proxy carries bytes; the window pulses on it.
 	Traffic int64 `json:"traffic"`
 	// AppSeen is true once a chat app has used the proxy.
