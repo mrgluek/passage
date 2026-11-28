@@ -105,6 +105,13 @@ func TestSiteSummaryLineHasNoNames(t *testing.T) {
 		roundTrip(t, c)
 	}
 	browserSocks(t, tt, "unlisted.example.com", nil) // refused: a SOCKS error
+	// The error is counted just after the reply is sent: wait for it.
+	l := tt.siteDiag()
+	waitFor(t, func() bool {
+		l.mu.Lock()
+		defer l.mu.Unlock()
+		return len(l.socksErrors) > 0
+	})
 	tt.flushSiteSummary(true)
 	var summary string
 	for _, l := range siteLines(tt) {
