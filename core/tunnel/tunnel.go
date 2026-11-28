@@ -1511,6 +1511,33 @@ func (t *Tunnel) Dials() []func(ctx context.Context, network, addr string) (net.
 	return out
 }
 
+// AppDials is the order for the app's own requests (update check and
+// download). Auto and off follow Dials. With a pinned mode the mode's own
+// route goes first, then direct, then the other routes, so a route whose exit
+// refuses these hosts does not stop updates. User traffic is not affected.
+func (t *Tunnel) AppDials() []func(ctx context.Context, network, addr string) (net.Conn, error) {
+	t.mu.Lock()
+	mode, dials := t.mode, []func(ctx context.Context, network, addr string) (net.Conn, error){}
+	tun, direct := t.ways[RouteTunnel].dial, t.ways[RouteDirect].dial
+	if tun != nil {
+		tun = t.maintenanceTunnelDialLocked()
+	}
+	pool, _ := t.client.(*routePool)
+	pinned := t.only != ""
+	t.mu.Unlock()
+	if mode != ModeAlways || tun == nil {
+		return t.Dials()
+	}
+	dials = append(dials, tun)
+	if direct != nil {
+		dials = append(dials, direct)
+	}
+	if pool != nil && pinned {
+		dials = append(dials, pool.anyRouteDialContext)
+	}
+	return dials
+}
+
 // maintenanceTunnelDialLocked keeps the normal route order for app requests.
 func (t *Tunnel) maintenanceTunnelDialLocked() dialFunc {
 	if p, ok := t.client.(*routePool); ok && t.ways[RouteTunnel].dial != nil {

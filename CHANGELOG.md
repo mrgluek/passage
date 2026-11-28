@@ -17,6 +17,7 @@
   `passage-stall.txt` next to the log, for diagnosing freezes.
 - The iroh helper's exit no longer waits on pipes a child holds open, and the
   browser port pauses after repeated accept errors.
+- Desktop: with a pinned route, the update check and download also try a direct connection and the other routes when that route refuses them, and Settings says so.
 - Desktop and `passage-cli` count listed sites, not groups.
 - Site numbers in reports follow the stored order: smart sites, then tunnel
   sites, each sorted.

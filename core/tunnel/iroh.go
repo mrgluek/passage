@@ -21,6 +21,9 @@ import (
 var errIrohExited = errors.New("transport exited")
 var errDestinationRefused = errors.New("destination connection refused")
 
+// ErrDestinationRefused is errDestinationRefused for callers outside the package.
+var ErrDestinationRefused = errDestinationRefused
+
 // errDestinationUnreachable is a refusal the exit may not repeat: it could
 // not connect, as opposed to a destination it does not allow.
 var errDestinationUnreachable = fmt.Errorf("%w: unreachable", errDestinationRefused)

@@ -210,6 +210,15 @@ func routeIDOf(c net.Conn) string {
 	return ""
 }
 
+// anyRouteKey lets one dial use every route, whatever the tunnel is pinned to.
+type anyRouteKey struct{}
+
+// anyRouteDialContext is for the app's own requests, once the pinned route
+// has failed or refused them. User traffic never takes it.
+func (p *routePool) anyRouteDialContext(ctx context.Context, network, address string) (net.Conn, error) {
+	return p.dialContext(context.WithValue(ctx, anyRouteKey{}, true), network, address, false, false)
+}
+
 // siteDialContext dials for a browser connection. A failure is returned to
 // the caller only: no cooldown, no route statistics, no subscription refresh.
 func (p *routePool) siteDialContext(ctx context.Context, network, address string) (net.Conn, error) {
@@ -220,7 +229,8 @@ func (p *routePool) dialContext(ctx context.Context, network, address string, ba
 	quiet := ctx.Value(quietDialKey{}) != nil
 	p.tick(p.clock())
 	host, _, _ := net.SplitHostPort(address)
-	order := p.order(net.ParseIP(host))
+	anyRoute := ctx.Value(anyRouteKey{}) != nil
+	order := p.orderFor(net.ParseIP(host), anyRoute)
 	if background {
 		order = slices.DeleteFunc(order, p.reserveRoute)
 	}
@@ -366,7 +376,7 @@ func (p *routePool) dialContext(ctx context.Context, network, address string, ba
 			}
 			if r.err == nil {
 				p.mu.Lock()
-				allowed := p.matches(r.i, p.only)
+				allowed := anyRoute || p.matches(r.i, p.only)
 				p.mu.Unlock()
 				if !allowed {
 					r.conn.Close()
@@ -471,14 +481,17 @@ func (p *routePool) markRefused(i int, address string, unreachable bool) {
 
 // order lists the routes that can carry ip in priority order, the ones that
 // failed recently last.
-func (p *routePool) order(ip net.IP) []int {
+func (p *routePool) order(ip net.IP) []int { return p.orderFor(ip, false) }
+
+// orderFor is order; anyRoute ignores the pinned type or route.
+func (p *routePool) orderFor(ip net.IP, anyRoute bool) []int {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	now := p.clock()
 	p.tickLocked(now)
 	var ready, reserve, cooling, stalled []int
 	for i := range p.clients {
-		if ip != nil && ip.To4() == nil && !p.ipv6[i] || !p.matches(i, p.only) {
+		if ip != nil && ip.To4() == nil && !p.ipv6[i] || !anyRoute && !p.matches(i, p.only) {
 			continue
 		}
 		if p.stalledLocked(p.network, i) {

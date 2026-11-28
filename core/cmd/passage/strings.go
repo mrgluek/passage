@@ -80,6 +80,7 @@ var texts = map[string]map[string]string{
 		"update_error":                   "Could not update Passage. Try again.",
 		"update_check_failed":            "Could not check for updates. Try again later.",
 		"update_download_failed":         "Could not download the update. Try again.",
+		"update_refused":                 "The selected route refused the update source, and the other ways did not answer.",
 		"update_restart":                 "Passage will close and restart. Your settings will be kept.",
 
 		"app_name":               "Passage",
@@ -429,6 +430,7 @@ var texts = map[string]map[string]string{
 		"update_error":                   "Не удалось обновить Passage. Попробуйте ещё раз.",
 		"update_check_failed":            "Не удалось проверить обновления. Попробуйте позже.",
 		"update_download_failed":         "Не удалось скачать обновление. Попробуйте ещё раз.",
+		"update_refused":                 "Выбранный маршрут отказался соединяться с источником обновлений, остальные способы не ответили.",
 		"update_restart":                 "Passage закроется и запустится снова. Настройки сохранятся.",
 
 		"link_label":             "Ссылка",
