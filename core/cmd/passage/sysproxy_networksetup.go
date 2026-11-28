@@ -119,3 +119,17 @@ func managedProxy(data []byte) string {
 		key = ""
 	}
 }
+
+// parseServiceNames reads `networksetup -listallnetworkservices`: a header
+// line, then one name per line, "*" marking a disabled service. Empty lines
+// are not services.
+func parseServiceNames(out string) map[string]bool {
+	known := map[string]bool{}
+	lines := strings.Split(out, "\n")
+	for _, line := range lines[min(1, len(lines)):] {
+		if name := strings.TrimPrefix(strings.TrimRight(line, "\r"), "*"); name != "" {
+			known[name] = true
+		}
+	}
+	return known
+}

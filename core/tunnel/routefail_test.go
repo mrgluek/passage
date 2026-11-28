@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/tls"
 	"errors"
+	"fmt"
 	"io"
 	"net"
 	"net/http"
@@ -69,5 +70,49 @@ func TestWSSUpgradeRefusalAndCutAreDistinct(t *testing.T) {
 	_, err = c2.dialWSSSession(ctx)
 	if !errors.Is(err, errWSSFailed) || !strings.Contains(err.Error(), "(tls)") {
 		t.Fatalf("tls cut: %v", err)
+	}
+}
+
+func TestGoneRouteCoolsLongAndIsNoVerdict(t *testing.T) {
+	now := time.Date(2026, 11, 28, 12, 0, 0, 0, time.UTC)
+	gone := refusedWith(errWSSUpgrade, 404)
+	if !routeGone(gone) || !routeGone(refusedWith(errWSSUpgrade, 410)) || routeGone(refusedWith(errWSSUpgrade, 403)) || routeGone(errors.New("x")) {
+		t.Fatal("routeGone")
+	}
+	bad := &poolFixture{dial: func(context.Context, string, string) (net.Conn, error) { return nil, gone }}
+	good := &poolFixture{dial: poolSuccess}
+	p := &routePool{clients: []soarClient{bad, good}, ipv6: []bool{false, false}, now: func() time.Time { return now }}
+	conn, err := p.DialContext(context.Background(), "tcp", "example.org:443")
+	if err != nil {
+		t.Fatal(err)
+	}
+	conn.Close()
+	if got := p.failedUntil[0].Sub(now); got != routeGoneCooldown {
+		t.Fatalf("cooldown = %v", got)
+	}
+	clock := time.Unix(1000, 0)
+	tt, g := evidenceTunnel(&clock)
+	tt.recordFailedDial(g, "br", gone, 0)
+	if g.lastConnResult.Outcome != "" {
+		t.Fatal("a gone route became the last result", g.lastConnResult)
+	}
+	tt.recordFailedDial(g, "br", refusedWith(errWSSUpgrade, 403), 0)
+	if g.lastConnResult.Outcome != "refused" {
+		t.Fatal("other refusals still count", g.lastConnResult)
+	}
+}
+
+func TestDestinationRefusalIsNoGroupResult(t *testing.T) {
+	clock := time.Unix(1000, 0)
+	tt, g := evidenceTunnel(&clock)
+	tt.recordFailedDial(g, "berry-uk", fmt.Errorf("x: %w", errDestinationRefused), 0)
+	tt.recordFailedDial(g, "berry-uk", errDestinationUnreachable, 0)
+	if g.lastConnResult.Outcome != "" || !g.lastConn.IsZero() {
+		t.Fatal("policy refusal recorded", g.lastConnResult)
+	}
+	tt.recordConnection(g, "ok", "berry-de")
+	tt.recordFailedDial(g, "berry-uk", errors.New("reset"), 0)
+	if g.lastConnOK.IsZero() || g.lastConnResult.Outcome != "refused" {
+		t.Fatal("ok time or failure lost", g.lastConnOK, g.lastConnResult)
 	}
 }

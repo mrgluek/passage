@@ -1,5 +1,42 @@
 # Changelog
 
+## 0.9.10
+
+- Desktop: fewer freezes. Closing a connection no longer waits on a stalled
+  upload, the iroh helper's exit no longer waits on pipes a child holds open,
+  the browser port pauses after repeated accept errors, and a step that runs
+  over 30 seconds writes the program's stacks to `passage-stall.txt` next to
+  the log.
+- Desktop, macOS: the window no longer waits on the app's state from the main
+  thread, and Quit ends the app after 15 seconds even if it is stuck.
+- Desktop: a site name with no usable address fails cleanly, and a site that
+  did not reply to a plain request is no longer tried first next time.
+- Desktop: the system proxy switch shows the real state after a refusal, and
+  the home steps update when an app connects.
+- Desktop, macOS: the system proxy switch copes with network services that
+  cannot be read at start, a failed write after a network change, and a
+  backup with no services.
+- Desktop: with a pinned route, the update check and download also try a
+  direct connection and the other routes when that route refuses them, and
+  Settings says so.
+- Desktop and `passage-cli` count listed sites, not groups; site numbers in
+  reports follow the stored order (smart sites, then tunnel sites, each
+  sorted).
+- The routes notice goes away after a day, and one saved without a time is
+  cleared at start.
+- A route that answers its upgrade with HTTP 404 or 410 rests for ten minutes,
+  and one refused or timed-out dial no longer reports "no route" while another
+  route is up. A refusal by an exit's address policy does not count against a
+  group, and a failure within a minute of a success does not change the
+  status.
+- Desktop, Windows: with WSL installed, the system proxy switch notes that WSL
+  asks to restart after the change.
+- Also from 0.9.9: the desktop network test checks the listed sites, takes up
+  to a minute, and names them in copied reports as `site #N`; `passage-cli`
+  has `-browser-listen`; HTTP and WSS route failures name the stage; the home
+  screen shows a Browser tab when the subscription lists sites; macOS puts
+  the system proxy settings back when a signal stops the app.
+
 ## 0.9.9
 
 - Desktop: browsers can use Passage for the sites your subscription lists.

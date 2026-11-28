@@ -568,7 +568,7 @@ function renderHome(v) {
   if (second) { $("sSecond").textContent = second[0]; $("sSecond").onclick = second[1]; }
   const done = hasLink && running && seen;
   $("setupHead").textContent = t(done ? "h_steps_done" : "h_steps_pending");
-  const key = JSON.stringify([hasLink, running, seen, hs, hr, tab, otherOpen, tabsOpen, showPass, v.host, v.port, v.user, v.pass, v.auth, v.lang, v.proxy_link, v.velta_link, v.whatsapp, v.whatsapp_chat_port, v.whatsapp_media_port, v.whatsapp_error, v.whatsapp_status, sites, v.browser]);
+  const key = JSON.stringify([hasLink, running, seen, hs, hr, tab, otherOpen, tabsOpen, showPass, v.host, v.port, v.user, v.pass, v.auth, v.lang, v.proxy_link, v.velta_link, v.whatsapp, v.whatsapp_chat_port, v.whatsapp_media_port, v.whatsapp_error, v.whatsapp_status, v.app_seen, sites, v.browser]);
   if (key === shownHome) return;
   shownHome = key;
   const steps = $("steps");
@@ -731,9 +731,12 @@ function browserSetup(pane, b, keepOpen = () => {}) {
     const label = document.createElement("label"); label.className = "check";
     const toggle = document.createElement("input"); toggle.type = "checkbox"; toggle.setAttribute("role", "switch");
     toggle.checked = b.on;
-    toggle.onchange = () => { keepOpen(); call("setSystemPAC", toggle.checked).then(refresh, e => { refresh(); fail(e); }); };
+    // The state may come back unchanged (a refusal): redraw anyway so the switch shows it.
+    const redraw = () => { shownHome = ""; $("browserSettings").dataset.key = ""; refresh(); };
+    toggle.onchange = () => { keepOpen(); call("setSystemPAC", toggle.checked).then(redraw, e => { redraw(); fail(e); }); };
     label.append(toggle, t("browser_system")); pane.append(label);
     para(t("browser_system_help"));
+    if (b.wsl) para(t("browser_wsl"));
     if (b.notice) para(b.notice, true);
   }
   para(t(b.system ? "browser_manual_system" : "browser_manual_only"));

@@ -15,6 +15,7 @@ const (
 	healthStarting  = 90 * time.Second
 	healthQuiet     = 5 * time.Second // an unused proxy shows "starting" only this long
 	healthSettle    = 120 * time.Second
+	healthOKHold    = 60 * time.Second // a failure this soon after a success does not flip the verdict
 	healthSlowStart = 180 * time.Second
 )
 
@@ -27,7 +28,18 @@ func health(s Status, now time.Time) Health {
 			reserve[routeDisplayName(r.ID, r.Exit)] = true
 		}
 	}
+	// answering reports whether a route other than the named one is up and
+	// has won connections lately.
+	answering := func(route string) bool {
+		for _, r := range s.Tunnels {
+			if r.State == routeUp && r.Recent != nil && r.Recent.Won > 0 && routeDisplayName(r.ID, r.Exit) != route {
+				return true
+			}
+		}
+		return false
+	}
 	var okConns, reserveOnly, withConn, stalled int
+	covered := false
 	probeOK, anyActivity := false, false
 	for _, g := range s.Groups {
 		if g.LastConn != nil && g.LastConnResult != nil &&
@@ -39,8 +51,16 @@ func health(s Status, now time.Time) Health {
 				if reserve[g.LastConnResult.Route] {
 					reserveOnly++
 				}
-			case "stall", "later", "refused", "timeout":
-				stalled++
+			case "refused", "timeout", "stall", "later":
+				if g.LastConnOK != nil && now.Sub(*g.LastConnOK) < healthOKHold {
+					covered = true
+				} else if g.LastConnResult.Outcome == "stall" || g.LastConnResult.Outcome == "later" {
+					stalled++
+				} else if answering(g.LastConnResult.Route) {
+					covered = true
+				} else {
+					stalled++
+				}
 			}
 			anyActivity = true
 		}
@@ -65,7 +85,7 @@ func health(s Status, now time.Time) Health {
 	siteOK := s.Browser != nil && recent(s.Browser.LastOK)
 	anyActivity = anyActivity || siteOK
 	allStalled := withConn > 0 && stalled == withConn
-	evidence := !allStalled && (okConns > 0 || probeOK || tunnelUp || siteOK)
+	evidence := !allStalled && (okConns > 0 || covered || probeOK || tunnelUp || siteOK)
 	age := now.Sub(s.Started)
 	switch {
 	case s.State == "offline" && s.LastResult.CanaryChecked:

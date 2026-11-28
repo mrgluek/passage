@@ -15,6 +15,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/mrgluek/passage/core/tunnel"
 	"github.com/mrgluek/passage/core/update"
 )
 
@@ -133,10 +134,18 @@ func (a *App) updateClientLocked() updateTransport {
 		a.mu.Lock()
 		defer a.mu.Unlock()
 		if a.tun != nil {
-			return a.tun.Dials()
+			return a.tun.AppDials()
 		}
 		return nil
 	}}
+}
+
+// updateDetail is the error text shown in Settings; the log keeps the raw one.
+func (a *App) updateDetail(err error) string {
+	if errors.Is(err, tunnel.ErrDestinationRefused) {
+		return a.t.f("update_refused")
+	}
+	return err.Error()
 }
 
 func (a *App) checkUpdate() error {
@@ -168,7 +177,7 @@ func (a *App) beginCheckLocked(now time.Time) {
 			a.updater.state = "cancelled"
 		case err != nil:
 			a.event("update check failed: %v", err)
-			a.updater.state, a.updater.err, a.updater.detail, a.updater.checkFailed = "error", a.t.f("update_check_failed"), err.Error(), true
+			a.updater.state, a.updater.err, a.updater.detail, a.updater.checkFailed = "error", a.t.f("update_check_failed"), a.updateDetail(err), true
 		default:
 			keep := offer != nil && a.updater.offer != nil && offer.Version == a.updater.offer.Version && offer.File == a.updater.offer.File
 			a.updater.offer = offer
@@ -230,7 +239,7 @@ func (a *App) downloadUpdate() error {
 			a.updater.state = "cancelled"
 		case err != nil:
 			a.event("update download failed: %v", err)
-			a.updater.state, a.updater.err, a.updater.detail = "error", a.t.f("update_download_failed"), err.Error()
+			a.updater.state, a.updater.err, a.updater.detail = "error", a.t.f("update_download_failed"), a.updateDetail(err)
 		default:
 			a.updater.state, a.updater.archive = "ready", dest
 		}

@@ -22,6 +22,7 @@ type browserView struct {
 	// Confirmed: the user set the address by hand.
 	Confirmed bool   `json:"confirmed"`
 	Notice    string `json:"notice,omitempty"` // why the switch was refused
+	WSL       bool   `json:"wsl,omitempty"`    // show the WSL restart note under the switch
 }
 
 // homeTabs lists the home screen's setup tabs, four at most. With sites the
@@ -52,11 +53,7 @@ func (a *App) confirmBrowser(on bool) {
 }
 
 func (a *App) siteCountLocked() int {
-	n := 0
-	for _, g := range a.linkCfg.SiteGroups() {
-		n += len(g.Hosts)
-	}
-	return n
+	return a.linkCfg.SiteCount()
 }
 
 // browserWantedLocked: the listener runs when there are sites to serve or
@@ -96,6 +93,10 @@ func (a *App) browserViewLocked() browserView {
 	if v.Show {
 		a.ensureBrowserPortLocked()
 		v.PAC = a.pacURLLocked()
+	}
+	if v.System && a.wslFn != nil {
+		a.wslOnce.Do(func() { a.wslSeen = a.wslFn() })
+		v.WSL = a.wslSeen
 	}
 	v.On = a.settings.SysBackup.Active
 	v.Confirmed = a.settings.BrowserConfirmed
@@ -408,7 +409,7 @@ func (a *App) extendSystemPAC(why string) {
 	added, skipped, err := extendSystemPAC(sp, &b)
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	a.settings.SysPending = false
+	a.settings.SysPending = err != nil // a write that failed may have been applied
 	defer a.saveSettings()
 	if added > 0 && a.settings.SysBackup.Active && a.settings.SysBackup.Ours == b.Ours {
 		a.settings.SysBackup = b

@@ -63,10 +63,7 @@ func (networksetupProxy) ReadServices(names []string) ([]proxyService, []string,
 	if err != nil {
 		return nil, nil, err
 	}
-	known := map[string]bool{}
-	for _, line := range strings.Split(out, "\n")[1:] {
-		known[strings.TrimPrefix(strings.TrimRight(line, "\r"), "*")] = true
-	}
+	known := parseServiceNames(out)
 	var present, missing []string
 	for _, n := range names {
 		if known[n] {

@@ -300,14 +300,17 @@ func TestRoutesNoticeTimeAndLegacy(t *testing.T) {
 	}
 	for _, lang := range []string{"en", "ru"} {
 		tr := tr(table(lang))
-		if got := noticeText(tr, value); got != tr.f("sub_routes_timed", 1, 1, "07:05") {
+		if got := noticeText(tr, value, stamp.Add(time.Hour)); got != tr.f("sub_routes_timed", 1, 1, "07:05") {
 			t.Fatal(got)
 		}
-		if got := noticeText(tr, "1,2"); got != tr.f("sub_routes_updated", 1, 2) {
+		if got := noticeText(tr, "1,2", stamp); got != tr.f("sub_routes_updated", 1, 2) {
 			t.Fatal(got)
+		}
+		if got := noticeText(tr, value, stamp.Add(25*time.Hour)); got != "" {
+			t.Fatal("old notice shown", got)
 		}
 		for _, bad := range []string{"", "1", "a,2", "-1,0", "1,2,bad", "1,2,0", "1,2,3,4"} {
-			if got := noticeText(tr, bad); got != "" {
+			if got := noticeText(tr, bad, stamp); got != "" {
 				t.Fatal(bad, got)
 			}
 		}
@@ -507,5 +510,20 @@ func TestRouterConfigDropsCredentialsOfRunningRouter(t *testing.T) {
 	a.settings.Auth = true
 	if cfg, _ := a.routerConfigLocked(); cfg.User != "u" || cfg.Pass != "p" {
 		t.Fatalf("settings credentials not used: %q", cfg.User)
+	}
+}
+
+func TestLegacyNoticeClearedOnStart(t *testing.T) {
+	a := newSubscriptionTestApp(t, "en")
+	a.settings.RoutesNotice = "9,0"
+	a.saveSettings()
+	if b := newApp(a.dir, "dev", "", "en", &fakePlatform{}); b.settings.RoutesNotice != "" || b.view().SubscriptionNotice != "" {
+		t.Fatal("untimed notice survived restart", b.settings.RoutesNotice)
+	}
+	old := fmt.Sprintf("9,0,%d", time.Now().Add(-3*24*time.Hour).UnixMilli())
+	a.settings.RoutesNotice = old
+	a.saveSettings()
+	if b := newApp(a.dir, "dev", "", "en", &fakePlatform{}); b.view().SubscriptionNotice != "" {
+		t.Fatal("three-day-old notice shown")
 	}
 }

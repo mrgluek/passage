@@ -1,7 +1,9 @@
 package tunnel
 
 import (
+	"errors"
 	"net"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -38,5 +40,35 @@ func TestBrowserPortOutlivesARouterRestart(t *testing.T) {
 	reply := make([]byte, 2)
 	if _, err := c.Read(reply); err != nil || reply[0] != 5 {
 		t.Fatalf("the next router did not answer: %v %v", reply, err)
+	}
+}
+
+type failingListener struct {
+	calls  atomic.Int64
+	closed chan struct{}
+	once   sync.Once
+}
+
+func (l *failingListener) Accept() (net.Conn, error) {
+	l.calls.Add(1)
+	return nil, errors.New("accept failed")
+}
+func (l *failingListener) Close() error   { l.once.Do(func() { close(l.closed) }); return nil }
+func (l *failingListener) Addr() net.Addr { return &net.TCPAddr{IP: net.IPv4(127, 0, 0, 1)} }
+
+func TestBrowserPortAcceptPausesOnErrors(t *testing.T) {
+	ln := &failingListener{closed: make(chan struct{})}
+	p := &BrowserPort{ln: ln, conns: make(chan net.Conn), done: make(chan struct{})}
+	finished := make(chan struct{})
+	go func() { p.accept(); close(finished) }()
+	time.Sleep(300 * time.Millisecond)
+	if n := ln.calls.Load(); n > 12 {
+		t.Fatalf("%d Accept calls in 300 ms: no pause between failures", n)
+	}
+	p.Close()
+	select {
+	case <-finished:
+	case <-time.After(2 * time.Second):
+		t.Fatal("accept did not stop after Close")
 	}
 }

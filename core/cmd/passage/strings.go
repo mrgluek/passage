@@ -80,6 +80,7 @@ var texts = map[string]map[string]string{
 		"update_error":                   "Could not update Passage. Try again.",
 		"update_check_failed":            "Could not check for updates. Try again later.",
 		"update_download_failed":         "Could not download the update. Try again.",
+		"update_refused":                 "The selected route refused the update source, and the other ways did not answer.",
 		"update_restart":                 "Passage will close and restart. Your settings will be kept.",
 
 		"app_name":               "Passage",
@@ -297,6 +298,7 @@ var texts = map[string]map[string]string{
 		"browser_text_manual":    "Your subscription link also includes a few sites that can open in the browser through Passage's tunnels. All other sites keep opening as before, directly.",
 		"browser_system":         "Add Passage as the system proxy",
 		"browser_system_help":    "Browsers that follow the system settings will pick it up by themselves. When you clear the checkbox or quit Passage, the previous settings are restored automatically.",
+		"browser_wsl":            "If you use WSL, it will ask to restart after the change: WSL follows the Windows proxy settings.",
 		"browser_manual_system":  "Or set the auto-config (PAC) address in the browser by hand:",
 		"browser_manual_only":    "Set the auto-config (PAC) address in the browser:",
 		"tab_browser":            "Browser",
@@ -429,6 +431,7 @@ var texts = map[string]map[string]string{
 		"update_error":                   "Не удалось обновить Passage. Попробуйте ещё раз.",
 		"update_check_failed":            "Не удалось проверить обновления. Попробуйте позже.",
 		"update_download_failed":         "Не удалось скачать обновление. Попробуйте ещё раз.",
+		"update_refused":                 "Выбранный маршрут отказался соединяться с источником обновлений, остальные способы не ответили.",
 		"update_restart":                 "Passage закроется и запустится снова. Настройки сохранятся.",
 
 		"link_label":             "Ссылка",
@@ -641,6 +644,7 @@ var texts = map[string]map[string]string{
 		"browser_text_manual":    "Ваша ссылка подписки также включает несколько сайтов, которые могут быть открыты в браузере через туннели Passage, при этом все остальные сайты будут открываться как раньше, напрямую.",
 		"browser_system":         "Добавить Passage в качестве системного прокси",
 		"browser_system_help":    "Браузеры, которые следуют системным настройкам, сами подхватят его. При отключении галочки или выходе из Passage автоматически вернутся прежние настройки.",
+		"browser_wsl":            "Если вы используете WSL, после изменения она попросит перезапуститься: WSL следует системным настройкам прокси Windows.",
 		"browser_manual_system":  "Либо настроить в браузере ссылку автонастройки (PAC) вручную:",
 		"browser_manual_only":    "Настройте в браузере ссылку автонастройки (PAC):",
 		"tab_browser":            "Браузер",

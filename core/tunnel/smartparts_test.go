@@ -197,3 +197,32 @@ func TestAppStrategyOrder(t *testing.T) {
 		t.Fatal(got)
 	}
 }
+
+// A write blocked on a peer that does not read must not hold up Close.
+func TestPartConnCloseDuringABlockedWrite(t *testing.T) {
+	c, _ := loopback(t)
+	pc := newPartConn(c, splitSNIPlan)
+	wrote := make(chan struct{})
+	go func() {
+		defer close(wrote)
+		big := make([]byte, 1<<20)
+		for {
+			if _, err := pc.Write(big); err != nil {
+				return
+			}
+		}
+	}()
+	time.Sleep(300 * time.Millisecond)
+	closed := make(chan struct{})
+	go func() { pc.Close(); close(closed) }()
+	select {
+	case <-closed:
+	case <-time.After(3 * time.Second):
+		t.Fatal("Close waits for the blocked write")
+	}
+	select {
+	case <-wrote:
+	case <-time.After(3 * time.Second):
+		t.Fatal("write still blocked after Close")
+	}
+}

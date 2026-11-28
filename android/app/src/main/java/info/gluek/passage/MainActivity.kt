@@ -550,7 +550,7 @@ class MainActivity : ThemedActivity() {
         secondary.visibility = if (active || !hasLink) View.VISIBLE else View.GONE
         secondary.setText(if (active) R.string.home_turn_off else R.string.home_turn_on)
         manualBox.visibility = if (settings.mode == "auto") View.GONE else View.VISIBLE
-        val notice = Subscriptions.decodeNotice(settings.routesNotice)
+        val notice = Subscriptions.decodeNotice(settings.routesNotice)?.takeUnless { it.stale(System.currentTimeMillis()) }
         routesNoticeBox.visibility = if (notice == null) View.GONE else View.VISIBLE
         if (notice != null) routesNotice.text = notice.clock()?.let {
             getString(R.string.sub_routes_timed, notice.added, notice.removed, it)

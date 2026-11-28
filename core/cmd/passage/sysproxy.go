@@ -279,6 +279,9 @@ func reapplySystemPAC(sp systemProxy, b *sysBackup) (set, already int, refusal, 
 	if st.Policy != "" {
 		return 0, 0, &policyError{st.Policy}, nil
 	}
+	if len(st.Services) == 0 && st.Unread > 0 {
+		return 0, 0, nil, errSysUnreadable
+	}
 	refused := map[string]bool{}
 	for _, s := range st.Services {
 		switch r := s.refusal(b.Ours); {

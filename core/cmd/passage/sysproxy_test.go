@@ -6,6 +6,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 	"testing"
@@ -356,7 +357,7 @@ func TestBrowserSettingsKeysOldFileKeepsDefaults(t *testing.T) {
 func TestBrowserStringsInBothLanguages(t *testing.T) {
 	for _, lang := range []string{"en", "ru"} {
 		tr := tr(table(lang))
-		for _, k := range []string{"browser_title", "browser_text_system", "browser_text_manual", "browser_manual_system", "browser_manual_only", "tab_browser", "h_browser_done", "h_step_connected", "browser_pac", "browser_sites", "browser_system", "browser_system_help", "browser_refuse_pac", "browser_refuse_manual", "browser_refuse_policy"} {
+		for _, k := range []string{"browser_title", "browser_text_system", "browser_text_manual", "browser_manual_system", "browser_manual_only", "tab_browser", "h_browser_done", "h_step_connected", "browser_pac", "browser_sites", "browser_system", "browser_system_help", "browser_wsl", "browser_refuse_pac", "browser_refuse_manual", "browser_refuse_policy"} {
 			if tr.f(k) == "" || tr.f(k) == k {
 				t.Errorf("%s %s missing", lang, k)
 			}
@@ -641,5 +642,48 @@ func TestStartWithTheSwitchOnAppliesTheAddress(t *testing.T) {
 	c.applySystemPACAtStart()
 	if f.url() != ours || !strings.Contains(c.log.text(10), "auto-config already set") {
 		t.Fatalf("%q %s", f.url(), c.log.text(10))
+	}
+}
+
+func TestBrowserViewWSLNote(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		system  bool
+		wsl     func() bool
+		want    bool
+		callsOK int
+	}{
+		{"windows with WSL", true, func() bool { return true }, true, 1},
+		{"windows without WSL", true, func() bool { return false }, false, 1},
+		{"no system switch (Linux)", false, func() bool { return true }, false, 0},
+		{"no detector", true, nil, false, 0},
+	} {
+		a, _ := browserApp(t, winFake(proxyService{}), true)
+		calls := 0
+		if tc.wsl != nil {
+			f := tc.wsl
+			a.wslFn = func() bool { calls++; return f() }
+		} else {
+			a.wslFn = nil
+		}
+		if !tc.system {
+			a.sysProxy = nil
+		}
+		for i := 0; i < 3; i++ {
+			if v := a.view().Browser; v.WSL != tc.want {
+				t.Fatalf("%s: %+v", tc.name, v)
+			}
+		}
+		if calls != tc.callsOK {
+			t.Errorf("%s: detector ran %d times", tc.name, calls)
+		}
+	}
+	if wslInstalled() && runtime.GOOS != "windows" {
+		t.Fatal("WSL detected off Windows")
+	}
+	for _, lang := range []string{"en", "ru"} {
+		if s := table(lang)["browser_wsl"]; s == "" {
+			t.Errorf("%s missing", lang)
+		}
 	}
 }

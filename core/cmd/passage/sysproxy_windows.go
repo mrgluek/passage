@@ -101,3 +101,16 @@ func notifyProxyChange() {
 		proc.Call(0, opt, 0, 0)
 	}
 }
+
+// wslInstalled reports whether a WSL distribution is registered for this user
+// (WSL1 or WSL2, Store or inbox). The Lxss key with a subkey is the sign;
+// wsl.exe alone exists without any distribution. Nothing is started.
+func wslInstalled() bool {
+	k, err := registry.OpenKey(registry.CURRENT_USER, `Software\Microsoft\Windows\CurrentVersion\Lxss`, registry.ENUMERATE_SUB_KEYS)
+	if err != nil {
+		return false
+	}
+	defer k.Close()
+	names, err := k.ReadSubKeyNames(1)
+	return err == nil && len(names) > 0
+}

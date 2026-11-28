@@ -84,12 +84,17 @@ type App struct {
 	sysNotice, sysError    string
 	sysMu                  sync.Mutex // held while the system proxy settings change
 	portFree               func(int) bool
+	wslFn                  func() bool // WSL detector; read once
+	wslOnce                sync.Once
+	wslSeen                bool
+	stall                  *stallGuard
 }
 
 func newApp(dir, version, iroh, lang string, os platform) *App {
 	a := &App{dir: dir, version: version, iroh: iroh, lang: lang, systemLang: lang, t: table(lang), os: os, changed: func() {},
-		sysProxy: newSystemProxy(), portFree: localPortBindable}
+		sysProxy: newSystemProxy(), portFree: localPortBindable, wslFn: wslInstalled}
 	a.log = openLog(a.path(logName), version)
+	a.stall = &stallGuard{limit: stallLimit, path: a.path(stallName), note: a.log.add}
 	a.event("app start")
 	s, existed, err := loadSettings(a.path(iniName))
 	a.settings = s
@@ -100,6 +105,11 @@ func newApp(dir, version, iroh, lang string, os platform) *App {
 		a.event("settings: %v", err)
 	}
 	if !existed {
+		a.saveSettings()
+	}
+	if strings.Count(a.settings.RoutesNotice, ",") == 1 {
+		// an old notice without a time can never expire
+		a.settings.RoutesNotice = ""
 		a.saveSettings()
 	}
 	a.loadLink()
@@ -240,6 +250,7 @@ func (a *App) routerConfigLocked() (tunnel.Config, networkState) {
 
 // startLocked (re)starts the router with the current network's resolvers.
 func (a *App) startLocked(why string) {
+	defer a.stall.watch("router start")()
 	if a.tun != nil {
 		a.tun.Close()
 		a.log.copyStalls(a.tun.Status(500).Events)
@@ -264,6 +275,7 @@ func (a *App) startLocked(why string) {
 
 // tick restarts a dead router, follows network and link file changes.
 func (a *App) tick() {
+	defer a.stall.watch("tick")()
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	if a.tun != nil {
@@ -620,7 +632,7 @@ func (a *App) viewLocked() (view, bool) {
 	if len(v.Subscriptions) == 0 {
 		v.SubscriptionsEmpty = a.t.f("subscriptions_empty")
 	}
-	v.SubscriptionNotice = noticeText(a.t, a.settings.RoutesNotice)
+	v.SubscriptionNotice = noticeText(a.t, a.settings.RoutesNotice, time.Now())
 	if a.subscriptionNotice != "" {
 		v.SubscriptionNotice = a.subscriptionNotice
 	}

@@ -176,3 +176,17 @@ func TestSiteDialTriesTheNextAddressInTime(t *testing.T) {
 	}
 	c.Close()
 }
+
+// Addresses the dial cannot use leave an error, never a nil connection.
+func TestSiteDialWithoutUsableAddressFails(t *testing.T) {
+	tt := newBrowserTunnel(t, testSites, nil, nil)
+	tt.siteDNS = fakeSiteDNS(dotDown, func(context.Context, string) ([]string, error) { return []string{"fe80::1%en0"}, nil })
+	dial := func(context.Context, string, string) (net.Conn, error) {
+		t.Fatal("dialed")
+		return nil, nil
+	}
+	c, err := tt.resolvedSiteDial(dial, true)(context.Background(), "tcp", "example.org:443")
+	if err == nil || c != nil {
+		t.Fatalf("conn %v, err %v", c, err)
+	}
+}

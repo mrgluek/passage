@@ -394,3 +394,14 @@ func TestCannotSkipWhileInstalling(t *testing.T) {
 		}
 	}
 }
+
+func TestUpdateDetailSaysRouteRefused(t *testing.T) {
+	a, _ := testUpdateApp(t)
+	err := errors.Join(errors.New("download failed"), tunnel.ErrDestinationRefused)
+	if got := a.updateDetail(err); got != a.t.f("update_refused") || strings.Contains(got, "destination") {
+		t.Fatalf("detail %q", got)
+	}
+	if got := a.updateDetail(errors.New("timeout")); got != "timeout" {
+		t.Fatalf("detail %q", got)
+	}
+}

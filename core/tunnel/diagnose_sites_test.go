@@ -77,14 +77,14 @@ func TestNetworkTestChecksListedSitesUnderLabels(t *testing.T) {
 	if !smart.Results[tunnelCol].Skip || tunnel.Results[tunnelCol].Skip || tunnelProbes.Load() != 1 {
 		t.Fatalf("smart %+v tunnel %+v probes %d", smart.Results, tunnel.Results, tunnelProbes.Load())
 	}
-	// The number is the place in the list as subscribed: example.org first.
+	// The number is the place in the list as given: example.org first.
 	if smart.Target != "site #1 (smart)" || smart.Host != "example.org" || tunnel.Target != "site #2 (tunnel)" {
 		t.Fatalf("%q %q %q", smart.Target, smart.Host, tunnel.Target)
 	}
 }
 
-// Numbers follow the subscription's order, not the sorted list, and stay
-// the same for the same list.
+// Numbers follow the order of the groups given, not the sorted list, and
+// stay the same for the same list.
 func TestSiteNumbersFollowTheSubscriptionOrder(t *testing.T) {
 	groups := []SiteGroup{{Via: "tunnel", Hosts: []string{"zeta.example.org", "alpha.example.org"}}, {Via: "smart", Hosts: []string{"mid.example.org", "alpha.example.org"}}}
 	for range 2 {
@@ -272,5 +272,31 @@ func TestNoAddressSitesDoNotUseTheCap(t *testing.T) {
 	}
 	if withAddr != diagSiteRows || without != 5 || d.SitesNotTested != 25-5-diagSiteRows {
 		t.Fatalf("%d with an address, %d without, %d not tested", withAddr, without, d.SitesNotTested)
+	}
+}
+
+// A subscription's stored groups are cleaned: smart then tunnel, hosts
+// sorted. Numbers follow that order, and each group keeps its row.
+func TestStoredSubscriptionGroupsAreNumberedInStoredOrder(t *testing.T) {
+	stored := cleanSites([]SiteGroup{{Via: "tunnel", Hosts: []string{"zeta.example.org"}}, {Via: "smart", Hosts: []string{"mid.example.org", "alpha.example.org"}}})
+	tt := newBrowserTunnel(t, nil, nil, nil)
+	tt.cfg.Subscriptions = []Subscription{{Sites: stored}}
+	tt.sites = newSiteSet(tt.cfg.SiteGroups())
+	tt.sites.numberSites(tt.cfg.siteGroupsInOrder())
+	for host, want := range map[string]string{"alpha.example.org": "site #1 (smart)", "mid.example.org": "site #2 (smart)", "zeta.example.org": "site #3 (tunnel)"} {
+		if got := tt.sites.match(host).label(); got != want {
+			t.Fatalf("%s: %q, want %q", host, got, want)
+		}
+	}
+	if order := diagSiteOrder(tt.diagSitesLocked()); len(order) != 3 || order[0].name != "alpha.example.org" || order[1].name != "zeta.example.org" {
+		t.Fatalf("%v", order)
+	}
+}
+
+// The count is hosts, not groups, and a host listed twice counts once.
+func TestSiteCountCountsHosts(t *testing.T) {
+	cfg := Config{Sites: []SiteGroup{{Via: "smart", Hosts: []string{"a.example.org", "b.example.org"}}, {Via: "tunnel", Hosts: []string{"b.example.org", "c.example.org"}}}}
+	if n := cfg.SiteCount(); n != 3 {
+		t.Fatalf("%d", n)
 	}
 }

@@ -256,8 +256,8 @@ func TestConnectionEvidencePoolRefusal(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer c.Close()
-	if g.lastConnResult != (connectionResult{Outcome: "refused", Route: "route-a"}) {
-		t.Fatal(g.lastConnResult)
+	if g.lastConnResult != (connectionResult{}) {
+		t.Fatal("exit policy refusal recorded:", g.lastConnResult)
 	}
 	tt.connectionFeedbackVia(g, r, "1", connectionRoute(c, r), false)
 	if g.lastConnResult != (connectionResult{Outcome: "ok", Route: "route-b"}) {

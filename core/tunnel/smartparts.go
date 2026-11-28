@@ -94,11 +94,13 @@ func recordLen(p []byte) int {
 
 func (c *partConn) Write(b []byte) (int, error) {
 	c.mu.Lock()
-	defer c.mu.Unlock()
 	if c.done {
-		if c.err != nil {
-			return 0, c.err
+		err := c.err
+		c.mu.Unlock()
+		if err != nil {
+			return 0, err
 		}
+		// Not under the lock: a write blocked on the peer must not hold up Close.
 		return c.TCPConn.Write(b)
 	}
 	c.pending = append(c.pending, b...)
@@ -106,9 +108,12 @@ func (c *partConn) Write(b []byte) (int, error) {
 		if c.timer == nil {
 			c.timer = time.AfterFunc(firstRecordWait, c.flushLater)
 		}
+		c.mu.Unlock()
 		return len(b), nil
 	}
-	if err := c.flushLocked(); err != nil {
+	flush := c.takeLocked()
+	c.mu.Unlock()
+	if err := flush(); err != nil {
 		return 0, err
 	}
 	return len(b), nil
@@ -121,53 +126,67 @@ func (c *partConn) ReadFrom(r io.Reader) (int64, error) {
 
 func (c *partConn) flushLater() {
 	c.mu.Lock()
-	if !c.done {
-		c.err = c.flushLocked()
+	if c.done {
+		c.mu.Unlock()
+		return
 	}
+	flush := c.takeLocked()
+	c.mu.Unlock()
+	err := flush()
+	c.mu.Lock()
+	c.err = err
 	c.mu.Unlock()
 }
 
-func (c *partConn) flushLocked() error {
+// takeLocked ends the collecting and returns the send of what was collected.
+// The caller runs it after releasing the lock: a send blocked on the peer
+// must not hold up Close.
+func (c *partConn) takeLocked() func() error {
 	if c.timer != nil {
 		c.timer.Stop()
 	}
 	c.done = true
 	data := c.pending
 	c.pending = nil
-	if len(data) == 0 {
-		return nil
-	}
-	rec := data
-	if n := recordLen(data); n > 0 && n < len(data) {
-		rec = data[:n]
-	}
-	parts := c.plan(rec)
-	if len(parts) == 0 {
-		_, err := c.TCPConn.Write(data)
+	return func() error {
+		if len(data) == 0 {
+			return nil
+		}
+		rec := data
+		if n := recordLen(data); n > 0 && n < len(data) {
+			rec = data[:n]
+		}
+		parts := c.plan(rec)
+		if len(parts) == 0 {
+			_, err := c.TCPConn.Write(data)
+			return err
+		}
+		if len(rec) < len(data) {
+			parts = append(parts, part{b: data[len(rec):]})
+		}
+		_, err := sendParts(c.sender, parts)
 		return err
 	}
-	if len(rec) < len(data) {
-		parts = append(parts, part{b: data[len(rec):]})
+}
+
+func (c *partConn) flushPending() {
+	c.mu.Lock()
+	if c.done {
+		c.mu.Unlock()
+		return
 	}
-	_, err := sendParts(c.sender, parts)
-	return err
+	flush := c.takeLocked()
+	c.mu.Unlock()
+	flush()
 }
 
 func (c *partConn) CloseWrite() error {
-	c.mu.Lock()
-	if !c.done {
-		c.flushLocked()
-	}
-	c.mu.Unlock()
+	c.flushPending()
 	return c.TCPConn.CloseWrite()
 }
 
 func (c *partConn) Close() error {
-	c.mu.Lock()
-	if !c.done {
-		c.flushLocked()
-	}
-	c.mu.Unlock()
+	c.flushPending()
 	return c.TCPConn.Close()
 }
 
